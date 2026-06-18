@@ -1,5 +1,6 @@
 """FastAPI application factory for the uploader sidecar."""
 import asyncio
+import os
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -13,7 +14,7 @@ from lazyupload.api.auth import require_token, ws_token_ok
 from lazyupload.api.progress import ProgressHub
 from lazyupload.api.schemas import (
     AccountActivateRequest, ActivateRequest, Config, DisconnectRequest, ScanRequest,
-    TrackUpdate, UploadRequest,
+    TrackUpdate, UploadRequest, WipRequest,
 )
 from lazyupload.catalog import Catalog
 from lazyupload.connect import SoundCloudConnectSession
@@ -37,9 +38,14 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     app = FastAPI(title="lazyupload", lifespan=lifespan)
     # Localhost-only service: allow only the renderer's real origins (dev Vite + the
     # packaged file:// renderer, which sends Origin: null). Auth is the real boundary.
+    # The dev Vite port defaults to 5173 but can be overridden (LAZYUP_VITE_PORT) so the
+    # app can run alongside the sibling tool, which also defaults to 5173.
+    _dev_ports = {"5173", os.environ.get("LAZYUP_VITE_PORT", "5173")}
+    _dev_origins = [f"http://{host}:{p}" for p in sorted(_dev_ports)
+                    for host in ("localhost", "127.0.0.1")]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "null"],
+        allow_origins=[*_dev_origins, "null"],
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -192,6 +198,13 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         app.state.hub.bind_loop(asyncio.get_running_loop())
         mixes = await asyncio.to_thread(service.scan_mixes, catalog, sources, progress)
         return {"mixes": mixes}
+
+    @app.post("/api/wip", dependencies=[Depends(require_token)])
+    async def set_wip(req: WipRequest):
+        # set_wip may call SoundCloud (strip the [WIP] title on finalize) — off the loop.
+        await asyncio.to_thread(service.set_wip, catalog, req.name, req.wip)
+        scheduler.refresh_wip_job()  # marking a track WIP auto-enables watching
+        return {"wip": service.wip_status(catalog)}
 
     # ---- upload -------------------------------------------------------------
     async def _run_job(job_id, items, defaults, force, release_at):

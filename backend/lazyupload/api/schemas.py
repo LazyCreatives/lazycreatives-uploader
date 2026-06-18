@@ -74,6 +74,12 @@ class TrackUpdate(BaseModel):
     tags: list[str] | None = Field(None, max_length=50)
 
 
+class WipRequest(BaseModel):
+    """Mark/unmark a track (by name) as work-in-progress (watched + re-published)."""
+    name: str = Field(..., max_length=300)
+    wip: bool
+
+
 class AccountActivateRequest(BaseModel):
     id: str = Field(..., max_length=64)
 

@@ -12,11 +12,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from lazyupload import entitlement
 from lazyupload.catalog import Catalog
 from lazyupload.service import (
-    process_due_releases, run_upload, scan_mixes, upload_in_progress,
+    get_wip, process_due_releases, process_wip, run_upload, scan_mixes, upload_in_progress,
 )
 
 _JOB_ID = "auto_upload"
 _RELEASE_JOB_ID = "release_checker"
+_WIP_JOB_ID = "wip_watch"
 
 
 class UploadScheduler:
@@ -28,6 +29,8 @@ class UploadScheduler:
         # Always-on, cheap check that flips any due scheduled releases to public.
         self._scheduler.add_job(self._process_releases, "interval", seconds=60,
                                 id=_RELEASE_JOB_ID)
+        # Resume watching WIP tracks across restarts (no-op if none are marked).
+        self.refresh_wip_job()
 
     def _process_releases(self) -> None:
         try:
@@ -90,6 +93,41 @@ class UploadScheduler:
                     pass
 
         run_upload(self._catalog, fresh, defaults=defaults, progress=progress)
+
+    def refresh_wip_job(self) -> None:
+        """Add/remove the WIP watch job to match whether any WIP tracks are marked (and
+        the tier allows it). Marking a track WIP therefore auto-enables watching."""
+        existing = self._scheduler.get_job(_WIP_JOB_ID)
+        tier = entitlement.verify_stored(self._catalog.get_setting("entitlement") or {})
+        want = bool(get_wip(self._catalog)) and entitlement.allows(tier, "auto_upload")
+        if want and existing is None:
+            minutes = (self._catalog.get_setting("config") or {}).get("wip_watch_minutes") or 5
+            self._scheduler.add_job(self._run_wip, "interval", minutes=minutes, id=_WIP_JOB_ID)
+        elif not want and existing is not None:
+            existing.remove()
+
+    def _run_wip(self) -> None:
+        config = self._catalog.get_setting("config") or {}
+        sources = config.get("sources", [])
+        if not sources or upload_in_progress():
+            return
+        tier = entitlement.verify_stored(self._catalog.get_setting("entitlement") or {})
+        if not entitlement.allows(tier, "auto_upload"):
+            return
+
+        def progress(ev):
+            if self._hub is not None:
+                try:
+                    self._hub.publish_threadsafe(ev)
+                except RuntimeError:
+                    pass
+
+        published = process_wip(self._catalog, [Path(s) for s in sources], progress=progress)
+        if published and self._hub is not None:
+            try:
+                self._hub.publish_threadsafe({"type": "wip_published", "count": len(published)})
+            except RuntimeError:
+                pass
 
     def shutdown(self) -> None:
         self._scheduler.shutdown(wait=False)

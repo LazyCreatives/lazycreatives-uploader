@@ -3,13 +3,14 @@ account, and the dashboard overview. The API and CLI call into here; this module
 holds no FastAPI/HTTP concerns so it's trivially unit-testable.
 """
 import json
+import re
 import threading
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 
-from lazyupload import crypto, soundcloud
+from lazyupload import crypto, projectmeta, soundcloud
 from lazyupload.catalog import Catalog
 from lazyupload.hashing import hash_file
 from lazyupload.models import TrackMeta, UploadResult
@@ -285,6 +286,37 @@ def _prune_hash_cache(catalog: Catalog, live_paths: set[str]) -> None:
         catalog.set_setting(_HASH_CACHE_KEY, pruned)
 
 
+_LOSSLESS_EXTS = {".wav", ".aiff", ".aif", ".flac"}
+
+
+def _format_quality(m: dict) -> tuple:
+    """Higher is better. Lossless beats lossy; within a tier the bigger file wins
+    (a stand-in for bit depth / bitrate)."""
+    return (1 if (m.get("ext") or "").lower() in _LOSSLESS_EXTS else 0, m.get("size") or 0)
+
+
+def mark_format_dupes(mixes: list[dict]) -> None:
+    """Collapse exports of the SAME mix in different formats (e.g. an AIF + an MP3 of
+    "HEAVY"). The highest-quality file wins; the rest get `superseded_by` = the kept
+    format so the UI can hide/deselect them and we never double-post one track. The
+    winner lists the alternates it beat in `dupe_formats`. Grouped by exact name
+    (case-insensitive) so distinct tracks are never merged. In-place."""
+    groups: dict[str, list[dict]] = {}
+    for m in mixes:
+        groups.setdefault((m.get("name") or "").strip().lower(), []).append(m)
+    for grp in groups.values():
+        if len(grp) < 2:
+            grp[0]["superseded_by"] = None
+            continue
+        best = max(grp, key=_format_quality)
+        best["superseded_by"] = None
+        best["dupe_formats"] = sorted({(x.get("ext") or "").lstrip(".").upper()
+                                       for x in grp if x is not best})
+        for m in grp:
+            if m is not best:
+                m["superseded_by"] = (best.get("ext") or "").lstrip(".").upper()
+
+
 def scan_mixes(catalog: Catalog, sources: list[Path], progress=None) -> list[dict]:
     """Discover mixes and mark which are already on SoundCloud (by content hash)."""
     found = discover(sources)
@@ -306,6 +338,9 @@ def scan_mixes(catalog: Catalog, sources: list[Path], progress=None) -> list[dic
             progress({"type": "scan_progress", "done": i + 1,
                       "total": len(found), "name": m["name"]})
     _prune_hash_cache(catalog, {m["path"] for m in found})
+    projectmeta.annotate(out)  # borrow BPM/genre from the sibling Backups catalog by name
+    mark_format_dupes(out)     # same track in multiple formats -> keep the best one
+    annotate_wip(out, catalog) # flag tracks the user is iterating on (WIP + watched)
     if progress:
         progress({"type": "scan_done", "count": len(out)})
     return out
@@ -419,6 +454,140 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
     finally:
         with _upload_lock:
             _uploading = False
+
+
+# ---- work-in-progress (WIP) tracks ------------------------------------------
+# A WIP track is one you're still iterating on. Marking it WIP keeps it private and
+# WATCHES it: each new bounce is re-published privately, replacing the previous WIP
+# upload so SoundCloud always shows the latest version. Keyed by normalized name so
+# the flag survives re-renders (incl. version suffixes like "v2"/"master").
+_WIP_KEY = "wip_tracks"
+_WIP_TAG = "[WIP]"
+
+
+def _wip_norm(name: str) -> str:
+    return projectmeta.normalize(name)
+
+
+def wip_tag_title(title: str) -> str:
+    """Append the [WIP] marker so the track reads as a work-in-progress on SoundCloud."""
+    t = (title or "").strip()
+    return t if _WIP_TAG.lower() in t.lower() else f"{t} {_WIP_TAG}".strip()
+
+
+def strip_wip_tag(title: str) -> str:
+    """Remove a trailing [WIP] / (WIP) marker — used when a track is finalized."""
+    return re.sub(r"\s*[\[(]\s*wip\s*[\])]\s*$", "", title or "", flags=re.I).strip()
+
+
+def get_wip(catalog: Catalog) -> dict:
+    raw = catalog.get_setting(_WIP_KEY) or {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _save_wip(catalog: Catalog, wip: dict) -> None:
+    catalog.set_setting(_WIP_KEY, wip)
+
+
+def wip_status(catalog: Catalog) -> list[dict]:
+    return [{"key": k, "name": e.get("name"), "permalink_url": e.get("permalink_url")}
+            for k, e in get_wip(catalog).items()]
+
+
+def set_wip(catalog: Catalog, name: str, on: bool) -> dict:
+    """Mark/unmark a track (by name) as WIP. Unmarking finalizes it: the [WIP] marker
+    is stripped from the live SoundCloud title. Returns the updated WIP map."""
+    wip = get_wip(catalog)
+    key = _wip_norm(name)
+    if not key:
+        return wip
+    if on:
+        if key not in wip:
+            wip[key] = {"name": name, "sc_track_id": None, "permalink_url": None,
+                        "last_hash": None, "title": None, "added": default_timestamp()}
+    else:
+        entry = wip.pop(key, None)
+        title = (entry or {}).get("title") or ""
+        if entry and entry.get("sc_track_id") and _WIP_TAG.lower() in title.lower() \
+                and connected(catalog):
+            try:  # finalize: drop the [WIP] marker from the published title
+                update_track(catalog, entry["sc_track_id"], {"title": strip_wip_tag(title)})
+            except Exception:
+                pass
+    _save_wip(catalog, wip)
+    return wip
+
+
+def annotate_wip(mixes: list[dict], catalog: Catalog) -> None:
+    """Flag each scanned mix the user marked WIP (matched by normalized name)."""
+    keys = set(get_wip(catalog).keys())
+    if not keys:
+        return
+    for m in mixes:
+        if _wip_norm(m.get("name", "")) in keys:
+            m["wip"] = True
+
+
+def process_wip(catalog: Catalog, sources: list[Path], progress=None) -> list[dict]:
+    """Watch pass: for each WIP track whose best render is a NEW bounce, publish it
+    PRIVATE and delete the previous WIP upload (replace mode). Best-effort; no-ops
+    when disconnected or an upload is already running."""
+    wip = get_wip(catalog)
+    if not wip or not connected(catalog) or upload_in_progress():
+        return []
+    mixes = scan_mixes(catalog, sources)
+    best: dict[str, dict] = {}
+    for m in mixes:
+        if m.get("superseded_by"):
+            continue  # only watch the highest-quality render of each track
+        k = _wip_norm(m.get("name", ""))
+        if k in wip and k not in best:
+            best[k] = m
+    uploaded = catalog.uploaded_hashes()
+    config = catalog.get_setting("config") or {}
+    processed: list[dict] = []
+    for k, entry in list(wip.items()):
+        m = best.get(k)
+        if not m:
+            continue
+        h = m.get("file_hash")
+        if not h or h == entry.get("last_hash"):
+            continue  # no render, or this exact bounce is already the published one
+        if h in uploaded:
+            # already on SoundCloud (e.g. a prior manual upload) — adopt as our pointer
+            rec = catalog.upload_by_hash(h) or {}
+            entry.update(sc_track_id=rec.get("sc_track_id"),
+                         permalink_url=rec.get("permalink_url"), last_hash=h,
+                         title=rec.get("title"))
+            wip[k] = entry
+            continue
+        base = (config.get("title_template") or "{name}").replace("{name}", m["name"]).strip() or m["name"]
+        wip_title = wip_tag_title(base)  # show it as a WIP on SoundCloud
+        item = {"path": m["path"], "name": m["name"], "title": wip_title, "file_hash": h,
+                "size": m.get("size"), "sharing": "private",
+                "genre": m.get("genre") or None,
+                "tags": [f"{m['bpm']} BPM"] if m.get("bpm") else None}
+        defaults = {"sharing": "private", "genre": config.get("default_genre", ""),
+                    "tags": config.get("default_tags", []),
+                    "title_template": config.get("title_template", "{name}"),
+                    "description": config.get("default_description", "")}
+        old_id = entry.get("sc_track_id")
+        summary = run_upload(catalog, [item], defaults=defaults, progress=progress)
+        up = next((r for r in summary.get("results", []) if r.get("status") == "uploaded"), None)
+        if not up:
+            continue
+        new_id = up.get("sc_track_id")
+        if old_id and new_id and old_id != new_id:  # replace: drop the prior WIP track
+            try:
+                client_for(catalog).delete_track(old_id)
+            except Exception:
+                pass
+        entry.update(sc_track_id=new_id, permalink_url=up.get("permalink_url"),
+                     last_hash=h, title=wip_title)
+        wip[k] = entry
+        processed.append({"name": entry.get("name"), "permalink_url": up.get("permalink_url")})
+    _save_wip(catalog, wip)
+    return processed
 
 
 # ---- dashboard overview -----------------------------------------------------

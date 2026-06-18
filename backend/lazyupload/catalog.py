@@ -104,6 +104,18 @@ class Catalog:
             ).fetchone()
         return dict(row) if row else None
 
+    def upload_by_hash(self, file_hash) -> dict | None:
+        """The most recent successful upload of a given content hash (for WIP replace:
+        adopt the SoundCloud track already published for this exact render)."""
+        if not file_hash:
+            return None
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM uploads WHERE file_hash = ? AND status = 'uploaded' "
+                "ORDER BY id DESC LIMIT 1", (file_hash,)
+            ).fetchone()
+        return dict(row) if row else None
+
     def totals(self) -> dict:
         with self._lock:
             row = self.conn.execute(
