@@ -1,4 +1,6 @@
 import os
+import sys
+import types
 
 import pytest
 
@@ -6,6 +8,15 @@ import pytest
 # before any lazyupload module reads these at call time.
 os.environ.setdefault("LAZYUP_MOCK", "1")
 os.environ.setdefault("LAZYUP_DEV", "1")
+
+# Tests must be hermetic: a developer's local, git-ignored _buildsecret.py (real
+# SoundCloud / broker creds) must never leak into credential-detection tests.
+# Shadow it with an empty stub for the whole suite — the resolvers read env vars
+# first, so tests that need creds set their own and are unaffected.
+_buildsecret_stub = types.ModuleType("lazyupload._buildsecret")
+for _attr in ("SC_CLIENT_ID", "SC_CLIENT_SECRET", "BROKER_URL", "BROKER_KEY", "ENT_SECRET"):
+    setattr(_buildsecret_stub, _attr, "")
+sys.modules["lazyupload._buildsecret"] = _buildsecret_stub
 
 from lazyupload.catalog import Catalog  # noqa: E402
 from tests.helpers import make_wav  # noqa: E402
