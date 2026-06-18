@@ -60,11 +60,21 @@ class AuthError(SoundCloudError):
 
 
 def _raise_for_status(r) -> None:
-    """Turn HTTP errors into friendly, typed exceptions (esp. 429 / auth)."""
+    """Turn HTTP errors into friendly, typed exceptions (esp. 429 / auth). Surfaces
+    the provider's error_description so OAuth failures are diagnosable, not opaque."""
     if r.status_code == 429:
         raise RateLimitError(r.headers.get("Retry-After"))
     if r.status_code in (401, 403):
         raise AuthError()
+    if r.status_code >= 400:
+        detail = ""
+        try:
+            j = r.json()
+            detail = j.get("error_description") or j.get("error") or ""
+        except Exception:
+            detail = (r.text or "").strip()[:300]
+        msg = f"{r.status_code} {r.reason}"
+        raise requests.HTTPError(f"{msg} — {detail}" if detail else msg, response=r)
     r.raise_for_status()
 
 
@@ -169,9 +179,19 @@ def _normalize(body: dict) -> dict:
 
 
 def _direct_token(payload: dict) -> dict:
-    """Talk to SoundCloud's token endpoint directly (needs the client secret)."""
+    """Talk to SoundCloud's token endpoint directly (needs the client secret).
+
+    SoundCloud's `authorization_code` / `refresh_token` grants expect the client
+    credentials in the FORM BODY (their `client_credentials` grant, by contrast, wants
+    HTTP Basic — but the desktop app never uses that grant). Sending Basic here is
+    rejected with `invalid_request` because SoundCloud can't find the client_id it needs
+    to match the authorization code, so callers put client_id/client_secret in `payload`."""
     r = requests.post(f"{AUTH_BASE}/oauth/token", data=payload, timeout=20,
                       headers={"Accept": "application/json"})
+    if r.status_code >= 400:  # log the raw provider response for diagnosis
+        import sys
+        print(f"[oauth] token grant={payload.get('grant_type')} -> {r.status_code}: "
+              f"{(r.text or '')[:500]}", file=sys.stderr)
     _raise_for_status(r)
     return r.json()
 
