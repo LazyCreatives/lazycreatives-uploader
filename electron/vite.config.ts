@@ -5,6 +5,6 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   base: "./",
   plugins: [react()],
-  server: { port: 5173, strictPort: true },
+  server: { port: Number(process.env.LAZYUP_VITE_PORT) || 5173, strictPort: true },
   test: { environment: "jsdom" },
 });

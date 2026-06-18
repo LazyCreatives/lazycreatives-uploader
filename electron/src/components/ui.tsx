@@ -30,6 +30,23 @@ export function PageHeader({ title, sub }: { title: string; sub?: string }) {
   );
 }
 
+// Segmented control (e.g. public / private). Mirrors Backups' .seg.
+export function Segmented<T extends string>({ value, options, onChange }: {
+  value: T; options: { value: T; label: string }[]; onChange: (v: T) => void;
+}) {
+  return (
+    <div className="seg" role="tablist">
+      {options.map((o) => (
+        <button key={o.value} type="button" role="tab" aria-selected={o.value === value}
+          className={`seg__opt${o.value === value ? " seg__opt--on" : ""}`}
+          onClick={() => onChange(o.value)}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const KB = 1024, MB = KB * 1024, GB = MB * 1024;
 export function fmtBytes(n: number): string {
   if (!n) return "0 B";

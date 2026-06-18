@@ -1,4 +1,4 @@
-import { BrandMark } from "./BrandMark";
+import { BrandLockup } from "./BrandLockup";
 
 export type Tab = "home" | "upload" | "manage" | "history" | "settings";
 
@@ -16,12 +16,9 @@ export function Nav({ tab, busy, onNavigate, account, tier }: {
 }) {
   return (
     <nav className="nav">
-      <div className="nav__brand">
-        <div className="nav__logo"><BrandMark active={busy} /></div>
-        <div>
-          <div className="nav__brandname">LazyCreatives</div>
-          <div style={{ fontSize: 11, color: "var(--text-faint)" }}>Uploader</div>
-        </div>
+      <div className="nav__brand nav__brand--lockup" title="Lazy Creatives — Uploader">
+        <BrandLockup active={busy} />
+        <span className="nav__brandtool">Uploader</span>
       </div>
       {ITEMS.map((it) => (
         <button key={it.key}
@@ -31,7 +28,7 @@ export function Nav({ tab, busy, onNavigate, account, tier }: {
             strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d={it.icon} />
           </svg>
-          {it.label}
+          <span className="nav__label">{it.label}</span>
           {busy && it.key === "upload" && <span className="nav__dot" />}
         </button>
       ))}

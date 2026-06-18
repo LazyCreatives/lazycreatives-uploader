@@ -50,7 +50,7 @@ function createWindow() {
       ],
     },
   });
-  if (isDev) win.loadURL("http://localhost:5173");
+  if (isDev) win.loadURL(`http://localhost:${process.env.LAZYUP_VITE_PORT || 5173}`);
   else win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
 
   // The renderer only ever talks to the localhost sidecar — block navigation and
