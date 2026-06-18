@@ -24,6 +24,16 @@ export interface Mix {
   file_hash: string | null;
   uploaded: boolean;
   permalink_url: string | null;
+  // Borrowed from the sibling Backups catalog when the mix name matches a project.
+  bpm?: number | null;
+  genre?: string | null;
+  genre_emoji?: string | null;
+  project_match?: string | null;
+  // Format de-dupe: set on lower-quality copies of the same track (= the kept format,
+  // e.g. "AIF"); the winning file lists the formats it beat in dupe_formats.
+  superseded_by?: string | null;
+  dupe_formats?: string[];
+  wip?: boolean;   // user is iterating on this track — keep private + watch for re-bounces
 }
 
 export interface AccountSummary {

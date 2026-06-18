@@ -41,6 +41,9 @@ export function makeApi() {
     async scan(sources?: string[]): Promise<Mix[]> {
       return (await req("POST", "/api/scan", { sources })).mixes;
     },
+    async setWip(name: string, wip: boolean): Promise<{ wip: { key: string; name: string; permalink_url: string | null }[] }> {
+      return req("POST", "/api/wip", { name, wip });
+    },
     async upload(items: UploadItemInput[], force = false, releaseAt?: string): Promise<{ job_id: string }> {
       return req("POST", "/api/upload", { items, force, release_at: releaseAt ?? null });
     },
