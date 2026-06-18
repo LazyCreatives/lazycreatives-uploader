@@ -29,8 +29,11 @@ class UploadScheduler:
         # Always-on, cheap check that flips any due scheduled releases to public.
         self._scheduler.add_job(self._process_releases, "interval", seconds=60,
                                 id=_RELEASE_JOB_ID)
-        # Resume watching WIP tracks across restarts (no-op if none are marked).
+        # Resume watching WIP tracks across restarts (no-op if none are marked), and
+        # reconcile their [WIP] markers promptly rather than waiting for the first tick.
         self.refresh_wip_job()
+        if get_wip(self._catalog):
+            self.run_wip_soon()
 
     def _process_releases(self) -> None:
         try:
@@ -105,6 +108,14 @@ class UploadScheduler:
             self._scheduler.add_job(self._run_wip, "interval", minutes=minutes, id=_WIP_JOB_ID)
         elif not want and existing is not None:
             existing.remove()
+
+    def run_wip_soon(self) -> None:
+        """Run the WIP pass once, as soon as possible — used on launch and right after a
+        track is marked WIP so its [WIP] title appears without waiting for the interval."""
+        try:
+            self._scheduler.add_job(self._run_wip, "date", id="wip_now", replace_existing=True)
+        except Exception:
+            pass
 
     def _run_wip(self) -> None:
         config = self._catalog.get_setting("config") or {}

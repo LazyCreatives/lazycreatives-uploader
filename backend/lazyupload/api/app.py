@@ -204,6 +204,8 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         # set_wip may call SoundCloud (strip the [WIP] title on finalize) — off the loop.
         await asyncio.to_thread(service.set_wip, catalog, req.name, req.wip)
         scheduler.refresh_wip_job()  # marking a track WIP auto-enables watching
+        if req.wip:
+            scheduler.run_wip_soon()  # apply the [WIP] title now, not on the next tick
         return {"wip": service.wip_status(catalog)}
 
     # ---- upload -------------------------------------------------------------

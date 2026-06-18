@@ -547,6 +547,22 @@ def process_wip(catalog: Catalog, sources: list[Path], progress=None) -> list[di
     config = catalog.get_setting("config") or {}
     processed: list[dict] = []
     for k, entry in list(wip.items()):
+        # (1) Reconcile: make sure an already-published WIP track shows the [WIP] marker
+        # in its live title. Idempotent — done once per track (the `marked` flag).
+        if entry.get("sc_track_id") and not entry.get("marked"):
+            rec = catalog.upload_by_hash(entry.get("last_hash")) if entry.get("last_hash") else None
+            cur_title = (rec or {}).get("title") or entry.get("name") or ""
+            tagged = wip_tag_title(cur_title)
+            if tagged != cur_title:
+                try:
+                    update_track(catalog, entry["sc_track_id"], {"title": tagged})
+                    processed.append({"name": entry.get("name"),
+                                      "permalink_url": entry.get("permalink_url")})
+                except Exception:
+                    pass
+            entry.update(title=tagged, marked=True)
+            wip[k] = entry
+
         m = best.get(k)
         if not m:
             continue
@@ -554,11 +570,17 @@ def process_wip(catalog: Catalog, sources: list[Path], progress=None) -> list[di
         if not h or h == entry.get("last_hash"):
             continue  # no render, or this exact bounce is already the published one
         if h in uploaded:
-            # already on SoundCloud (e.g. a prior manual upload) — adopt as our pointer
+            # already on SoundCloud (e.g. a prior manual upload) — adopt + tag it [WIP]
             rec = catalog.upload_by_hash(h) or {}
-            entry.update(sc_track_id=rec.get("sc_track_id"),
-                         permalink_url=rec.get("permalink_url"), last_hash=h,
-                         title=rec.get("title"))
+            tid = rec.get("sc_track_id")
+            tagged = wip_tag_title(rec.get("title") or m["name"])
+            if tid:
+                try:
+                    update_track(catalog, tid, {"title": tagged})
+                except Exception:
+                    pass
+            entry.update(sc_track_id=tid, permalink_url=rec.get("permalink_url"),
+                         last_hash=h, title=tagged, marked=True)
             wip[k] = entry
             continue
         base = (config.get("title_template") or "{name}").replace("{name}", m["name"]).strip() or m["name"]
@@ -583,7 +605,7 @@ def process_wip(catalog: Catalog, sources: list[Path], progress=None) -> list[di
             except Exception:
                 pass
         entry.update(sc_track_id=new_id, permalink_url=up.get("permalink_url"),
-                     last_hash=h, title=wip_title)
+                     last_hash=h, title=wip_title, marked=True)
         wip[k] = entry
         processed.append({"name": entry.get("name"), "permalink_url": up.get("permalink_url")})
     _save_wip(catalog, wip)
