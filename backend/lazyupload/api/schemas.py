@@ -33,6 +33,13 @@ class Config(BaseModel):
     # Watch-folder auto-uploads default to PRIVATE so automation never publishes a
     # render publicly without the user opting in (audit: auto-upload footgun).
     auto_upload_sharing: Sharing = "private"
+    # When a WIP track is re-bounced (audio overwritten on SoundCloud), post a timestamped
+    # changelog comment on the new track. On by default.
+    changelog_comments: bool = True
+    # Local image applied as the cover for any upload that doesn't pick its own art.
+    default_artwork_path: str = Field("", max_length=1024)
+    # Add a small LazyCreatives watermark to generated waveform covers. On by default.
+    cover_watermark: bool = True
     templates: list[MetadataTemplate] = Field(default_factory=list, max_length=50)
 
 
@@ -55,6 +62,7 @@ class UploadItem(BaseModel):
     downloadable: bool | None = None
     file_hash: str | None = Field(None, max_length=128)
     size: int | None = Field(None, ge=0)
+    artwork_path: str | None = Field(None, max_length=_PATH)  # local image; overrides default cover
 
 
 class UploadRequest(BaseModel):
@@ -72,6 +80,29 @@ class TrackUpdate(BaseModel):
     sharing: Sharing | None = None
     genre: str | None = Field(None, max_length=64)
     tags: list[str] | None = Field(None, max_length=50)
+    downloadable: bool | None = None
+
+
+class BulkTrackUpdate(BaseModel):
+    """Apply one metadata/privacy patch across many tracks (Pro)."""
+    ids: list[int] = Field(..., min_length=1, max_length=200)
+    patch: TrackUpdate
+
+
+class BulkDeleteRequest(BaseModel):
+    """Delete many tracks at once (Pro). Irreversible on SoundCloud."""
+    ids: list[int] = Field(..., min_length=1, max_length=200)
+
+
+class ArtworkRequest(BaseModel):
+    """Set one track's cover art from a local image file."""
+    artwork_path: str = Field(..., max_length=1024)
+
+
+class BulkArtworkRequest(BaseModel):
+    """Apply one cover image to many tracks (Pro)."""
+    ids: list[int] = Field(..., min_length=1, max_length=200)
+    artwork_path: str = Field(..., max_length=1024)
 
 
 class WipRequest(BaseModel):

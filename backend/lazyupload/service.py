@@ -4,13 +4,14 @@ holds no FastAPI/HTTP concerns so it's trivially unit-testable.
 """
 import json
 import re
+import tempfile
 import threading
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 
-from lazyupload import crypto, projectmeta, soundcloud
+from lazyupload import coverart, crypto, projectmeta, seo, soundcloud
 from lazyupload.catalog import Catalog
 from lazyupload.hashing import hash_file
 from lazyupload.models import TrackMeta, UploadResult
@@ -145,10 +146,29 @@ def account_label(catalog: Catalog) -> str | None:
     return acct.get("username") or acct.get("permalink") or None
 
 
+def account_avatar(catalog: Catalog) -> str | None:
+    """The active account's SoundCloud avatar URL. Self-heals accounts connected before
+    avatars were captured by fetching me() once and persisting it (no reconnect needed)."""
+    acct = active_account(catalog)
+    if not acct:
+        return None
+    av = acct.get("avatar_url")
+    if av or soundcloud.use_mock():
+        return av
+    try:
+        av = client_for(catalog).me().get("avatar_url")
+        if av:
+            _update_active_tokens(catalog, {"avatar_url": av})
+        return av
+    except Exception:
+        return None
+
+
 def accounts_public(catalog: Catalog) -> list[dict]:
-    """Account list for the UI — no tokens, just id/username/active flag."""
+    """Account list for the UI — no tokens, just id/username/avatar/active flag."""
     aid = (active_account(catalog) or {}).get("id")
     return [{"id": a.get("id"), "username": a.get("username") or "SoundCloud",
+             "avatar_url": a.get("avatar_url"),
              "mock": a.get("mock", False), "active": a.get("id") == aid}
             for a in get_accounts(catalog)]
 
@@ -182,22 +202,272 @@ def client_for(catalog: Catalog):
 
 
 # ---- manage existing uploads ------------------------------------------------
+def _apply_project_meta(track: dict, meta: dict) -> None:
+    """Map a projectmeta rich object onto a managed track (the /api/tracks contract)."""
+    bpm = meta.get("bpm")
+    track["bpm"] = round(float(bpm)) if bpm is not None else None
+    track["genre_emoji"] = meta.get("genre_emoji")
+    track["daw"] = meta.get("daw")
+    track["project_match"] = meta.get("project")
+    track["plugin_count"] = meta.get("plugin_count")
+    track["track_count"] = meta.get("track_count")
+    track["missing_count"] = meta.get("missing_count")
+    track["project_size"] = meta.get("project_size")
+    track["project_mtime"] = meta.get("project_mtime")
+    track["backups"] = meta.get("backups")
+    # Only borrow Backups genre when SoundCloud has none — the live SC genre is authoritative.
+    if not track.get("genre") and meta.get("genre"):
+        track["genre"] = meta["genre"]
+
+
+def _project_meta_for(catalog: Catalog, track: dict, upload_map: dict | None = None) -> dict | None:
+    """Resolve the Backups project for a managed SoundCloud track, in order of trust:
+      (a) sc_track_id -> local upload row -> persisted backups_project_id  (collision-proof)
+      (b) that row's file_path stem  (hash-anchored to the file, strict name match)
+      (c) the SoundCloud title, strict — None on any name collision, so we never guess.
+    `upload_map` (sc_track_id -> row) lets the list pass avoid a DB query per track."""
+    try:
+        rec = upload_map.get(track.get("id")) if upload_map is not None \
+            else catalog.upload_by_track_id(track.get("id"))
+        if rec:
+            if rec.get("backups_project_id"):
+                meta = projectmeta.lookup_meta_by_id(rec["backups_project_id"])
+                if meta:
+                    return meta
+            if rec.get("file_path"):
+                meta = projectmeta.lookup_meta(Path(rec["file_path"]).stem)
+                if meta:
+                    return meta
+        return projectmeta.lookup_meta(strip_wip_tag(track.get("title") or ""))
+    except Exception:
+        return None
+
+
+def _enrich_track(catalog: Catalog, t: dict, upload_map: dict | None = None) -> None:
+    """Attach the SEO score and borrowed Backups metadata to ONE managed track. Best-effort
+    and independent: a failure (or a missing Backups catalog) never strips the SEO score."""
+    meta = _project_meta_for(catalog, t, upload_map)
+    # SEO reflects the LIVE SoundCloud metadata — score before borrowing display genre.
+    try:
+        t["seo"] = seo.score_track(t, meta)
+    except Exception:
+        pass
+    if meta:
+        try:
+            _apply_project_meta(t, meta)
+        except Exception:
+            pass
+
+
+def _enrich_tracks(catalog: Catalog, tracks: list[dict]) -> None:
+    upload_map = catalog.uploads_by_sc_track_id()  # one query for the whole list
+    for t in tracks:
+        _enrich_track(catalog, t, upload_map)
+
+
+# Formats SoundCloud stores losslessly — preferred over lossy copies of the same title.
+_LOSSLESS_FORMATS = {"wav", "wave", "aif", "aiff", "flac", "alac"}
+
+
+def _dupe_key(title: str) -> str:
+    return re.sub(r"\s+", " ", strip_wip_tag(title or "").strip().lower())
+
+
+def _track_quality(t: dict) -> tuple:
+    """Rank within a duplicate group: lossless beats lossy, then larger original, then longer."""
+    fmt = (t.get("original_format") or "").lower()
+    lossless = 1 if fmt in _LOSSLESS_FORMATS else 0
+    return (lossless, t.get("original_content_size") or 0, t.get("duration") or 0)
+
+
+def _mark_track_dupes(tracks: list[dict]) -> None:
+    """Flag tracks that share a title (e.g. the same release uploaded as FLAC + MP3). Each
+    member gets dupe_group (the keeper's track id), dupe_count, and dupe_keeper, so Manage
+    can group them and offer to delete the lower-quality copies."""
+    groups: dict[str, list[dict]] = {}
+    for t in tracks:
+        k = _dupe_key(t.get("title", ""))
+        if k:
+            groups.setdefault(k, []).append(t)
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        best = max(members, key=_track_quality)
+        for t in members:
+            t["dupe_group"] = best.get("id")
+            t["dupe_count"] = len(members)
+            t["dupe_keeper"] = t is best
+
+
 def list_tracks(catalog: Catalog) -> list[dict]:
     if not connected(catalog):
         raise RuntimeError("not_connected")
-    return client_for(catalog).list_tracks()
+    tracks = client_for(catalog).list_tracks()
+    _enrich_tracks(catalog, tracks)
+    _mark_track_dupes(tracks)
+    return tracks
 
 
 def update_track(catalog: Catalog, track_id: int, fields: dict) -> dict:
     if not connected(catalog):
         raise RuntimeError("not_connected")
-    return client_for(catalog).update_track(track_id, fields)
+    # Return the fully-enriched track (re-scored SEO + Backups chips) so the Manage UI keeps
+    # its chips and shows the freshly-recomputed score without needing a full refresh.
+    updated = client_for(catalog).update_track(track_id, fields)
+    _enrich_track(catalog, updated)
+    return updated
 
 
 def delete_track(catalog: Catalog, track_id: int) -> None:
     if not connected(catalog):
         raise RuntimeError("not_connected")
     client_for(catalog).delete_track(track_id)
+
+
+# ---- bulk track operations (Pro) --------------------------------------------
+_BULK_FLOOR_DELAY = 0.2   # seconds between sequential SoundCloud writes
+_BULK_MAX_BACKOFF = 30.0  # cap on a 429 Retry-After wait
+
+
+def _retry_delay(retry_after) -> float:
+    try:
+        return min(float(retry_after), _BULK_MAX_BACKOFF) if retry_after else 2.0
+    except (ValueError, TypeError):
+        return 2.0
+
+
+def _bulk(catalog: Catalog, ids: list[int], op) -> list[dict]:
+    """Run a per-track SoundCloud write across `ids` sequentially (SC has no batch
+    endpoint), returning a per-item ledger [{id, ok, error, track?}]. When `op` returns an
+    enriched track dict it's attached as `track` so the UI can splice the fresh row (keeping
+    SEO/cover/backups current without a full refetch). Honors 429 Retry-After with one
+    backoff+retry, and HARD-STOPS on an auth error (the account is unauthorized, so
+    continuing is pointless and risky for a destructive bulk op)."""
+    client = client_for(catalog)
+    throttle = not getattr(client, "is_mock", False)
+    results: list[dict] = []
+
+    def _ok(tid, res):
+        item = {"id": tid, "ok": True, "error": None}
+        if isinstance(res, dict):
+            item["track"] = res
+        results.append(item)
+
+    for i, tid in enumerate(ids):
+        try:
+            _ok(tid, op(client, tid))
+        except soundcloud.AuthError as e:
+            results.append({"id": tid, "ok": False, "error": str(e)})
+            for rest in ids[i + 1:]:
+                results.append({"id": rest, "ok": False,
+                                "error": "stopped — account needs reconnecting"})
+            break
+        except soundcloud.RateLimitError as e:
+            time.sleep(_retry_delay(e.retry_after))
+            try:
+                _ok(tid, op(client, tid))
+            except Exception as e2:
+                results.append({"id": tid, "ok": False, "error": str(e2)[:300]})
+        except Exception as e:
+            results.append({"id": tid, "ok": False, "error": str(e)[:300]})
+        if throttle and i < len(ids) - 1:
+            time.sleep(_BULK_FLOOR_DELAY)
+    return results
+
+
+def bulk_update(catalog: Catalog, ids: list[int], patch: dict) -> list[dict]:
+    if not connected(catalog):
+        raise RuntimeError("not_connected")
+
+    def op(c, tid):  # return the enriched track so SEO/badges refresh client-side
+        updated = c.update_track(tid, patch)
+        _enrich_track(catalog, updated)
+        return updated
+    return _bulk(catalog, ids, op)
+
+
+def bulk_delete(catalog: Catalog, ids: list[int]) -> list[dict]:
+    if not connected(catalog):
+        raise RuntimeError("not_connected")
+    return _bulk(catalog, ids, lambda c, tid: c.delete_track(tid))
+
+
+def set_artwork(catalog: Catalog, track_id: int, image_path: str) -> dict:
+    """Set one track's cover art; returns the fully-enriched track for the UI."""
+    if not connected(catalog):
+        raise RuntimeError("not_connected")
+    updated = client_for(catalog).set_artwork(track_id, image_path)
+    _enrich_track(catalog, updated)
+    return updated
+
+
+def bulk_set_artwork(catalog: Catalog, ids: list[int], image_path: str) -> list[dict]:
+    """Apply one cover image across many tracks (Pro), with the same rate-limit-aware
+    fan-out + per-item ledger as the other bulk ops."""
+    if not connected(catalog):
+        raise RuntimeError("not_connected")
+
+    def op(c, tid):
+        updated = c.set_artwork(tid, image_path)
+        _enrich_track(catalog, updated)
+        return updated
+    return _bulk(catalog, ids, op)
+
+
+# ---- generated waveform cover art -------------------------------------------
+def _cover_watermark(catalog: Catalog) -> bool:
+    return (catalog.get_setting("config") or {}).get("cover_watermark", True) is not False
+
+
+def _render_cover(track: dict, name: str, watermark: bool, out_path: str,
+                  avatar_url: str | None = None, avatar_img=None) -> str:
+    samples = coverart.fetch_waveform_samples(track.get("waveform_url"))
+    if not samples:
+        raise RuntimeError("No waveform available for this track yet.")
+    return coverart.render_waveform_cover(
+        samples, name, strip_wip_tag(track.get("title") or ""), out_path,
+        watermark=watermark, avatar_url=avatar_url, avatar_img=avatar_img)
+
+
+def generate_waveform_cover(catalog: Catalog, track_id: int) -> dict:
+    """Render a waveform cover (artist name + title over the track's waveform, on the
+    profile-picture backdrop) and set it as the track's artwork. Returns the enriched track."""
+    if not connected(catalog):
+        raise RuntimeError("not_connected")
+    name = account_label(catalog) or ""
+    watermark = _cover_watermark(catalog)
+    avatar = account_avatar(catalog)
+    track = next((t for t in client_for(catalog).list_tracks() if t.get("id") == track_id), None)
+    if not track:
+        raise RuntimeError("Track not found.")
+    with tempfile.TemporaryDirectory() as td:
+        png = _render_cover(track, name, watermark, f"{td}/cover.png", avatar)
+        updated = client_for(catalog).set_artwork(track_id, png)
+    _enrich_track(catalog, updated)
+    return updated
+
+
+def bulk_generate_waveform_covers(catalog: Catalog, ids: list[int]) -> list[dict]:
+    """Generate + apply a waveform cover for many tracks (Pro). Fetches the library +
+    avatar once, then renders + sets each with the shared rate-limit-aware fan-out."""
+    if not connected(catalog):
+        raise RuntimeError("not_connected")
+    name = account_label(catalog) or ""
+    watermark = _cover_watermark(catalog)
+    # Fetch the profile picture ONCE for the whole batch (else it'd re-download per track).
+    avatar_img = coverart.fetch_avatar_image(account_avatar(catalog))
+    track_map = {t.get("id"): t for t in client_for(catalog).list_tracks()}
+    with tempfile.TemporaryDirectory() as td:
+        def op(client, tid):
+            track = track_map.get(tid)
+            if not track:
+                raise RuntimeError("Track not found.")
+            png = _render_cover(track, name, watermark, f"{td}/cover_{tid}.png",
+                                avatar_img=avatar_img)
+            updated = client.set_artwork(tid, png)
+            _enrich_track(catalog, updated)
+            return updated
+        return _bulk(catalog, ids, op)
 
 
 def client_for_account(catalog: Catalog, account_id: str):
@@ -396,6 +666,8 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                     "results": [], "error": "not_connected"}
         client = client_for(catalog)
         uploaded = catalog.uploaded_hashes()
+        # A configured default cover is applied to any upload that doesn't carry its own.
+        default_art = (catalog.get_setting("config") or {}).get("default_artwork_path") or None
         total = len(items)
         emit({"type": "upload_start", "total": total, "timestamp": default_timestamp()})
         for i, item in enumerate(items):
@@ -422,16 +694,25 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                     emit({"type": "track_progress", "index": _i, "name": _n,
                           "sent": sent, "size": tot})
 
-                track = client.upload(path, meta, on_progress=on_prog)
+                art = item.get("artwork_path") or default_art
+                if art and not Path(art).is_file():
+                    art = None
+                track = client.upload(path, meta, on_progress=on_prog, artwork_path=art)
                 tid = track.get("id")
                 url = track.get("permalink_url")
                 if release_at and tid is not None:
                     add_pending_release(catalog, tid, release_at,
                                         (active_account(catalog) or {}).get("id"), meta.title)
+                # Persist the resolved Backups link so the Manage join stays collision-proof
+                # even if the title is later renamed on SoundCloud. Strict match only — a
+                # name shared by >1 project anchors nothing (lookup_meta returns None).
+                pm = projectmeta.lookup_meta(name) or {}
                 catalog.record_upload(
                     title=meta.title, file_path=path, file_hash=h, size=size,
                     sharing=meta.sharing, status="uploaded", timestamp=default_timestamp(),
-                    sc_track_id=tid, permalink_url=url, account=account_label(catalog))
+                    sc_track_id=tid, permalink_url=url, account=account_label(catalog),
+                    backups_project=pm.get("project"),
+                    backups_project_id=pm.get("project_id"))
                 uploaded[h] = {"permalink_url": url, "title": meta.title}
                 ok += 1
                 results.append(UploadResult(name=name, status="uploaded", file_hash=h,
@@ -478,6 +759,26 @@ def wip_tag_title(title: str) -> str:
 def strip_wip_tag(title: str) -> str:
     """Remove a trailing [WIP] / (WIP) marker — used when a track is finalized."""
     return re.sub(r"\s*[\[(]\s*wip\s*[\])]\s*$", "", title or "", flags=re.I).strip()
+
+
+_CHANGELOG_MAX = 12  # most recent versions listed in the SoundCloud changelog comment
+
+
+def _changelog_comment(history: list[str]) -> str:
+    """A single SoundCloud comment recording every re-bounce of a WIP track. SoundCloud
+    has no in-place audio replace, so each new bounce is a fresh track — we repost the
+    whole history on it so the changelog stays visible."""
+    items = [t for t in (history or []) if t]
+    shown = items[-_CHANGELOG_MAX:]
+    base = len(items) - len(shown)
+    lines = ["🔄 Re-bounced — changelog:"]
+    if base > 0:
+        lines.append(f"  (+{base} earlier version{'s' if base != 1 else ''})")
+    for i, ts in enumerate(shown):
+        n = base + i + 1
+        mark = "  ← current" if i == len(shown) - 1 else ""
+        lines.append(f"  v{n} · {ts}{mark}")
+    return "\n".join(lines)
 
 
 def get_wip(catalog: Catalog) -> dict:
@@ -580,7 +881,8 @@ def process_wip(catalog: Catalog, sources: list[Path], progress=None) -> list[di
                 except Exception:
                     pass
             entry.update(sc_track_id=tid, permalink_url=rec.get("permalink_url"),
-                         last_hash=h, title=tagged, marked=True)
+                         last_hash=h, title=tagged, marked=True,
+                         history=entry.get("history") or [default_timestamp()])
             wip[k] = entry
             continue
         base = (config.get("title_template") or "{name}").replace("{name}", m["name"]).strip() or m["name"]
@@ -599,13 +901,21 @@ def process_wip(catalog: Catalog, sources: list[Path], progress=None) -> list[di
         if not up:
             continue
         new_id = up.get("sc_track_id")
+        history = list(entry.get("history") or [])
+        history.append(default_timestamp())
         if old_id and new_id and old_id != new_id:  # replace: drop the prior WIP track
             try:
                 client_for(catalog).delete_track(old_id)
             except Exception:
                 pass
+            # Leave a timestamped changelog comment on the new track (best-effort).
+            if config.get("changelog_comments", True) and new_id:
+                try:
+                    client_for(catalog).add_comment(new_id, _changelog_comment(history))
+                except Exception:
+                    pass
         entry.update(sc_track_id=new_id, permalink_url=up.get("permalink_url"),
-                     last_hash=h, title=wip_title, marked=True)
+                     last_hash=h, title=wip_title, marked=True, history=history)
         wip[k] = entry
         processed.append({"name": entry.get("name"), "permalink_url": up.get("permalink_url")})
     _save_wip(catalog, wip)

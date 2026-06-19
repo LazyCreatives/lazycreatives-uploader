@@ -131,6 +131,7 @@ class SoundCloudConnectSession:
                 me = client.me()
                 tokens["username"] = me.get("username") or me.get("permalink")
                 tokens["user_id"] = me.get("id")
+                tokens["avatar_url"] = me.get("avatar_url")
             except Exception:
                 pass  # the upload still works without the display name
             self._on_connected(tokens)

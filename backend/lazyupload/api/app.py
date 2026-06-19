@@ -13,7 +13,8 @@ from lazyupload import entitlement, service, soundcloud
 from lazyupload.api.auth import require_token, ws_token_ok
 from lazyupload.api.progress import ProgressHub
 from lazyupload.api.schemas import (
-    AccountActivateRequest, ActivateRequest, Config, DisconnectRequest, ScanRequest,
+    AccountActivateRequest, ActivateRequest, ArtworkRequest, BulkArtworkRequest,
+    BulkDeleteRequest, BulkTrackUpdate, Config, DisconnectRequest, ScanRequest,
     TrackUpdate, UploadRequest, WipRequest,
 )
 from lazyupload.catalog import Catalog
@@ -132,6 +133,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     def account():
         return {"connected": service.connected(catalog),
                 "account": service.account_label(catalog),
+                "avatar": service.account_avatar(catalog),
                 "accounts": service.accounts_public(catalog),
                 "multi": _allows("multi_account"),
                 "mock": soundcloud.use_mock()}
@@ -291,14 +293,25 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         return {"uploads": catalog.recent_uploads(limit=limit)}
 
     # ---- manage existing SoundCloud tracks ----------------------------------
+    def _track_http_error(exc: Exception, fallback: str) -> HTTPException:
+        """Map a SoundCloud client failure to a typed HTTP error so the UI can tell
+        'reconnect your account' (401) from 'rate-limited' (429) from a generic failure."""
+        if isinstance(exc, soundcloud.AuthError):
+            return HTTPException(status_code=401,
+                                 detail="Your SoundCloud session expired — please reconnect the account.")
+        if isinstance(exc, soundcloud.RateLimitError):
+            return HTTPException(status_code=429,
+                                 detail="SoundCloud is rate-limiting requests — try again shortly.")
+        return HTTPException(status_code=502, detail=fallback)
+
     @app.get("/api/tracks", dependencies=[Depends(require_token)])
     async def list_tracks():
         if not service.connected(catalog):
             raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
         try:
             tracks = await asyncio.to_thread(service.list_tracks, catalog)
-        except Exception:
-            raise HTTPException(status_code=502, detail="Couldn't load your SoundCloud tracks.")
+        except Exception as e:
+            raise _track_http_error(e, "Couldn't load your SoundCloud tracks.")
         return {"tracks": tracks}
 
     @app.put("/api/tracks/{track_id}", dependencies=[Depends(require_token)])
@@ -310,8 +323,8 @@ def create_app(token: str, db_path: Path) -> FastAPI:
             raise HTTPException(status_code=400, detail="Nothing to update.")
         try:
             return await asyncio.to_thread(service.update_track, catalog, track_id, fields)
-        except Exception:
-            raise HTTPException(status_code=502, detail="Couldn't update that track.")
+        except Exception as e:
+            raise _track_http_error(e, "Couldn't update that track.")
 
     @app.delete("/api/tracks/{track_id}", dependencies=[Depends(require_token)])
     async def delete_track(track_id: int):
@@ -319,9 +332,70 @@ def create_app(token: str, db_path: Path) -> FastAPI:
             raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
         try:
             await asyncio.to_thread(service.delete_track, catalog, track_id)
-        except Exception:
-            raise HTTPException(status_code=502, detail="Couldn't delete that track.")
+        except Exception as e:
+            raise _track_http_error(e, "Couldn't delete that track.")
         return {"ok": True}
+
+    @app.post("/api/tracks/bulk", dependencies=[Depends(require_token)])
+    async def bulk_update_tracks(req: BulkTrackUpdate):
+        if not service.connected(catalog):
+            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+        if not _allows("batch"):
+            raise HTTPException(status_code=402, detail="Bulk editing is a Pro feature.")
+        patch = req.patch.model_dump(exclude_none=True)
+        if not patch:
+            raise HTTPException(status_code=400, detail="Nothing to update.")
+        results = await asyncio.to_thread(service.bulk_update, catalog, req.ids, patch)
+        return {"results": results}
+
+    @app.post("/api/tracks/bulk-delete", dependencies=[Depends(require_token)])
+    async def bulk_delete_tracks(req: BulkDeleteRequest):
+        if not service.connected(catalog):
+            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+        if not _allows("batch"):
+            raise HTTPException(status_code=402, detail="Bulk deleting is a Pro feature.")
+        results = await asyncio.to_thread(service.bulk_delete, catalog, req.ids)
+        return {"results": results}
+
+    @app.post("/api/tracks/{track_id}/artwork", dependencies=[Depends(require_token)])
+    async def set_track_artwork(track_id: int, req: ArtworkRequest):
+        if not service.connected(catalog):
+            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+        if not Path(req.artwork_path).is_file():
+            raise HTTPException(status_code=400, detail="Image file not found.")
+        try:
+            return await asyncio.to_thread(service.set_artwork, catalog, track_id, req.artwork_path)
+        except Exception as e:
+            raise _track_http_error(e, "Couldn't set that track's cover art.")
+
+    @app.post("/api/tracks/bulk-artwork", dependencies=[Depends(require_token)])
+    async def bulk_set_artwork(req: BulkArtworkRequest):
+        if not service.connected(catalog):
+            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+        if not _allows("batch"):
+            raise HTTPException(status_code=402, detail="Bulk cover art is a Pro feature.")
+        if not Path(req.artwork_path).is_file():
+            raise HTTPException(status_code=400, detail="Image file not found.")
+        results = await asyncio.to_thread(service.bulk_set_artwork, catalog, req.ids, req.artwork_path)
+        return {"results": results}
+
+    @app.post("/api/tracks/{track_id}/waveform-cover", dependencies=[Depends(require_token)])
+    async def waveform_cover(track_id: int):
+        if not service.connected(catalog):
+            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+        try:
+            return await asyncio.to_thread(service.generate_waveform_cover, catalog, track_id)
+        except Exception as e:
+            raise _track_http_error(e, str(e) or "Couldn't generate a waveform cover.")
+
+    @app.post("/api/tracks/bulk-waveform-cover", dependencies=[Depends(require_token)])
+    async def bulk_waveform_cover(req: BulkDeleteRequest):
+        if not service.connected(catalog):
+            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+        if not _allows("batch"):
+            raise HTTPException(status_code=402, detail="Bulk cover art is a Pro feature.")
+        results = await asyncio.to_thread(service.bulk_generate_waveform_covers, catalog, req.ids)
+        return {"results": results}
 
     # ---- live progress ------------------------------------------------------
     @app.websocket("/ws/progress")

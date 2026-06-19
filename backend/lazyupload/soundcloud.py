@@ -20,9 +20,12 @@ end so the whole app is runnable offline.
 """
 import base64
 import hashlib
+import mimetypes
 import os
+import re
 import secrets
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -280,6 +283,30 @@ def _parse_tag_list(raw: str) -> list[str]:
         return [t for t in (raw or "").split() if t]
 
 
+def _iso_created_at(raw) -> str | None:
+    """SoundCloud returns created_at as 'YYYY/MM/DD HH:MM:SS +0000' (not ISO). Convert to
+    ISO so the Manage UI can sort/format it; empty/unparseable values become None (which
+    sorts last) — the mock writes '' for freshly uploaded tracks."""
+    s = (raw or "").strip() if isinstance(raw, str) else (raw or "")
+    if not s:
+        return None
+    for fmt in ("%Y/%m/%d %H:%M:%S %z", "%Y/%m/%d %H:%M:%S"):
+        try:
+            return datetime.strptime(s, fmt).isoformat()
+        except (ValueError, TypeError):
+            continue
+    return s  # already ISO-ish or unknown — leave for the UI to handle
+
+
+def _hires_artwork(url):
+    """SoundCloud returns artwork as a ~100px '-large.jpg'. Bump it to the 500px variant
+    so Manage thumbnails aren't blurry (mirrors the avatar upgrade in coverart)."""
+    if not url:
+        return url
+    return re.sub(r"-(large|t\d+x\d+|badge|small|tiny|crop|original)\.(jpg|jpeg|png)(\?.*)?$",
+                  r"-t500x500.\2", url)
+
+
 def normalize_track(raw: dict) -> dict:
     """Flatten a SoundCloud (or mock) track into the shape the UI manages."""
     dur_ms = raw.get("duration") or 0
@@ -292,10 +319,16 @@ def normalize_track(raw: dict) -> dict:
         "tags": raw.get("tags") if isinstance(raw.get("tags"), list)
                 else _parse_tag_list(raw.get("tag_list", "")),
         "permalink_url": raw.get("permalink_url"),
-        "artwork_url": raw.get("artwork_url"),
+        "artwork_url": _hires_artwork(raw.get("artwork_url")),
         "duration": round(dur_ms / 1000) or None,
         "playback_count": raw.get("playback_count"),
-        "created_at": raw.get("created_at"),
+        "downloadable": raw.get("downloadable"),
+        "created_at": _iso_created_at(raw.get("created_at")),
+        # Surfaced for Manage-side de-dupe (same title uploaded as e.g. FLAC + MP3).
+        "original_format": (raw.get("original_format") or None),
+        "original_content_size": raw.get("original_content_size"),
+        # Peak data source for generated waveform cover art.
+        "waveform_url": raw.get("waveform_url"),
     }
 
 
@@ -336,8 +369,9 @@ class SoundCloudClient:
         _raise_for_status(r)
         return r.json()
 
-    def upload(self, file_path: str, meta, on_progress=None) -> dict:
-        """Upload one audio file. `meta` is a models.TrackMeta. Returns the track dict."""
+    def upload(self, file_path: str, meta, on_progress=None, artwork_path=None) -> dict:
+        """Upload one audio file. `meta` is a models.TrackMeta. `artwork_path` optionally
+        sets the cover art in the same request. Returns the track dict."""
         path = Path(file_path)
         data = {
             "track[title]": meta.title,
@@ -350,17 +384,38 @@ class SoundCloudClient:
         if meta.tags:
             data["track[tag_list]"] = _tag_list(meta.tags)
         pf = _ProgressFile(path, on_progress)
+        art_fh = None
         try:
             files = {"track[asset_data]": (path.name, pf, "application/octet-stream")}
+            ap = Path(artwork_path) if artwork_path else None
+            if ap and ap.is_file():
+                art_fh = open(ap, "rb")
+                ctype = mimetypes.guess_type(ap.name)[0] or "image/jpeg"
+                files["track[artwork_data]"] = (ap.name, art_fh, ctype)
             r = requests.post(f"{API_BASE}/tracks", headers=self._headers(),
                               data=data, files=files, timeout=_UPLOAD_TIMEOUT)
             _raise_for_status(r)
             return r.json()
         finally:
             pf.close()
+            if art_fh:
+                art_fh.close()
+
+    def set_artwork(self, track_id: int, image_path: str) -> dict:
+        """Replace a track's cover art (PUT track[artwork_data]). Returns the updated track."""
+        ap = Path(image_path)
+        if not ap.is_file():
+            raise RuntimeError("Image file not found.")
+        ctype = mimetypes.guess_type(ap.name)[0] or "image/jpeg"
+        with open(ap, "rb") as fh:
+            files = {"track[artwork_data]": (ap.name, fh, ctype)}
+            r = requests.put(f"{API_BASE}/tracks/{track_id}", headers=self._headers(),
+                             files=files, timeout=_UPLOAD_TIMEOUT)
+        _raise_for_status(r)
+        return normalize_track(r.json())
 
     # ---- manage existing uploads -------------------------------------------
-    def list_tracks(self, page: int = 50, max_total: int = 1000) -> list[dict]:
+    def list_tracks(self, page: int = 50, max_total: int = 2000) -> list[dict]:
         """Every track on the connected account (normalized), paginated so large
         libraries aren't silently truncated. Follows SoundCloud's next_href, bounded
         by max_total so a huge account can't stall the UI."""
@@ -386,6 +441,8 @@ class SoundCloudClient:
                 data[f"track[{k}]"] = fields[k]
         if fields.get("tags") is not None:
             data["track[tag_list]"] = _tag_list(fields["tags"])
+        if fields.get("downloadable") is not None:
+            data["track[downloadable]"] = "true" if fields["downloadable"] else "false"
         r = requests.put(f"{API_BASE}/tracks/{track_id}", headers=self._headers(),
                          data=data, timeout=30)
         _raise_for_status(r)
@@ -395,10 +452,32 @@ class SoundCloudClient:
         r = requests.delete(f"{API_BASE}/tracks/{track_id}", headers=self._headers(), timeout=30)
         _raise_for_status(r)
 
+    def add_comment(self, track_id: int, body: str, timestamp_ms: int = 0) -> dict:
+        """Post a comment on a track. `timestamp_ms` anchors it to a playback position
+        (0 = the very start). Used to leave a changelog when a WIP track is re-bounced."""
+        payload = {"comment": {"body": body, "timestamp": int(timestamp_ms or 0)}}
+        r = requests.post(f"{API_BASE}/tracks/{track_id}/comments",
+                          headers=self._headers(), json=payload, timeout=30)
+        _raise_for_status(r)
+        return r.json()
+
 
 # ---- the mock client --------------------------------------------------------
 def _slug(title: str) -> str:
     return "".join(c if c.isalnum() else "-" for c in title.lower()).strip("-") or "mix"
+
+
+def _img_data_url(path) -> str | None:
+    """Encode a local image as a data: URL so the mock's set cover renders under the
+    packaged CSP (img-src 'self' data:); file:// would be blocked. Demo-only."""
+    try:
+        p = Path(path)
+        if not p.is_file() or p.stat().st_size > 3_000_000:
+            return None
+        ctype = mimetypes.guess_type(p.name)[0] or "image/png"
+        return f"data:{ctype};base64," + base64.b64encode(p.read_bytes()).decode()
+    except Exception:
+        return None
 
 
 _SEED_TRACKS = [
@@ -429,7 +508,8 @@ class MockSoundCloudClient:
         self._mem: list[dict] | None = None
 
     def me(self) -> dict:
-        return {"username": self.tokens.get("username", "you (demo)"), "id": 0}
+        return {"username": self.tokens.get("username", "you (demo)"), "id": 0,
+                "avatar_url": "https://a1.sndcdn.com/images/default_avatar_large.png"}
 
     def _load(self) -> list[dict]:
         if self._store is not None:
@@ -447,7 +527,7 @@ class MockSoundCloudClient:
         else:
             self._mem = lib
 
-    def upload(self, file_path: str, meta, on_progress=None) -> dict:
+    def upload(self, file_path: str, meta, on_progress=None, artwork_path=None) -> dict:
         total = max(1, Path(file_path).stat().st_size)
         sent = 0
         step = max(1, total // 12)
@@ -456,15 +536,35 @@ class MockSoundCloudClient:
             if on_progress:
                 on_progress(sent, total)
             time.sleep(0.05)  # feel like a real transfer without being slow
-        tid = abs(hash(file_path)) % 1_000_000_000
+        # Real SoundCloud mints a new track id on every (re-)upload, so derive the mock
+        # id from the file's content too — re-bouncing the same path yields a NEW track,
+        # which is what the WIP replace + changelog flow relies on.
+        try:
+            with open(file_path, "rb") as fh:
+                head = fh.read(65536)
+        except OSError:
+            head = file_path.encode()
+        tid = abs(hash((file_path, total, head))) % 1_000_000_000
         track = {"id": tid, "title": meta.title, "sharing": meta.sharing,
                  "description": meta.description, "genre": meta.genre, "tags": list(meta.tags),
                  "permalink_url": f"https://soundcloud.com/demo/{_slug(meta.title)}",
-                 "duration": 0, "playback_count": 0, "created_at": ""}
+                 "duration": 0, "playback_count": 0, "created_at": "",
+                 "artwork_url": (_img_data_url(artwork_path) if artwork_path else None),
+                 "original_format": (Path(file_path).suffix.lstrip(".").lower() or None),
+                 "original_content_size": total}
         lib = self._load()
         lib.insert(0, track)
         self._save(lib)
         return track
+
+    def set_artwork(self, track_id: int, image_path: str) -> dict:
+        lib = self._load()
+        for t in lib:
+            if t.get("id") == track_id:
+                t["artwork_url"] = _img_data_url(image_path) or t.get("artwork_url")
+                self._save(lib)
+                return normalize_track(t)
+        raise RuntimeError("Track not found.")
 
     def list_tracks(self, limit: int = 200) -> list[dict]:
         return [normalize_track(t) for t in self._load()[:limit]]
@@ -473,7 +573,7 @@ class MockSoundCloudClient:
         lib = self._load()
         for t in lib:
             if t.get("id") == track_id:
-                for k in ("title", "description", "sharing", "genre", "tags"):
+                for k in ("title", "description", "sharing", "genre", "tags", "downloadable"):
                     if fields.get(k) is not None:
                         t[k] = fields[k]
                 self._save(lib)
@@ -481,8 +581,21 @@ class MockSoundCloudClient:
         raise RuntimeError("Track not found.")
 
     def delete_track(self, track_id: int) -> None:
-        lib = [t for t in self._load() if t.get("id") != track_id]
-        self._save(lib)
+        lib = self._load()
+        kept = [t for t in lib if t.get("id") != track_id]
+        if len(kept) == len(lib):
+            raise RuntimeError("Track not found.")  # real SC returns 404 for an unknown id
+        self._save(kept)
+
+    def add_comment(self, track_id: int, body: str, timestamp_ms: int = 0) -> dict:
+        comment = {"body": body, "timestamp": int(timestamp_ms or 0)}
+        lib = self._load()
+        for t in lib:
+            if t.get("id") == track_id:
+                t.setdefault("comments", []).append(comment)
+                self._save(lib)
+                break
+        return comment
 
 
 def get_client(tokens: dict, on_tokens=None, store=None):

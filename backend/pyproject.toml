@@ -8,6 +8,7 @@ dependencies = [
     "websockets>=12",      # uvicorn needs a WS library to serve /ws/progress live
     "apscheduler>=3.10,<4", # scheduled / watch-folder auto-uploads
     "requests>=2.31",       # multipart upload + OAuth token calls to SoundCloud
+    "pillow>=10",           # render waveform cover art
 ]
 
 [project.optional-dependencies]

@@ -31,10 +31,12 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 """
 
-# file_hash backs the dedupe lookup on every scan; timestamp backs history ordering.
+# file_hash backs the dedupe lookup on every scan; timestamp backs history ordering;
+# sc_track_id is the Manage join spine (SoundCloud track -> local row -> Backups project).
 _INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_uploads_hash ON uploads(file_hash);
 CREATE INDEX IF NOT EXISTS idx_uploads_status ON uploads(status);
+CREATE INDEX IF NOT EXISTS idx_uploads_sc_track_id ON uploads(sc_track_id);
 """
 
 
@@ -54,7 +56,10 @@ class Catalog:
     def _migrate(self) -> None:
         # Add columns introduced after the first release to pre-existing catalogs.
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(uploads)")}
-        new = {"account": "TEXT", "sc_track_id": "INTEGER", "permalink_url": "TEXT"}
+        # backups_project/_id persist the resolved Backups link at upload time so the
+        # Manage join survives later SoundCloud-side title renames (hash-anchored).
+        new = {"account": "TEXT", "sc_track_id": "INTEGER", "permalink_url": "TEXT",
+               "backups_project": "TEXT", "backups_project_id": "TEXT"}
         for col, typ in new.items():
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE uploads ADD COLUMN {col} {typ}")
@@ -62,15 +67,18 @@ class Catalog:
     # ---- uploads -------------------------------------------------------------
     def record_upload(self, title, file_path, file_hash, size, sharing, status,
                       timestamp, sc_track_id=None, permalink_url=None,
-                      account=None, error=None) -> int:
+                      account=None, error=None, backups_project=None,
+                      backups_project_id=None) -> int:
         with self._lock:
             cur = self.conn.execute(
                 "INSERT INTO uploads "
                 "(title, file_path, file_hash, size, sharing, status, sc_track_id, "
-                " permalink_url, account, error, timestamp) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " permalink_url, account, error, timestamp, backups_project, "
+                " backups_project_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (title, file_path, file_hash, size, sharing, status, sc_track_id,
-                 permalink_url, account, error, timestamp),
+                 permalink_url, account, error, timestamp, backups_project,
+                 backups_project_id),
             )
             self.conn.commit()
             return cur.lastrowid
@@ -103,6 +111,28 @@ class Catalog:
                 "SELECT * FROM uploads WHERE id = ?", (upload_id,)
             ).fetchone()
         return dict(row) if row else None
+
+    def upload_by_track_id(self, sc_track_id) -> dict | None:
+        """The local upload row for a SoundCloud track id — the first rung of the Manage
+        join spine (track -> file_path/file_hash/backups_project_id -> Backups project)."""
+        if sc_track_id is None:
+            return None
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM uploads WHERE sc_track_id = ? AND status = 'uploaded' "
+                "ORDER BY id DESC LIMIT 1", (sc_track_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def uploads_by_sc_track_id(self) -> dict:
+        """{sc_track_id: most-recent uploaded row} — batches the Manage enrichment join so
+        list_tracks does ONE query instead of one per track."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM uploads WHERE sc_track_id IS NOT NULL AND status = 'uploaded' "
+                "ORDER BY id ASC"
+            ).fetchall()
+        return {r["sc_track_id"]: dict(r) for r in rows}  # ASC => last (newest) wins
 
     def upload_by_hash(self, file_hash) -> dict | None:
         """The most recent successful upload of a given content hash (for WIP replace:
