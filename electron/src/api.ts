@@ -1,5 +1,5 @@
 import type {
-  Account, Config, Entitlement, JobStatus, Mix, Overview, Track, TrackUpdate,
+  Account, BulkResult, Config, Entitlement, JobStatus, Mix, Overview, Track, TrackUpdate,
   UploadItemInput, UploadRow,
 } from "./types";
 
@@ -58,6 +58,24 @@ export function makeApi() {
       return req("PUT", `/api/tracks/${id}`, fields);
     },
     async deleteTrack(id: number): Promise<{ ok: boolean }> { return req("DELETE", `/api/tracks/${id}`); },
+    async bulkUpdate(ids: number[], patch: TrackUpdate): Promise<BulkResult> {
+      return req("POST", "/api/tracks/bulk", { ids, patch });
+    },
+    async bulkDelete(ids: number[]): Promise<BulkResult> {
+      return req("POST", "/api/tracks/bulk-delete", { ids });
+    },
+    async setArtwork(id: number, artworkPath: string): Promise<Track> {
+      return req("POST", `/api/tracks/${id}/artwork`, { artwork_path: artworkPath });
+    },
+    async bulkArtwork(ids: number[], artworkPath: string): Promise<BulkResult> {
+      return req("POST", "/api/tracks/bulk-artwork", { ids, artwork_path: artworkPath });
+    },
+    async generateWaveformCover(id: number): Promise<Track> {
+      return req("POST", `/api/tracks/${id}/waveform-cover`);
+    },
+    async bulkWaveformCover(ids: number[]): Promise<BulkResult> {
+      return req("POST", "/api/tracks/bulk-waveform-cover", { ids });
+    },
     async entitlement(): Promise<Entitlement> { return req("GET", "/api/entitlement"); },
     async activateLicense(key: string): Promise<Entitlement> { return req("POST", "/api/entitlement/activate", { key }); },
     async deactivateLicense(): Promise<Entitlement> { return req("POST", "/api/entitlement/deactivate"); },
@@ -73,6 +91,13 @@ export function revealPath(p: string) {
 }
 export async function pickFolder(): Promise<string | null> {
   return (window as any).lazyupload?.pickFolder?.() ?? null;
+}
+export async function pickImage(): Promise<string | null> {
+  return (window as any).lazyupload?.pickImage?.() ?? null;
+}
+export async function readImage(path: string): Promise<string | null> {
+  if (!path) return null;
+  return (window as any).lazyupload?.readImage?.(path) ?? null;
 }
 export async function getOpenAtLogin(): Promise<boolean> {
   return (window as any).lazyupload?.getOpenAtLogin?.() ?? false;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { makeApi, openExternal } from "../api";
+import { makeApi, openExternal, pickImage, readImage } from "../api";
 import type { Config, Entitlement, Mix, Sharing, UploadItemInput } from "../types";
 import { Button, fmtBytes, fmtDuration, ProBadge, ProgressBar } from "../components/ui";
 import type { UploadState, ScanState } from "../useProgress";
@@ -18,9 +18,24 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [showDupes, setShowDupes] = useState(false);
+  const [coverArt, setCoverArt] = useState<string | null>(null);
+  const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
 
   useEffect(() => { void rescan(); /* on mount */ }, []);
+
+  // Load a preview data URL whenever the batch cover art changes.
+  useEffect(() => {
+    let alive = true;
+    if (!coverArt) { setCoverPreview(null); return; }
+    readImage(coverArt).then((url) => { if (alive) setCoverPreview(url); }).catch(() => { if (alive) setCoverPreview(null); });
+    return () => { alive = false; };
+  }, [coverArt]);
+
+  async function chooseCover() {
+    const p = await pickImage();
+    if (p) setCoverArt(p);
+  }
   // When an upload finishes, refresh the list so published mixes flip to "uploaded".
   useEffect(() => { if (upload.done) { void rescan(); setRunning(false); } }, [upload.done]);
 
@@ -83,6 +98,9 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
           tags: tags.length ? tags : undefined,
           description: tmpl?.description || undefined,
           file_hash: m.file_hash, size: m.size,
+          // Per-batch cover overrides the configured default; undefined lets the
+          // backend apply the default cover art.
+          artwork_path: coverArt || undefined,
         };
       });
     const releaseAt = scheduleOn && releaseAtValue
@@ -176,8 +194,23 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
               <option value="private">Private</option>
             </select>
           </label>
+          <div className="sub" style={{ margin: 0, display: "flex", gap: 8, alignItems: "center" }}>
+            Cover art
+            <span className={`art-thumb art-thumb--sm${coverArt && coverPreview ? "" : " art-thumb--ph"}`} aria-hidden="true">
+              {coverArt && coverPreview ? <img src={coverPreview} alt="" /> : "🎵"}
+            </span>
+            <Button sm onClick={chooseCover} disabled={running}>Choose image…</Button>
+            {coverArt && (
+              <Button kind="ghost" sm onClick={() => setCoverArt(null)} disabled={running}>Remove</Button>
+            )}
+          </div>
         </div>
       </div>
+      {coverArt && (
+        <div className="sub" style={{ margin: "-4px 0 12px", textAlign: "right" }}>
+          overrides your default cover for this upload
+        </div>
+      )}
 
       {ent.features.schedule_release && (
         <div className="row" style={{ marginBottom: 12 }}>

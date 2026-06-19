@@ -11,6 +11,9 @@ export interface Config {
   default_description: string;
   downloadable: boolean;
   auto_upload_sharing: Sharing;
+  changelog_comments: boolean;
+  default_artwork_path: string;
+  cover_watermark: boolean;
   templates: MetadataTemplate[];
 }
 
@@ -39,6 +42,7 @@ export interface Mix {
 export interface AccountSummary {
   id: string;
   username: string;
+  avatar_url?: string | null;
   mock: boolean;
   active: boolean;
 }
@@ -46,6 +50,7 @@ export interface AccountSummary {
 export interface Account {
   connected: boolean;
   account: string | null;
+  avatar: string | null;     // active account's SoundCloud profile picture
   accounts: AccountSummary[];
   multi: boolean;
   mock: boolean;
@@ -130,7 +135,52 @@ export interface Track {
   artwork_url: string | null;
   duration: number | null;
   playback_count: number | null;
-  created_at: string | null;
+  created_at: string | null;   // ISO string (or null)
+  downloadable?: boolean | null;
+  // Backups-join fields — absent/null when a track has no confident project match.
+  bpm?: number | null;
+  genre_emoji?: string | null;       // e.g. "🔥"
+  daw?: string | null;               // "ableton" | "flstudio" | ...
+  project_match?: string | null;     // matched Backups project name
+  plugin_count?: number | null;
+  track_count?: number | null;       // DAW project clip/track count
+  missing_count?: number | null;     // missing-sample refs (>0 => warning chip)
+  project_size?: number | null;      // bytes
+  project_mtime?: number | null;     // unix epoch seconds
+  backups?: {
+    count: number;
+    first_backup: string | null;     // ISO
+    last_backup: string | null;      // ISO
+    archived_bytes: number | null;
+    file_count: number | null;
+    verified: boolean;
+    verified_at: string | null;      // ISO
+    status: string | null;           // "ok" | "partial"
+  } | null;
+  // SEO / discoverability score of the LIVE SoundCloud metadata.
+  seo?: SeoScore | null;
+  // Manage-side format de-dupe (same title uploaded as e.g. FLAC + MP3).
+  original_format?: string | null;
+  dupe_group?: number | null;   // the keeper track's id, shared across the group
+  dupe_count?: number;          // group size (>1 ⇒ this track has duplicates)
+  dupe_keeper?: boolean;        // true on the highest-quality copy
+  waveform_url?: string | null; // source for generated waveform cover art
+}
+
+export interface SeoCheck {
+  id: string;
+  label: string;
+  points: number;
+  max: number;
+  hint: string | null;
+}
+
+export interface SeoScore {
+  score: number;             // 0–100
+  grade: string;             // "A".."F"
+  checks: SeoCheck[];
+  suggestions: string[];     // ordered, highest-impact first
+  suggested_tags: string[];  // genre-appropriate SoundCloud tags to add
 }
 
 export interface TrackUpdate {
@@ -139,6 +189,12 @@ export interface TrackUpdate {
   sharing?: Sharing;
   genre?: string;
   tags?: string[];
+  downloadable?: boolean;
+}
+
+export interface BulkResult {
+  // `track` is the freshly-enriched row for ok items (so the UI can splice it without a refetch)
+  results: { id: number; ok: boolean; error: string | null; track?: Track }[];
 }
 
 export interface UploadItemInput {
@@ -151,4 +207,5 @@ export interface UploadItemInput {
   tags?: string[];
   file_hash?: string | null;
   size?: number;
+  artwork_path?: string;
 }

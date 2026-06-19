@@ -1,0 +1,212 @@
+/* Manage workspace — dense, scalable library view. Reuses the brand tokens from
+   theme.css (blue palette, glass material) for a sticky toolbar, bulk-action bar,
+   Backups chip cluster, artwork thumbnails, and a right-side edit drawer / modal. */
+
+/* ---- sticky glass toolbar ---- */
+.mng-toolbar {
+  position: sticky; top: -30px; z-index: 30;
+  margin: 0 0 14px; padding: 12px 14px; border-radius: var(--radius-lg);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.mng-toolbar__count { color: var(--text-dim); font-size: 12.5px; margin: 0; }
+.mng-toolbar__row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.mng-search { flex: 1; min-width: 150px; }
+.mng-sortdir {
+  display: inline-grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0;
+  border-radius: 9px; border: 1px solid var(--border-strong); background: var(--surface-2);
+  color: var(--text-dim); cursor: pointer; font-size: 14px; transition: color .14s, border-color .14s;
+}
+.mng-sortdir:hover { color: var(--text); border-color: var(--accent); }
+
+/* ---- filter toggle-chips (reuse .pill as toggle buttons) ---- */
+.pill--toggle {
+  border: 1px solid var(--border-strong); background: transparent; color: var(--text-dim);
+  cursor: pointer; font: inherit; font-weight: 600; font-size: 11.5px; transition: background .14s, color .14s, border-color .14s;
+}
+.pill--toggle:hover { color: var(--text); border-color: var(--accent); }
+.pill--toggle.pill--on { background: var(--accent-soft); color: var(--accent); border-color: rgba(136, 178, 214, 0.4); }
+
+/* ---- bulk-action bar (swaps in when ≥1 selected) ---- */
+.mng-bulk {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; margin: 0 0 14px; border-radius: var(--radius-lg);
+  position: sticky; top: -30px; z-index: 31;
+  border: 1px solid rgba(136, 178, 214, 0.4); animation: mngBulkIn .22s var(--ease-glide) both;
+}
+@keyframes mngBulkIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+.mng-bulk__count { font-weight: 650; margin-right: auto; }
+.mng-bulk__count b { color: var(--accent); }
+
+/* ---- row artwork thumbnail ---- */
+.mng-art {
+  width: 40px; height: 40px; flex-shrink: 0; border-radius: 8px; overflow: hidden;
+  background: var(--surface-3); display: grid; place-items: center; font-size: 18px;
+  border: 1px solid var(--border);
+}
+.mng-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mng-art--ph { color: var(--text-faint); }
+/* profile-picture stand-in for tracks with no cover art — dimmed so it reads as a placeholder */
+.mng-art--avatar img { opacity: 0.55; filter: saturate(0.85); }
+
+/* ---- cover-art picker (Settings default, Upload batch, Edit drawer) ---- */
+.art-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 7px; }
+.art-row__actions { display: flex; align-items: center; gap: 8px; }
+.art-thumb {
+  width: 56px; height: 56px; flex-shrink: 0; border-radius: 10px; overflow: hidden;
+  background: var(--surface-3); display: grid; place-items: center; font-size: 22px;
+  border: 1px solid var(--border);
+}
+.art-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.art-thumb--sm { width: 40px; height: 40px; border-radius: 8px; font-size: 18px; }
+.art-thumb--ph { color: var(--text-faint); }
+
+.mng-cover { margin-top: 16px; }
+.mng-cover__label { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 2px; }
+
+/* ---- Backups chip cluster ---- */
+.mng-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex-shrink: 0; }
+.mchip {
+  display: inline-flex; align-items: center; gap: 4px; border-radius: 999px;
+  padding: 2px 8px; font-size: 11px; font-weight: 600; white-space: nowrap;
+  background: var(--surface-3); color: var(--text-dim);
+}
+.mchip--bpm { background: var(--accent-soft); color: var(--accent); font-variant-numeric: tabular-nums; }
+.mchip--daw { background: var(--accent-soft); color: var(--accent); text-transform: capitalize; }
+.mchip--ok { background: var(--ok-soft); color: var(--accent-2); }
+.mchip--warn { background: var(--warn-soft); color: var(--warn); }
+.mchip--stale { background: var(--surface-3); color: var(--text-faint); }
+.mchip--keep { background: var(--ok-soft); color: var(--accent-2); }
+.mchip--dupe { background: var(--danger-soft); color: var(--danger); }
+
+/* ---- duplicate-cleanup hint under the filter chips ---- */
+.mng-dupehint { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text-dim); }
+
+/* ---- clickable genre tag suggestions (edit drawer) ---- */
+.mng-tagsugg { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 14px; }
+.mng-tagsugg__label { font-size: 11.5px; color: var(--text-faint); margin-right: 2px; }
+.mng-tagchip {
+  border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--accent);
+  border-radius: 999px; padding: 3px 9px; font: inherit; font-size: 11.5px; font-weight: 600;
+  cursor: pointer; transition: background .14s, border-color .14s;
+}
+.mng-tagchip:hover { background: var(--accent-soft); border-color: rgba(136, 178, 214, 0.4); }
+
+/* ---- right-aligned created date ---- */
+.mng-date { flex-shrink: 0; color: var(--text-faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+
+/* ---- inline icon actions ---- */
+.mng-iconbtn {
+  display: inline-grid; place-items: center; width: 30px; height: 30px; flex-shrink: 0;
+  border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface-2);
+  color: var(--text-dim); cursor: pointer; font-size: 13px; transition: color .14s, border-color .14s, background .14s;
+}
+.mng-iconbtn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.mng-iconbtn:disabled { opacity: 0.45; cursor: not-allowed; }
+.mng-iconbtn--danger:hover:not(:disabled) { color: var(--danger); border-color: rgba(242, 112, 110, 0.5); }
+
+/* ---- pagination ---- */
+.mng-pager { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; margin: 16px 0 4px; }
+.mng-pager__label { color: var(--text-dim); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.mng-pager__nav { display: flex; align-items: center; gap: 14px; }
+
+/* ---- overlay scrim (shared by drawer + modal) ---- */
+.mng-scrim {
+  position: fixed; inset: 0; z-index: 80; background: rgba(6, 8, 11, 0.55);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  display: flex; animation: mngScrimIn .18s ease both;
+}
+@keyframes mngScrimIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---- right-side drawer (wide windows) ---- */
+.mng-drawer {
+  margin-left: auto; width: min(440px, 92vw); height: 100%;
+  border-radius: 0; border-right: none; border-top: none; border-bottom: none;
+  border-left: 1px solid rgba(134, 179, 211, 0.16);
+  display: flex; flex-direction: column; overflow: hidden;
+  animation: mngDrawerIn .26s var(--ease-glide) both;
+}
+@keyframes mngDrawerIn { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ---- centered modal (narrow windows + confirm dialog) ---- */
+.mng-scrim--center { align-items: center; justify-content: center; padding: 24px; }
+.mng-modal {
+  width: min(440px, 100%); max-height: calc(100% - 48px); border-radius: var(--radius-lg);
+  display: flex; flex-direction: column; overflow: hidden;
+  animation: mngModalIn .24s var(--ease-glide) both;
+}
+@keyframes mngModalIn { from { transform: translateY(10px) scale(0.98); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+
+/* ---- shared panel chrome (drawer + modal) ---- */
+.mng-panel__head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 16px 18px; border-bottom: 1px solid var(--border);
+}
+.mng-panel__head h2 { margin: 0; }
+.mng-panel__close {
+  display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px;
+  border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text-dim);
+  cursor: pointer; font-size: 15px; line-height: 1;
+}
+.mng-panel__close:hover { color: var(--text); border-color: var(--accent); }
+.mng-panel__body { padding: 18px; overflow: auto; flex: 1; }
+.mng-panel__foot {
+  display: flex; gap: 8px; justify-content: flex-end; align-items: center;
+  padding: 14px 18px; border-top: 1px solid var(--border);
+}
+
+/* ---- inline form error note (NOT the .locked-note danger hack) ---- */
+.mng-err {
+  display: flex; align-items: center; gap: 8px; margin: 6px 0 0; padding: 9px 11px;
+  border-radius: 9px; font-size: 12.5px;
+  background: var(--danger-soft); color: var(--danger); border: 1px solid rgba(242, 112, 110, 0.3);
+}
+
+/* ---- read-only "Matched to <project>" mini-section in the drawer ---- */
+.mng-matched {
+  margin-top: 16px; padding: 13px 14px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.mng-matched__label { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 9px; }
+.mng-matched__name { font-weight: 600; }
+
+/* ---- typed-confirm delete summary ---- */
+.mng-summary { margin: 4px 0 0; padding: 10px 12px; border-radius: 9px; font-size: 12.5px; background: var(--surface-2); border: 1px solid var(--border); }
+
+/* ---- SEO score badge + breakdown ---- */
+.mng-seo {
+  display: inline-flex; align-items: baseline; gap: 3px; flex-shrink: 0;
+  padding: 2px 7px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.02em; border: 1px solid transparent;
+}
+.mng-seo__n { font-size: 9.5px; font-weight: 600; opacity: 0.8; font-variant-numeric: tabular-nums; }
+.mng-seo.seo--a { background: var(--ok-soft); color: var(--accent-2); }
+.mng-seo.seo--b { background: var(--accent-soft); color: var(--accent); }
+.mng-seo.seo--c { background: var(--surface-3); color: var(--text-dim); }
+.mng-seo.seo--d { background: var(--warn-soft); color: var(--warn); }
+.mng-seo.seo--f { background: var(--danger-soft); color: var(--danger); }
+
+.mng-seo-panel {
+  margin-top: 16px; padding: 13px 14px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.mng-seo-panel__head { display: flex; align-items: center; gap: 9px; margin-bottom: 11px; }
+.mng-seo-panel__title { font-weight: 600; font-size: 13px; }
+.mng-seo-checks { display: grid; gap: 6px; }
+.mng-seo-check { display: flex; align-items: center; gap: 9px; font-size: 12.5px; }
+.mng-seo-check__mark {
+  display: inline-grid; place-items: center; width: 17px; height: 17px; flex-shrink: 0;
+  border-radius: 5px; font-size: 11px; font-weight: 700;
+}
+.mng-seo-check__mark.is-ok { background: var(--ok-soft); color: var(--accent-2); }
+.mng-seo-check__mark.is-part { background: var(--warn-soft); color: var(--warn); }
+.mng-seo-check__mark.is-bad { background: var(--danger-soft); color: var(--danger); }
+.mng-seo-check__label { flex: 1; color: var(--text-dim); }
+.mng-seo-check__pts { color: var(--text-faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.mng-seo-sugg { margin: 12px 0 0; padding-left: 18px; display: grid; gap: 5px; }
+.mng-seo-sugg li { font-size: 12px; color: var(--text-dim); }
+
+@media (prefers-reduced-motion: reduce) {
+  .mng-bulk, .mng-scrim, .mng-drawer, .mng-modal {
+    animation: none !important;
+  }
+}

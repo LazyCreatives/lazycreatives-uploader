@@ -85,7 +85,7 @@ export default function App() {
             ) : tab === "upload" ? (
               <Upload cfg={cfg} ent={ent} scan={live.scan} upload={live.upload} resetUpload={live.resetUpload} />
             ) : tab === "manage" ? (
-              <Manage />
+              <Manage ent={ent} cfg={cfg} />
             ) : tab === "history" ? (
               <History />
             ) : (

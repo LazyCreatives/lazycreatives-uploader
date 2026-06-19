@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getOpenAtLogin, makeApi, setOpenAtLogin } from "../api";
+import { getOpenAtLogin, makeApi, pickImage, readImage, setOpenAtLogin } from "../api";
 import type { Account, Config, Entitlement, MetadataTemplate, Sharing } from "../types";
 import { Button, ProBadge } from "../components/ui";
 import { Folders } from "../components/Folders";
@@ -21,8 +21,18 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
   const [licenseKey, setLicenseKey] = useState("");
   const [licenseError, setLicenseError] = useState<string | null>(null);
   const [atLogin, setAtLogin] = useState(false);
+  const [artPreview, setArtPreview] = useState<string | null>(null);
 
   useEffect(() => { getOpenAtLogin().then(setAtLogin).catch(() => {}); }, []);
+
+  // (Re)load the default-cover preview whenever the configured path changes.
+  useEffect(() => {
+    let alive = true;
+    const p = draft.default_artwork_path;
+    if (!p) { setArtPreview(null); return; }
+    readImage(p).then((url) => { if (alive) setArtPreview(url); }).catch(() => { if (alive) setArtPreview(null); });
+    return () => { alive = false; };
+  }, [draft.default_artwork_path]);
 
   function set<K extends keyof Config>(k: K, v: Config[K]) {
     setDraft((d) => ({ ...d, [k]: v }));
@@ -34,6 +44,11 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
     setSavedFlash(true); setTimeout(() => setSavedFlash(false), 1500);
   }
   async function toggleLogin(v: boolean) { setAtLogin(await setOpenAtLogin(v)); }
+
+  async function chooseArt() {
+    const p = await pickImage();
+    if (p) set("default_artwork_path", p);
+  }
 
   async function activate() {
     setLicenseError(null);
@@ -82,6 +97,33 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
         <label className="field"><span>Default description</span>
           <textarea value={draft.default_description}
             onChange={(e) => set("default_description", e.target.value)} /></label>
+        <label className="toolchk" style={{ fontSize: 13.5 }}>
+          <input type="checkbox" checked={draft.changelog_comments !== false}
+            onChange={(e) => set("changelog_comments", e.target.checked)} />
+          Comment a timestamped changelog when a WIP track is re-bounced
+        </label>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <span>Default cover art</span>
+          <div className="art-row">
+            <span className={`art-thumb${draft.default_artwork_path && artPreview ? "" : " art-thumb--ph"}`} aria-hidden="true">
+              {draft.default_artwork_path && artPreview
+                ? <img src={artPreview} alt="" />
+                : "🎵"}
+            </span>
+            <div className="art-row__actions">
+              <Button sm onClick={chooseArt}>Choose image…</Button>
+              {draft.default_artwork_path && (
+                <Button kind="ghost" sm onClick={() => set("default_artwork_path", "")}>Remove</Button>
+              )}
+            </div>
+          </div>
+          <span className="sub" style={{ marginTop: 6 }}>Applied as the cover for uploads that don't pick their own art.</span>
+        </div>
+        <label className="toolchk" style={{ fontSize: 13.5, marginTop: 14 }}>
+          <input type="checkbox" checked={draft.cover_watermark !== false}
+            onChange={(e) => set("cover_watermark", e.target.checked)} />
+          Add a small LazyCreatives watermark to generated waveform covers
+        </label>
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
