@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("lazyupload", {
   token: argValue("--lazyup-token"),
   port: argValue("--lazyup-port"),
   pickFolder: () => ipcRenderer.invoke("pick-folder"),
+  pickImage: () => ipcRenderer.invoke("pick-image"),
+  readImage: (p) => ipcRenderer.invoke("read-image", p),
   revealPath: (target) => ipcRenderer.invoke("reveal-path", target),
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   getOpenAtLogin: () => ipcRenderer.invoke("get-open-at-login"),

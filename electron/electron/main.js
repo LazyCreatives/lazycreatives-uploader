@@ -78,6 +78,35 @@ ipcMain.handle("pick-folder", async () => {
   return r.canceled ? null : r.filePaths[0];
 });
 
+ipcMain.handle("pick-image", async () => {
+  const r = await dialog.showOpenDialog(win, {
+    properties: ["openFile"],
+    filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "webp", "gif"] }],
+  });
+  return r.canceled ? null : r.filePaths[0];
+});
+
+// Read a local image into a data URL for in-app previews. Guarded against huge
+// files so we never blow up the renderer with a 50 MB base64 string.
+const IMAGE_MIME = {
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+  ".webp": "image/webp", ".gif": "image/gif",
+};
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+ipcMain.handle("read-image", async (_e, target) => {
+  try {
+    if (typeof target !== "string" || !target) return null;
+    const mime = IMAGE_MIME[path.extname(target).toLowerCase()];
+    if (!mime) return null;
+    const stat = await fs.promises.stat(target);
+    if (!stat.isFile() || stat.size > MAX_IMAGE_BYTES) return null;
+    const buf = await fs.promises.readFile(target);
+    return `data:${mime};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
+});
+
 ipcMain.handle("reveal-path", (_e, target) => {
   if (target) shell.showItemInFolder(target);
 });
@@ -105,7 +134,11 @@ app.whenReady().then(async () => {
         cb({ responseHeaders: { ...details.responseHeaders,
           "Content-Security-Policy": [
             "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-            "connect-src http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' data:; font-src 'self' data:",
+            "connect-src http://127.0.0.1:* ws://127.0.0.1:*; " +
+            // sndcdn hosts serve SoundCloud cover art (i*.sndcdn.com) + profile avatars
+            // (a*.sndcdn.com). Without them the Manage thumbnails/fallbacks render broken
+            // in packaged builds — and dev skips CSP entirely, so this only bites a ship.
+            "img-src 'self' data: https://*.sndcdn.com; font-src 'self' data:",
           ] } });
       });
     }
