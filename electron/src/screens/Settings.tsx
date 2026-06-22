@@ -124,6 +124,17 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
             onChange={(e) => set("cover_watermark", e.target.checked)} />
           Add a small LazyCreatives watermark to generated waveform covers
         </label>
+        <label className="field" style={{ marginBottom: 0, marginTop: 12 }}>
+          <span>Waveform color</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <input type="color" value={draft.cover_waveform_color || "#86B3D3"}
+              onChange={(e) => set("cover_waveform_color", e.target.value)}
+              style={{ width: 44, height: 30, padding: 2, cursor: "pointer" }} aria-label="Waveform color" />
+            <span className="sub" style={{ margin: 0 }}>
+              Base hue for generated covers — bass renders darker, treble brighter.
+            </span>
+          </div>
+        </label>
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

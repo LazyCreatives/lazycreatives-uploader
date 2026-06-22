@@ -14,6 +14,7 @@ export interface Config {
   changelog_comments: boolean;
   default_artwork_path: string;
   cover_watermark: boolean;
+  cover_waveform_color: string;
   templates: MetadataTemplate[];
 }
 
