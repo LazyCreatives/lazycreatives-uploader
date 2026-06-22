@@ -94,7 +94,7 @@ def _hex_to_rgb(value, fallback=_ACCENT) -> tuple:
         return fallback
 
 
-def analyze_audio(path: str, slices: int = 190) -> list | None:
+def analyze_audio(path: str, slices: int = 256) -> list | None:
     """Read a local audio file and return per-slice {amp, brightness}: `amp` is the
     peak level (0..1, normalised across the track with headroom + a gentle dynamics
     curve) and `brightness` is the high-vs-low spectral balance (0 = bass-heavy/dark,
@@ -113,23 +113,31 @@ def analyze_audio(path: str, slices: int = 190) -> list | None:
         if n < slices * 4 or sr <= 0:
             return None
         hop = n / slices
-        out = []
+        sub = 16                 # analysis windows per bar (oversampled, so each bar's
+        out = []                 # height + colour reflect its whole span, not just its start
         for i in range(slices):
             start = int(i * hop)
-            seg = mono[start:start + max(1, int(hop))]
-            # RMS (energy) per slice, not peak — gives the smoother loudness envelope
+            end = int((i + 1) * hop)
+            span = max(1, end - start)
+            seg = mono[start:end]
+            # RMS (energy) per bar, not peak — gives the smoother loudness envelope
             # SoundCloud shows, instead of a spiky transient-driven barcode.
             amp = float(np.sqrt(np.mean(seg ** 2))) if len(seg) else 0.0
-            w = mono[start:start + min(8192, max(256, int(hop)))]
+            # spectral centroid averaged over `sub` windows tiling the bar; bass-heavy
+            # slices sit low, bright ones high; log-normalised so a typical full mix
+            # (~1.5 kHz) lands mid-range (the base hue), kicks go dark, hats go bright.
+            wlen = min(n, max(1024, span // sub))
+            cents = []
+            for j in range(sub):
+                ws = start + int(j * span / sub)
+                w = mono[ws:ws + wlen]
+                if len(w) >= 256:
+                    spec = np.abs(np.fft.rfft(w * np.hanning(len(w))))
+                    freqs = np.fft.rfftfreq(len(w), 1.0 / sr)
+                    cents.append(float((freqs * spec).sum() / (spec.sum() + 1e-9)))
             brightness = 0.0
-            if len(w) >= 64:
-                spec = np.abs(np.fft.rfft(w * np.hanning(len(w))))
-                freqs = np.fft.rfftfreq(len(w), 1.0 / sr)
-                # spectral centroid (the "centre of mass" of the spectrum) — bass-heavy
-                # slices sit low, bright ones high; log-normalised so a typical full mix
-                # (~1.5 kHz) lands mid-range (the base hue), kicks go dark, hats go bright.
-                centroid = float((freqs * spec).sum() / (spec.sum() + 1e-9))
-                c = (np.log(max(centroid, 1.0)) - np.log(150.0)) / (np.log(15000.0) - np.log(150.0))
+            if cents:
+                c = (np.log(max(float(np.mean(cents)), 1.0)) - np.log(150.0)) / (np.log(15000.0) - np.log(150.0))
                 brightness = float(max(0.0, min(1.0, c)))
             out.append({"amp": amp, "brightness": brightness})
         # Light smoothing of the RMS envelope (like SoundCloud's) so single-slice
