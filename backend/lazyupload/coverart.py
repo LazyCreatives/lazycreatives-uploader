@@ -132,6 +132,15 @@ def analyze_audio(path: str, slices: int = 440) -> list | None:
         mx = max((s["amp"] for s in out), default=0.0) or 1.0
         for s in out:
             s["amp"] = (s["amp"] / mx) ** 0.8  # keep real dynamics, lift the quiet a touch
+        # Contrast-stretch brightness across the track. Full-mix audio always has lows +
+        # mids + highs, so the ABSOLUTE balance barely moves and the depth looks uniform;
+        # rescaling the 8th–92nd percentile to 0..1 makes the RELATIVE shifts (a kick hit
+        # vs a hat/snare) obvious. Skip when the track is spectrally flat (e.g. a pure tone).
+        br = np.array([s["brightness"] for s in out])
+        lo, hi = float(np.percentile(br, 8)), float(np.percentile(br, 92))
+        if hi - lo > 0.02:
+            for s in out:
+                s["brightness"] = float(min(1.0, max(0.0, (s["brightness"] - lo) / (hi - lo))))
         return out
     except Exception:
         return None
@@ -215,8 +224,14 @@ def render_waveform_cover(samples, name: str, title: str, out_path: str,
         if bright is None:
             rgb = base
         else:
-            f = 0.30 + 0.85 * bright       # bass (dark) -> treble (bright)
-            rgb = tuple(min(255, int(c * f)) for c in base)
+            # bold depth: very dark (bass) -> base hue (mids) -> near-white (treble)
+            b = bright
+            if b < 0.5:
+                f = 0.18 + 1.64 * b                      # 0.18*hue .. full hue
+                rgb = tuple(int(c * f) for c in base)
+            else:
+                w = (b - 0.5) * 1.5                       # full hue .. ~75% toward white
+                rgb = tuple(min(255, int(c + (255 - c) * w)) for c in base)
         x = margin + i * slot + (slot - bar_w) / 2
         draw.rounded_rectangle([x, cy - h, x + bar_w, cy + h], radius=bar_w / 2, fill=rgb + (255,))
 
