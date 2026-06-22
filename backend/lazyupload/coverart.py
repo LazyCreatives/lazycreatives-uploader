@@ -220,27 +220,23 @@ def render_waveform_cover(samples, name: str, title: str, out_path: str,
         x = margin + i * slot + (slot - bar_w) / 2
         draw.rounded_rectangle([x, cy - h, x + bar_w, cy + h], radius=bar_w / 2, fill=rgb + (255,))
 
-    # a lighter central band so the name reads over the waveform without hiding it
-    band = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    bh = size * 0.30
-    ImageDraw.Draw(band).rectangle([0, cy - bh / 2, size, cy + bh / 2], fill=(11, 14, 19, 110))
-    img = Image.alpha_composite(img, band)
-    draw = ImageDraw.Draw(img, "RGBA")
-
+    # The name reads over the waveform on its own outline (no dark band — that was
+    # flattening the frequency depth through the middle). A slightly heavier stroke keeps
+    # it legible over bright/tall sections.
     nm = (name or "").strip().upper() or "UNTITLED ARTIST"
     nf = _fit_font(nm, int(size * 0.13), usable_w)
-    _draw_centered(draw, nm, nf, size / 2, cy - size * 0.015, fill=(255, 255, 255), stroke=5)
+    _draw_centered(draw, nm, nf, size / 2, cy - size * 0.015, fill=(255, 255, 255), stroke=6)
 
     ttl = (title or "").strip()
     if ttl:
         tf = _fit_font(ttl, int(size * 0.05), usable_w)
-        _draw_centered(draw, ttl, tf, size / 2, cy + size * 0.085, fill=_TITLE, stroke=3)
+        _draw_centered(draw, ttl, tf, size / 2, cy + size * 0.085, fill=(235, 240, 245), stroke=4)
 
-    # clear border framing the waveform
+    # subtle frame around the waveform — soft white outline, low opacity
     fpad = size * 0.04
     draw.rounded_rectangle([size * 0.05, cy - max_h - fpad, size * 0.95, cy + max_h + fpad],
-                           radius=size * 0.025, outline=base + (255,),
-                           width=max(4, int(size * 0.008)))
+                           radius=size * 0.025, outline=(255, 255, 255, 90),
+                           width=max(3, int(size * 0.005)))
 
     if watermark:
         wf = _font(int(size * 0.027))
