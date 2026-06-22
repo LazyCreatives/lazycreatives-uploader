@@ -94,7 +94,7 @@ def _hex_to_rgb(value, fallback=_ACCENT) -> tuple:
         return fallback
 
 
-def analyze_audio(path: str, slices: int = 440) -> list | None:
+def analyze_audio(path: str, slices: int = 190) -> list | None:
     """Read a local audio file and return per-slice {amp, brightness}: `amp` is the
     peak level (0..1, normalised across the track with headroom + a gentle dynamics
     curve) and `brightness` is the high-vs-low spectral balance (0 = bass-heavy/dark,
@@ -117,21 +117,29 @@ def analyze_audio(path: str, slices: int = 440) -> list | None:
         for i in range(slices):
             start = int(i * hop)
             seg = mono[start:start + max(1, int(hop))]
-            amp = float(np.max(np.abs(seg))) if len(seg) else 0.0
+            # RMS (energy) per slice, not peak — gives the smoother loudness envelope
+            # SoundCloud shows, instead of a spiky transient-driven barcode.
+            amp = float(np.sqrt(np.mean(seg ** 2))) if len(seg) else 0.0
             w = mono[start:start + min(8192, max(256, int(hop)))]
             brightness = 0.0
             if len(w) >= 64:
                 spec = np.abs(np.fft.rfft(w * np.hanning(len(w))))
                 freqs = np.fft.rfftfreq(len(w), 1.0 / sr)
-                low = float(spec[(freqs >= 20) & (freqs < 250)].sum())
-                mid = float(spec[(freqs >= 250) & (freqs < 4000)].sum())
-                high = float(spec[(freqs >= 4000) & (freqs < 20000)].sum())
-                total = low + mid + high + 1e-9
-                brightness = max(0.0, min(1.0, (mid * 0.45 + high) / total))
+                # spectral centroid (the "centre of mass" of the spectrum) — bass-heavy
+                # slices sit low, bright ones high; log-normalised so a typical full mix
+                # (~1.5 kHz) lands mid-range (the base hue), kicks go dark, hats go bright.
+                centroid = float((freqs * spec).sum() / (spec.sum() + 1e-9))
+                c = (np.log(max(centroid, 1.0)) - np.log(150.0)) / (np.log(15000.0) - np.log(150.0))
+                brightness = float(max(0.0, min(1.0, c)))
             out.append({"amp": amp, "brightness": brightness})
-        mx = max((s["amp"] for s in out), default=0.0) or 1.0
-        for s in out:
-            s["amp"] = (s["amp"] / mx) ** 0.8  # keep real dynamics, lift the quiet a touch
+        # Light smoothing of the RMS envelope (like SoundCloud's) so single-slice
+        # transients don't read as a spiky barcode.
+        amps = np.array([s["amp"] for s in out])
+        if len(amps) >= 3:
+            amps = np.convolve(amps, np.array([0.25, 0.5, 0.25]), mode="same")
+        mx = float(amps.max()) or 1.0
+        for s, a in zip(out, amps):
+            s["amp"] = float((a / mx) ** 0.65)  # fuller body, keeping the loudness contour
         # Contrast-stretch brightness across the track. Full-mix audio always has lows +
         # mids + highs, so the ABSOLUTE balance barely moves and the depth looks uniform;
         # rescaling the 8th–92nd percentile to 0..1 makes the RELATIVE shifts (a kick hit
@@ -224,13 +232,14 @@ def render_waveform_cover(samples, name: str, title: str, out_path: str,
         if bright is None:
             rgb = base
         else:
-            # bold depth: very dark (bass) -> base hue (mids) -> near-white (treble)
+            # depth: dark (bass) -> base hue (mids) -> a lighter tint of the hue (treble).
+            # Capped well short of white so bright sections stay coloured, not washed out.
             b = bright
             if b < 0.5:
-                f = 0.18 + 1.64 * b                      # 0.18*hue .. full hue
+                f = 0.30 + 1.40 * b                       # 0.30*hue (dark) .. full hue
                 rgb = tuple(int(c * f) for c in base)
             else:
-                w = (b - 0.5) * 1.5                       # full hue .. ~75% toward white
+                w = (b - 0.5) * 0.90                       # full hue .. ~45% toward white
                 rgb = tuple(min(255, int(c + (255 - c) * w)) for c in base)
         x = margin + i * slot + (slot - bar_w) / 2
         draw.rounded_rectangle([x, cy - h, x + bar_w, cy + h], radius=bar_w / 2, fill=rgb + (255,))
