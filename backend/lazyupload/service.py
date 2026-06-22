@@ -415,18 +415,33 @@ def bulk_set_artwork(catalog: Catalog, ids: list[int], image_path: str) -> list[
 
 
 # ---- generated waveform cover art -------------------------------------------
+_DEFAULT_WAVEFORM_COLOR = "#86B3D3"  # brand Sloth Blue
+
+
 def _cover_watermark(catalog: Catalog) -> bool:
     return (catalog.get_setting("config") or {}).get("cover_watermark", True) is not False
 
 
+def _cover_color(catalog: Catalog) -> str:
+    c = (catalog.get_setting("config") or {}).get("cover_waveform_color")
+    return c if isinstance(c, str) and c.strip() else _DEFAULT_WAVEFORM_COLOR
+
+
 def _render_cover(track: dict, name: str, watermark: bool, out_path: str,
-                  avatar_url: str | None = None, avatar_img=None) -> str:
-    samples = coverart.fetch_waveform_samples(track.get("waveform_url"))
-    if not samples:
-        raise RuntimeError("No waveform available for this track yet.")
+                  avatar_url: str | None = None, avatar_img=None,
+                  color: str = _DEFAULT_WAVEFORM_COLOR, file_path: str | None = None) -> str:
+    # Real audio (the local file we uploaded) gives true dynamics + frequency depth;
+    # otherwise fall back to SoundCloud's amplitude-only waveform in the solid colour.
+    analysis = coverart.analyze_audio(file_path) if (file_path and Path(file_path).is_file()) else None
+    samples = None
+    if analysis is None:
+        samples = coverart.fetch_waveform_samples(track.get("waveform_url"))
+        if not samples:
+            raise RuntimeError("No waveform available for this track yet.")
     return coverart.render_waveform_cover(
         samples, name, strip_wip_tag(track.get("title") or ""), out_path,
-        watermark=watermark, avatar_url=avatar_url, avatar_img=avatar_img)
+        watermark=watermark, avatar_url=avatar_url, avatar_img=avatar_img,
+        color=color, analysis=analysis)
 
 
 def generate_waveform_cover(catalog: Catalog, track_id: int) -> dict:
@@ -436,12 +451,16 @@ def generate_waveform_cover(catalog: Catalog, track_id: int) -> dict:
         raise RuntimeError("not_connected")
     name = account_label(catalog) or ""
     watermark = _cover_watermark(catalog)
+    color = _cover_color(catalog)
     avatar = account_avatar(catalog)
     track = next((t for t in client_for(catalog).list_tracks() if t.get("id") == track_id), None)
     if not track:
         raise RuntimeError("Track not found.")
+    rec = catalog.upload_by_track_id(track_id)
+    file_path = rec.get("file_path") if rec else None
     with tempfile.TemporaryDirectory() as td:
-        png = _render_cover(track, name, watermark, f"{td}/cover.png", avatar)
+        png = _render_cover(track, name, watermark, f"{td}/cover.png",
+                            avatar_url=avatar, color=color, file_path=file_path)
         updated = client_for(catalog).set_artwork(track_id, png)
     _enrich_track(catalog, updated)
     return updated
@@ -454,16 +473,19 @@ def bulk_generate_waveform_covers(catalog: Catalog, ids: list[int]) -> list[dict
         raise RuntimeError("not_connected")
     name = account_label(catalog) or ""
     watermark = _cover_watermark(catalog)
+    color = _cover_color(catalog)
     # Fetch the profile picture ONCE for the whole batch (else it'd re-download per track).
     avatar_img = coverart.fetch_avatar_image(account_avatar(catalog))
     track_map = {t.get("id"): t for t in client_for(catalog).list_tracks()}
+    upload_map = catalog.uploads_by_sc_track_id()  # sc_track_id -> row, for the local file path
     with tempfile.TemporaryDirectory() as td:
         def op(client, tid):
             track = track_map.get(tid)
             if not track:
                 raise RuntimeError("Track not found.")
+            file_path = (upload_map.get(tid) or {}).get("file_path")
             png = _render_cover(track, name, watermark, f"{td}/cover_{tid}.png",
-                                avatar_img=avatar_img)
+                                avatar_img=avatar_img, color=color, file_path=file_path)
             updated = client.set_artwork(tid, png)
             _enrich_track(catalog, updated)
             return updated

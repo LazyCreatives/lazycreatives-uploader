@@ -84,6 +84,59 @@ def fetch_waveform_samples(waveform_url: str, timeout: int = 15) -> list | None:
     return samples or None
 
 
+def _hex_to_rgb(value, fallback=_ACCENT) -> tuple:
+    s = (value or "").strip().lstrip("#")
+    if len(s) == 3:
+        s = "".join(c * 2 for c in s)
+    try:
+        return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
+    except (ValueError, IndexError):
+        return fallback
+
+
+def analyze_audio(path: str, slices: int = 440) -> list | None:
+    """Read a local audio file and return per-slice {amp, brightness}: `amp` is the
+    peak level (0..1, normalised across the track with headroom + a gentle dynamics
+    curve) and `brightness` is the high-vs-low spectral balance (0 = bass-heavy/dark,
+    1 = treble-heavy/bright) from a 3-band FFT. Returns None if the file can't be read
+    (caller falls back to SoundCloud's amplitude-only waveform). numpy/soundfile are
+    imported lazily so the rest of the app doesn't hard-depend on them."""
+    try:
+        import numpy as np
+        import soundfile as sf
+    except Exception:
+        return None
+    try:
+        data, sr = sf.read(path, dtype="float32", always_2d=True)
+        mono = data.mean(axis=1)
+        n = len(mono)
+        if n < slices * 4 or sr <= 0:
+            return None
+        hop = n / slices
+        out = []
+        for i in range(slices):
+            start = int(i * hop)
+            seg = mono[start:start + max(1, int(hop))]
+            amp = float(np.max(np.abs(seg))) if len(seg) else 0.0
+            w = mono[start:start + min(8192, max(256, int(hop)))]
+            brightness = 0.0
+            if len(w) >= 64:
+                spec = np.abs(np.fft.rfft(w * np.hanning(len(w))))
+                freqs = np.fft.rfftfreq(len(w), 1.0 / sr)
+                low = float(spec[(freqs >= 20) & (freqs < 250)].sum())
+                mid = float(spec[(freqs >= 250) & (freqs < 4000)].sum())
+                high = float(spec[(freqs >= 4000) & (freqs < 20000)].sum())
+                total = low + mid + high + 1e-9
+                brightness = max(0.0, min(1.0, (mid * 0.45 + high) / total))
+            out.append({"amp": amp, "brightness": brightness})
+        mx = max((s["amp"] for s in out), default=0.0) or 1.0
+        for s in out:
+            s["amp"] = (s["amp"] / mx) ** 0.8  # keep real dynamics, lift the quiet a touch
+        return out
+    except Exception:
+        return None
+
+
 def _bigger_avatar(url: str) -> str:
     """Swap a SoundCloud avatar URL up to a 500px variant for a usable background."""
     return re.sub(r"-(large|t\d+x\d+|badge|small|tiny|crop|original|t\d+x\d+)\.(jpg|jpeg|png)(\?.*)?$",
@@ -122,11 +175,16 @@ def _draw_centered(draw, text, font, cx, cy, fill, stroke=0):
 
 def render_waveform_cover(samples, name: str, title: str, out_path: str,
                           watermark: bool = True, size: int = 1000, avatar_url: str = None,
-                          avatar_img=None) -> str:
+                          avatar_img=None, color: str = "#86B3D3", analysis=None) -> str:
     """Draw the cover and save a PNG to out_path. `name` is centered over a full-width
     waveform with `title` beneath; `watermark` adds a small LazyCreatives mark. The profile
     picture (blurred + darkened) is the backdrop: pass a pre-fetched `avatar_img` (PIL image)
-    to avoid re-downloading it across a batch, or `avatar_url` to fetch it here."""
+    to avoid re-downloading it across a batch, or `avatar_url` to fetch it here.
+
+    `color` is the base waveform hue (hex). When `analysis` (from analyze_audio) is given,
+    bars use real per-slice dynamics and are shaded by frequency — bass-heavy slices render
+    darker, treble-heavy ones brighter (rekordbox-style depth). Without it, the amplitude-
+    only SoundCloud `samples` are drawn in the solid base colour."""
     img = Image.new("RGBA", (size, size), _BG + (255,))
     avatar = avatar_img if avatar_img is not None else (fetch_avatar_image(avatar_url) if avatar_url else None)
     if avatar is not None:
@@ -137,18 +195,30 @@ def render_waveform_cover(samples, name: str, title: str, out_path: str,
     # full-width waveform, mirrored around the vertical centre
     margin = int(size * 0.07)
     usable_w = size - 2 * margin
-    bars = 200                       # denser = more definition
-    peaks = _resample(samples or [], bars)
-    mx = max(peaks) or 1.0
-    slot = usable_w / bars
-    bar_w = max(2.0, slot * 0.66)
+    base = _hex_to_rgb(color)
     cy = size / 2
     max_h = size * 0.33
-    for i, p in enumerate(peaks):
-        h = max(3.0, (p / mx) * max_h)
+
+    if analysis:
+        # real audio: per-slice dynamics + frequency-driven shading (None = solid hue)
+        bars_data = [(max(0.0, min(1.0, s.get("amp", 0.0))), s.get("brightness")) for s in analysis]
+    else:
+        peaks = _resample(samples or [], 200)
+        mx = max(peaks) or 1.0
+        bars_data = [(p / mx, None) for p in peaks]
+
+    n = len(bars_data) or 1
+    slot = usable_w / n
+    bar_w = max(1.5, slot * (0.72 if analysis else 0.66))
+    for i, (frac, bright) in enumerate(bars_data):
+        h = max(2.0, frac * max_h)
+        if bright is None:
+            rgb = base
+        else:
+            f = 0.30 + 0.85 * bright       # bass (dark) -> treble (bright)
+            rgb = tuple(min(255, int(c * f)) for c in base)
         x = margin + i * slot + (slot - bar_w) / 2
-        draw.rounded_rectangle([x, cy - h, x + bar_w, cy + h], radius=bar_w / 2,
-                               fill=_ACCENT + (255,))      # full opacity, crisper
+        draw.rounded_rectangle([x, cy - h, x + bar_w, cy + h], radius=bar_w / 2, fill=rgb + (255,))
 
     # a lighter central band so the name reads over the waveform without hiding it
     band = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -169,7 +239,7 @@ def render_waveform_cover(samples, name: str, title: str, out_path: str,
     # clear border framing the waveform
     fpad = size * 0.04
     draw.rounded_rectangle([size * 0.05, cy - max_h - fpad, size * 0.95, cy + max_h + fpad],
-                           radius=size * 0.025, outline=_ACCENT + (255,),
+                           radius=size * 0.025, outline=base + (255,),
                            width=max(4, int(size * 0.008)))
 
     if watermark:

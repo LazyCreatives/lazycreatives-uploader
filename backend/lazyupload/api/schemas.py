@@ -40,6 +40,8 @@ class Config(BaseModel):
     default_artwork_path: str = Field("", max_length=1024)
     # Add a small LazyCreatives watermark to generated waveform covers. On by default.
     cover_watermark: bool = True
+    # Base hue for generated waveform covers (hex). Frequency depth shades it per slice.
+    cover_waveform_color: str = Field("#86B3D3", max_length=9)
     templates: list[MetadataTemplate] = Field(default_factory=list, max_length=50)
 
 
