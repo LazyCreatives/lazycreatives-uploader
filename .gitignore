@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+backend/dist/
+backend/build/
+backend/catalog.db
+backend/lazyupload/_buildsecret.py
+
+# Node / Electron
+node_modules/
+electron/dist/
+electron/release/
+
+# Local databases / env
+*.db
+.env
+
+# OS
+.DS_Store
+Thumbs.db

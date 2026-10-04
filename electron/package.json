@@ -1,0 +1,101 @@
+{
+  "name": "lazycreatives-uploader",
+  "productName": "LazyCreatives Uploader",
+  "version": "0.1.0",
+  "description": "LazyCreatives Uploader — automatically publish your finished mixes to SoundCloud",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev:vite": "vite",
+    "dev:electron": "wait-on tcp:5173 && cross-env LAZYUP_DEV=1 LAZYUP_MOCK=1 node scripts/run-electron.js",
+    "start": "concurrently -k -n VITE,ELECTRON -c blue,green \"npm:dev:vite\" \"npm:dev:electron\"",
+    "build": "vite build",
+    "build:py": "node scripts/build-sidecar.js",
+    "dist": "npm run build && npm run build:py && electron-builder",
+    "test": "vitest run"
+  },
+  "build": {
+    "appId": "com.lazycreatives.uploader",
+    "productName": "LazyCreatives Uploader",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../CHANGELOG.md",
+        "to": "CHANGELOG.md"
+      },
+      {
+        "from": "../backend/dist/lazyupload-sidecar",
+        "to": "sidecar"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "target": [
+        "dmg"
+      ],
+      "icon": "build/icon.png",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "title": "LazyCreatives Uploader",
+      "artifactName": "LazyCreatives-Uploader-macOS-arm64.${ext}"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "artifactName": "LazyCreatives-Uploader-Windows-Setup.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Audio",
+      "icon": "build/icon.png",
+      "artifactName": "LazyCreatives-Uploader-Linux-x86_64.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "LazyCreatives",
+        "repo": "lazycreatives-uploader",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.4",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^6.0.2",
+    "concurrently": "^9.2.4",
+    "cross-env": "^7.0.3",
+    "electron": "^31.3.1",
+    "electron-builder": "^24.13.3",
+    "jsdom": "^25.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.5.4",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.11",
+    "wait-on": "^8.0.0"
+  },
+  "dependencies": {
+    "@fontsource/bebas-neue": "^5.3.0",
+    "@fontsource/geist-mono": "^5.3.0",
+    "@fontsource/geist-sans": "^5.3.0",
+    "electron-updater": "^6.8.9"
+  }
+}

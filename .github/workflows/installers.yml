@@ -1,0 +1,182 @@
+name: installers
+# Installers are slow (macOS bills 10x on private repos), so build only when
+# packaging can change: on demand, on PRs touching packaging files, and on v* tags.
+on:
+  pull_request:
+    paths:
+      - electron/package.json
+      - backend/sidecar.spec
+      - .github/workflows/installers.yml
+      - .github/scripts/smoke_sidecar.py
+      - .github/scripts/write_buildsecret.py
+      - electron/scripts/build-sidecar.js
+  push:
+    tags: ["v*"]          # on the public repo a v<version> tag also publishes a Release
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+            builder: --win nsis --x64
+            sidecar: lazyupload-sidecar.exe
+            artifact: |
+              electron/release/*.exe
+              electron/release/*.exe.blockmap
+              electron/release/latest.yml
+          - os: macos-latest          # Apple Silicon (arm64)
+            name: macos-arm64
+            builder: --mac dir --arm64   # dmg is made after ad-hoc signing below
+            sidecar: lazyupload-sidecar
+            artifact: electron/release/*.dmg
+          - os: ubuntu-latest
+            name: linux
+            builder: --linux AppImage --x64
+            sidecar: lazyupload-sidecar
+            artifact: |
+              electron/release/*.AppImage
+              electron/release/latest-linux.yml
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: electron/package-lock.json
+
+      - name: Install backend + PyInstaller
+        working-directory: backend
+        run: pip install . pyinstaller
+
+      # Licence signing key, SoundCloud client id and login-helper address (see the
+      # script). Unset secrets mean a throwaway signing key and demo mode.
+      - name: Write build secrets
+        working-directory: backend
+        env:
+          ENT_SECRET: ${{ secrets.LAZYUP_ENT_SECRET }}
+          SC_CLIENT_ID: ${{ secrets.LAZYUP_SC_CLIENT_ID }}
+          BROKER_URL: ${{ secrets.LAZYUP_BROKER_URL }}
+          BROKER_KEY: ${{ secrets.LAZYUP_BROKER_KEY }}
+        run: python ../.github/scripts/write_buildsecret.py
+
+      - name: Freeze sidecar
+        working-directory: backend
+        run: pyinstaller sidecar.spec --noconfirm --distpath dist
+
+      - name: Smoke-test sidecar (/health + login storage)
+        run: python .github/scripts/smoke_sidecar.py backend/dist/lazyupload-sidecar/${{ matrix.sidecar }}
+
+      - name: Install renderer deps
+        working-directory: electron
+        run: npm ci
+
+      - name: Build installer (unsigned)
+        working-directory: electron
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          npm run build
+          npx electron-builder ${{ matrix.builder }} --publish never
+
+      # Unsigned builds leave the .app with a broken bundle signature, which Apple
+      # Silicon reports as "damaged". Ad-hoc sign the whole bundle (no Apple account
+      # needed), verify it, and only then wrap it in the dmg.
+      - name: Ad-hoc sign, verify and package dmg (macOS)
+        if: runner.os == 'macOS'
+        working-directory: electron
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          app="release/mac-arm64/LazyCreatives Uploader.app"
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          npx electron-builder --mac dmg --arm64 --prepackaged "$app" --publish never
+
+      # Launch the packaged app and check it starts its bundled sidecar.
+      - name: Launch packaged app (macOS)
+        if: runner.os == 'macOS'
+        working-directory: electron
+        run: |
+          "release/mac-arm64/LazyCreatives Uploader.app/Contents/MacOS/LazyCreatives Uploader" > "$RUNNER_TEMP/app.log" 2>&1 &
+          pid=$!
+          ok=0
+          for i in $(seq 1 45); do
+            sleep 1
+            if pgrep -f "Resources/sidecar/lazyupload-sidecar" > /dev/null; then ok=1; break; fi
+          done
+          sleep 3
+          kill $pid 2>/dev/null || true
+          pkill -f "Resources/sidecar/lazyupload-sidecar" 2>/dev/null || true
+          cat "$RUNNER_TEMP/app.log"
+          test $ok = 1 || { echo "packaged app never started its sidecar"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lazycreatives-uploader-${{ matrix.name }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  # On a v* tag: attach all three installers to a GitHub Release under fixed names,
+  # so the website can link to releases/latest/download/<name> and never go stale,
+  # plus the update files the installed apps check for new versions.
+  release:
+    # Only the public repo publishes; Releases on the private -dev repo aren't downloadable.
+    if: startsWith(github.ref, 'refs/tags/v') && !endsWith(github.repository, '-dev')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag matches app version
+        run: |
+          ver=$(node -p "require('./electron/package.json').version")
+          test "${GITHUB_REF_NAME}" = "v$ver" || { echo "tag ${GITHUB_REF_NAME} != package.json v$ver"; exit 1; }
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      # electron-builder already names the installers with the stable download names
+      # (artifactName in package.json). latest*.yml + .blockmap are what the in-app
+      # updater reads on Windows and Linux, so they must ship beside the installers.
+      - name: Collect release files
+        run: |
+          mkdir out
+          find artifacts -type f -exec cp {} out/ \;
+          for f in LazyCreatives-Uploader-Windows-Setup.exe LazyCreatives-Uploader-macOS-arm64.dmg \
+                   LazyCreatives-Uploader-Linux-x86_64.AppImage latest.yml latest-linux.yml; do
+            test -f "out/$f" || { echo "missing $f"; exit 1; }
+          done
+          grep -q "url: LazyCreatives-Uploader-Windows-Setup.exe" out/latest.yml
+          grep -q "url: LazyCreatives-Uploader-Linux-x86_64.AppImage" out/latest-linux.yml
+          ls -l out
+      # The release page shows this version's "What's new" from CHANGELOG.md, then
+      # the first-launch note. The website reads the same text from the latest release.
+      - name: Write release notes
+        run: |
+          {
+            if python3 .github/scripts/release_notes.py "$GITHUB_REF_NAME" --check >&2; then
+              echo "## What's new"; echo
+              python3 .github/scripts/release_notes.py "$GITHUB_REF_NAME"; echo
+            else
+              echo "::warning::CHANGELOG.md has no notes for $GITHUB_REF_NAME" >&2
+            fi
+            echo "---"; echo
+            echo "Unsigned beta build. First launch: on Windows choose More info > Run anyway; on Mac right-click the app > Open; on Linux make the AppImage executable."
+          } > notes.md
+          cat notes.md
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* \
+            --title "LazyCreatives Uploader $GITHUB_REF_NAME (beta)" \
+            --notes-file notes.md \
+            --verify-tag

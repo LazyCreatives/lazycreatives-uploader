@@ -1,0 +1,22 @@
+# One-click hosting for the login helper (broker/) on Render's free plan.
+# Render asks for the SoundCloud client id and secret when the blueprint is created
+# and makes up the app key itself. The desktop build then needs the service address
+# and that app key (LAZYUP_BROKER_URL / LAZYUP_BROKER_KEY repository secrets).
+services:
+  - type: web
+    name: lazycreatives-login-helper
+    runtime: docker
+    plan: free
+    dockerfilePath: ./broker/Dockerfile
+    dockerContext: ./broker
+    healthCheckPath: /health
+    buildFilter:
+      paths:
+        - broker/**
+    envVars:
+      - key: SC_CLIENT_ID
+        sync: false
+      - key: SC_CLIENT_SECRET
+        sync: false
+      - key: BROKER_APP_KEY
+        generateValue: true
