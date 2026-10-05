@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { makeApi, openExternal, pickImage, readImage } from "../api";
+import { makeApi, openExternal, pickImage, readImage, revealPath } from "../api";
+import { askConfirm, CopyButton, openMenu, type MenuItem } from "../components/Desktop";
+import { copyText, keep, recall } from "../desktop";
 import type { BulkResult, Config, Entitlement, SeoScore, Sharing, Track, TrackUpdate } from "../types";
 import { Button, PageHeader, SubLine, ProBadge, Segmented, fmtDuration } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Art, PlayButton, SongWave, type SongMeta } from "../components/Player";
 import { genreColor, useLook } from "../look";
+import { EmptyState } from "../components/SlothSpot";
 import "../manage.css";
 
 const api = makeApi();
@@ -79,12 +82,20 @@ function friendlyError(msg: string): string {
 }
 
 // The search, filters, sort and page, kept while the app is open so "Your tracks"
-// looks the same when you come back to it from another page.
-const kept = {
+// looks the same when you come back to it from another page. The filters, sort and
+// page size are also saved for the next time the app opens; the search text and the
+// page number are not, so the list never opens half-empty.
+const KEPT_KEY = "lc-tracks-view";
+const START = {
   rawSearch: "", privacy: "all" as PrivacyFilter, sortKey: "date" as SortKey, sortDesc: true,
   matchedOnly: false, hasBackup: false, missingOnly: false, needsSeo: false, dupesOnly: false,
   page: 0, pageSize: 50,
 };
+const savedView = recall<Partial<typeof START>>(KEPT_KEY, {}, (v) => !!v && typeof v === "object");
+const kept = { ...START };
+for (const k of Object.keys(START) as (keyof typeof START)[]) {
+  if (k !== "rawSearch" && k !== "page" && typeof savedView[k] === typeof START[k]) (kept as any)[k] = savedView[k];
+}
 
 // openTrack: the track whose edit panel is open (its id), or null. Opening and closing
 // go through the app's back/forward history, so the mouse's back button closes it.
@@ -115,6 +126,9 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   useEffect(() => {
     Object.assign(kept, { rawSearch, privacy, sortKey, sortDesc, matchedOnly, hasBackup, missingOnly, needsSeo, dupesOnly, page, pageSize });
   });
+  useEffect(() => {
+    keep(KEPT_KEY, { privacy, sortKey, sortDesc, matchedOnly, hasBackup, missingOnly, needsSeo, dupesOnly, pageSize });
+  }, [privacy, sortKey, sortDesc, matchedOnly, hasBackup, missingOnly, needsSeo, dupesOnly, pageSize]);
 
   // selection + dialogs
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -260,7 +274,9 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
     catch (e) { setError(String((e as Error).message)); }
   }
   async function deleteOne(t: Track) {
-    if (!window.confirm(`Delete “${t.title}” from SoundCloud? This can't be undone.`)) return;
+    if (!(await askConfirm({ title: `Delete “${t.title}” from SoundCloud?`,
+      body: "It goes from SoundCloud with its plays, likes and comments. This can't be undone.",
+      confirm: "Delete", cancel: "Keep it", danger: true }))) return;
     try {
       await api.deleteTrack(t.id);
       setTracks((prev) => (prev || []).filter((x) => x.id !== t.id));
@@ -268,17 +284,37 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
     } catch (e) { setError(String((e as Error).message)); }
   }
 
+  // Right-click on a track (both looks): the everyday actions in one place.
+  function trackMenu(t: Track): MenuItem[] {
+    const priv = isPrivate(t);
+    return [
+      ...(t.permalink_url ? [
+        { label: "Open on SoundCloud", onClick: () => openExternal(t.permalink_url!) },
+        { label: "Copy SoundCloud link", onClick: () => { copyText(t.permalink_url!); } },
+        "-" as const] : []),
+      { label: "Edit details", onClick: () => setEditing(t) },
+      { label: priv ? "Make public" : "Make private", onClick: () => void quickPrivacy(t, priv ? "public" : "private") },
+      ...(t.local_path ? [
+        "-" as const,
+        { label: "Show the file", onClick: () => revealPath(t.local_path!) },
+        { label: "Copy file path", onClick: () => { copyText(t.local_path!); } }] : []),
+      "-",
+      { label: "Delete from SoundCloud…", onClick: () => void deleteOne(t), danger: true },
+    ];
+  }
+
   // ---- bulk mutations ----
   const selectedIds = useMemo(() => Array.from(selected), [selected]);
   // SoundCloud has no batch API, so a bulk op is N sequential writes (~0.25s each) with no
   // mid-run cancel. Warn + estimate before a large run so it isn't a surprise freeze.
-  function confirmLargeBulk(verb: string): boolean {
+  async function confirmLargeBulk(verb: string): Promise<boolean> {
     const n = selectedIds.length;
     if (n < BULK_CONFIRM_THRESHOLD) return true;
     const secs = Math.ceil(n * 0.25);
     const mins = secs >= 90 ? ` (~${Math.ceil(secs / 60)} min)` : ` (~${secs}s)`;
-    return window.confirm(
-      `${verb} ${n} tracks?\n\nThis runs as ${n} separate SoundCloud updates${mins} and can't be cancelled once it starts.`);
+    return askConfirm({ title: `${verb} ${n} tracks?`,
+      body: `This runs as ${n} separate SoundCloud updates${mins} and can't be stopped once it starts.`,
+      confirm: `${verb} ${n}` });
   }
   function summarize(res: BulkResult, noun: string, pastTense: string, failNote = ""): void {
     const ok = res.results.filter((r) => r.ok).length;
@@ -287,7 +323,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   }
   async function runBulkUpdate(patch: TrackUpdate) {
     if (selectedIds.length === 0) return;
-    if (!confirmLargeBulk(patch.sharing ? `Make ${patch.sharing}` : "Update")) return;
+    if (!await confirmLargeBulk(patch.sharing ? `Make ${patch.sharing}` : "Update")) return;
     setBulkBusy(true); setBulkSummary(null); setError(null);
     try {
       const res = await api.bulkUpdate(selectedIds, patch);
@@ -316,7 +352,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
     if (selectedIds.length === 0) return;
     const path = await pickImage();
     if (!path) return;
-    if (!confirmLargeBulk("Set cover art on")) return;
+    if (!await confirmLargeBulk("Set cover art on")) return;
     setBulkBusy(true); setBulkSummary(null); setError(null);
     try {
       const res = await api.bulkArtwork(selectedIds, path);
@@ -327,7 +363,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   }
   async function runBulkWaveform() {
     if (selectedIds.length === 0) return;
-    if (!confirmLargeBulk("Generate waveform covers for")) return;
+    if (!await confirmLargeBulk("Generate waveform covers for")) return;
     setBulkBusy(true); setBulkSummary(null); setError(null);
     try {
       const res = await api.bulkWaveformCover(selectedIds);
@@ -366,7 +402,8 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
         <label className="search" style={{ flex: 1, minWidth: 180 }}>
           <Icon name="search" />
           <input type="text" placeholder="Search title, genre or tag"
-            value={rawSearch} onChange={(e) => setRawSearch(e.target.value)} aria-label="Search tracks" />
+            value={rawSearch} onChange={(e) => setRawSearch(e.target.value)} aria-label="Search tracks" data-find
+            onKeyDown={(e) => { if (e.key === "Escape") setRawSearch(""); }} />
         </label>
         <Segmented<PrivacyFilter> value={privacy} onChange={setPrivacy}
           options={[{ value: "all", label: "All" }, { value: "public", label: "Public" }, { value: "private", label: "Private" }]} />
@@ -438,18 +475,15 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
 
       {/* ---- states ---- */}
       {!loading && (tracks || []).length === 0 && !error && (
-        <div className="table"><div className="empty">
-          <div className="empty__icon"><Icon name="music" size={28} /></div>
-          <div className="empty__title">No tracks on your SoundCloud yet</div>
-          Post your first mix from Upload.
-        </div></div>
+        <div className="table"><EmptyState pose="napping" title="No tracks on your SoundCloud yet">
+          Post your first mix from Upload and it shows here.
+        </EmptyState></div>
       )}
       {!loading && (tracks || []).length > 0 && filtered.length === 0 && (
-        <div className="table"><div className="empty">
-          <div className="empty__title">No tracks match</div>
-          Try a different search or clear the filters.
-          <div style={{ marginTop: 12 }}><Button sm onClick={clearFilters}>Clear filters</Button></div>
-        </div></div>
+        <div className="table"><EmptyState pose="searching" title="No tracks match"
+          action={<Button sm onClick={clearFilters}>Clear filters</Button>}>
+          Try fewer words or a different filter.
+        </EmptyState></div>
       )}
 
       {/* ---- list ---- */}
@@ -458,7 +492,8 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
           <TrackCard key={t.id} track={t} defaultArt={defaultArt}
             selected={selected.has(t.id)}
             onCheck={(e) => onRowCheck(e, t.id)}
-            onEdit={() => setEditing(t)} />
+            onEdit={() => setEditing(t)}
+            onContextMenu={(e) => openMenu(e, trackMenu(t))} />
         ))}
       </div>}
       {pageItems.length > 0 && look === "crate" && <div className="table table--crate">
@@ -473,7 +508,8 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
             onCheck={(e) => onRowCheck(e, t.id)}
             onQuickPrivacy={(next) => void quickPrivacy(t, next)}
             onEdit={() => setEditing(t)}
-            onDelete={() => void deleteOne(t)} />
+            onDelete={() => void deleteOne(t)}
+            onContextMenu={(e) => openMenu(e, trackMenu(t))} />
         ))}
       </div>}
 
@@ -600,11 +636,11 @@ function artFor(t: Track, defaultArt: string | null): { src: string | null } {
   return { src: t.artwork_url || defaultArt || null };
 }
 
-function TrackRow({ track, index, defaultArt, selected, onCheck, onQuickPrivacy, onEdit, onDelete }: {
+function TrackRow({ track, index, defaultArt, selected, onCheck, onQuickPrivacy, onEdit, onDelete, onContextMenu }: {
   track: Track; index: number; defaultArt: string | null; selected: boolean;
   onCheck: (e: React.MouseEvent) => void;
   onQuickPrivacy: (next: Sharing) => void;
-  onEdit: () => void; onDelete: () => void;
+  onEdit: () => void; onDelete: () => void; onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const t = track;
   const priv = isPrivate(t);
@@ -613,6 +649,7 @@ function TrackRow({ track, index, defaultArt, selected, onCheck, onQuickPrivacy,
   const meta = songMeta(t, art.src);
   return (
     <label data-nav-key={String(t.id)} className={`row cols track-cols scanrow--enter${selected ? " row--selected" : ""}`}
+      onContextMenu={onContextMenu}
       style={{ ["--i" as string]: index } as React.CSSProperties}>
       <span className="stripe" style={{ background: genreColor(t.genre) }} />
       <input type="checkbox" className="mixrow__check" checked={selected}
@@ -649,16 +686,16 @@ function TrackRow({ track, index, defaultArt, selected, onCheck, onQuickPrivacy,
 }
 
 // Sleeve look: one cover card per track. Clicking the card opens its details.
-function TrackCard({ track, defaultArt, selected, onCheck, onEdit }: {
+function TrackCard({ track, defaultArt, selected, onCheck, onEdit, onContextMenu }: {
   track: Track; defaultArt: string | null; selected: boolean;
-  onCheck: (e: React.MouseEvent) => void; onEdit: () => void;
+  onCheck: (e: React.MouseEvent) => void; onEdit: () => void; onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const t = track;
   const art = artFor(t, defaultArt);
   const meta = songMeta(t, art.src);
   return (
     <div data-nav-key={String(t.id)} className={`sleeve track-sleeve${selected ? " sleeve--selected" : ""}`} role="button" tabIndex={0}
-      onClick={onEdit} onKeyDown={(e) => { if (e.key === "Enter") onEdit(); }}>
+      onClick={onEdit} onKeyDown={(e) => { if (e.key === "Enter") onEdit(); }} onContextMenu={onContextMenu}>
       <div className="sleeve__art">
         <Art meta={meta} />
         <span className="sleeve__badge">
@@ -779,6 +816,16 @@ function EditPanel({ track, defaultArt, onClose, onSaved }: {
         <button type="button" className="mng-panel__close" onClick={onClose} aria-label="Close"><Icon name="close" /></button>
       </div>
       <div className="mng-panel__body">
+        {track.permalink_url && (
+          <div className="field"><span>SoundCloud link</span>
+            <div className="pathline">
+              <span className="mono col-trunc" title={track.permalink_url}>{track.permalink_url.replace(/^https?:\/\//, "")}</span>
+              <CopyButton text={track.permalink_url} what="SoundCloud link" />
+              <button type="button" className="iconbtn" title="Open on SoundCloud" aria-label="Open on SoundCloud"
+                onClick={() => openExternal(track.permalink_url!)}><Icon name="external" size={14} /></button>
+            </div>
+          </div>
+        )}
         <label className="field"><span>Title</span>
           <input ref={titleRef} type="text" value={title} onChange={(e) => setTitle(e.target.value)} /></label>
         <label className="field"><span>Description</span>

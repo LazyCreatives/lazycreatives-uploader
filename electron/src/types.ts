@@ -126,11 +126,13 @@ export type ProgressEvent =
   | { type: "scan_progress"; done: number; total: number; name: string }
   | { type: "scan_done"; count: number }
   | { type: "upload_start"; total: number; timestamp: string }
-  | { type: "track_start"; index: number; name: string; total: number }
-  | { type: "track_progress"; index: number; name: string; sent: number; size: number }
-  | { type: "track_done"; index: number; name: string; permalink_url: string | null }
-  | { type: "track_skipped"; index: number; name: string; reason: string }
-  | { type: "track_error"; index: number; name: string; error: string }
+  // `path` names the mix each track event is about (older sidecars leave it out).
+  | { type: "track_start"; index: number; name: string; path?: string; total: number }
+  | { type: "track_progress"; index: number; name: string; path?: string; sent: number; size: number }
+  | { type: "track_done"; index: number; name: string; path?: string; permalink_url: string | null }
+  | { type: "track_skipped"; index: number; name: string; path?: string; reason: string }
+  // `error` is the full message (kept in History); `reason` is a few plain words for the row.
+  | { type: "track_error"; index: number; name: string; path?: string; error: string; reason?: string }
   | { type: "upload_done"; ok_count: number; error_count: number; skipped_count: number; cancelled?: boolean };
 
 export interface Track {

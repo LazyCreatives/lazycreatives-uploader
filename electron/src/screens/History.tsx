@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { makeApi, openExternal, revealPath } from "../api";
+import { openMenu } from "../components/Desktop";
+import { copyText } from "../desktop";
 import type { UploadRow } from "../types";
 import { fmtBytes, fmtWhen, PageHeader } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Cover } from "../components/Cover";
 import { PlayButton, SongWave } from "../components/Player";
+import { EmptyState } from "../components/SlothSpot";
 import { genreColor } from "../look";
 
 const api = makeApi();
@@ -29,7 +32,13 @@ export function UploadTable({ rows }: { rows: UploadRow[] }) {
         const meta = { title: r.title, sub: r.project_match ? `From ${r.project_match}` : `Posted ${fmtWhen(r.timestamp)}`,
           cover: r.project_match || r.title, genre: r.project_genre };
         return (
-          <div key={r.id} className="row cols history-cols">
+          <div key={r.id} className="row cols history-cols" onContextMenu={(e) => openMenu(e, [
+            ...(r.permalink_url ? [
+              { label: "Open on SoundCloud", onClick: () => openExternal(r.permalink_url!) },
+              { label: "Copy SoundCloud link", onClick: () => { copyText(r.permalink_url!); } }, "-" as const] : []),
+            { label: "Show the file", onClick: () => revealPath(r.file_path) },
+            { label: "Copy file path", onClick: () => { copyText(r.file_path); } },
+          ])}>
             <span className="stripe" style={{ background: genreColor(r.project_genre) }} />
             <PlayButton path={r.file_path} meta={meta} size={28} />
             <Cover name={meta.cover} genre={meta.genre} size={36} label={false} />
@@ -64,11 +73,9 @@ export function History() {
     <div>
       <PageHeader title="History" sub="Everything Uploader has posted, newest first." />
       {rows && rows.length === 0 && (
-        <div className="empty">
-          <div className="empty__icon"><Icon name="history" size={28} /></div>
-          <div className="empty__title">Nothing posted yet</div>
-          Uploads will show up here as soon as you post your first mix.
-        </div>
+        <EmptyState pose="napping" title="Nothing posted yet">
+          Every mix you post shows here, newest first, with a link to it on SoundCloud.
+        </EmptyState>
       )}
       {rows && rows.length > 0 && <UploadTable rows={rows} />}
     </div>

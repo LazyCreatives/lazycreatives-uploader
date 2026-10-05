@@ -1,21 +1,22 @@
 import { useState } from "react";
 import { makeApi } from "../api";
 import type { Account, Config } from "../types";
-import { LcBrand } from "../components/LcBrand";
 import { Button } from "../components/ui";
 import { Folders } from "../components/Folders";
 import { ConnectPanel } from "../components/Connect";
+import { WelcomeCard, WelcomeLook } from "../components/Welcome";
+import "../setup.css";
 
 const api = makeApi();
 
-// First-run wizard: pick the folder(s) to watch, then connect SoundCloud. Done when
-// at least one folder exists and an account is connected.
+// First run: say hello and pick a look, then the folder to watch, then connect
+// SoundCloud. Done when at least one folder exists and an account is connected.
 export function Setup({ cfg, account, onAccount, onDone }: {
   cfg: Config; account: Account;
   onAccount: (a: Account) => void;
   onDone: (c: Config) => void;
 }) {
-  const [step, setStep] = useState<0 | 1>(0);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [sources, setSources] = useState<string[]>(cfg.sources);
   const [saving, setSaving] = useState(false);
 
@@ -25,52 +26,37 @@ export function Setup({ cfg, account, onAccount, onDone }: {
     onDone(saved);
   }
 
+  const back = step > 1
+    ? <Button kind="ghost" onClick={() => setStep((step - 1) as 1 | 2)}>Back</Button>
+    : <span />;
+
+  if (step === 1) {
+    return (
+      <WelcomeCard app="Uploader" step={1} title="Post your finished mixes to SoundCloud"
+        sub="Export a mix and it's ready to post in one click. Two quick steps after this: pick the folder you export into, then connect your account."
+        foot={<>{back}<Button kind="primary" onClick={() => setStep(2)}>Next</Button></>}>
+        <WelcomeLook />
+      </WelcomeCard>
+    );
+  }
+
+  if (step === 2) {
+    return (
+      <WelcomeCard app="Uploader" step={2} title="Where do you export your mixes?"
+        sub="Pick the folder you bounce finished mixes into. New audio that lands there is ready to upload."
+        foot={<>{back}<Button kind="primary" disabled={sources.length === 0} onClick={() => setStep(3)}>Next</Button></>}>
+        <Folders sources={sources} onChange={setSources} />
+      </WelcomeCard>
+    );
+  }
+
   return (
-    <div className="splash">
-      <div className="wizard view-enter">
-        <div className="wizard__head">
-          <LcBrand app="Uploader" tag="Lazy Creatives" />
-        </div>
-        <div style={{ marginBottom: 18 }}>
-          <h1 style={{ margin: 0 }}>Post your finished mixes to SoundCloud</h1>
-          <p className="sub" style={{ margin: "6px 0 0" }}>Two quick steps: connect your account, then pick the folder you export into.</p>
-        </div>
-
-        <div className="wizard__body">
-          {step === 0 ? (
-            <>
-              <h2>Step 1 — Watch a folder</h2>
-              <p className="sub" style={{ marginTop: 0 }}>
-                Point it at the folder you bounce mixes into. New audio that lands here
-                becomes a one-click (or automatic) upload.
-              </p>
-              <Folders sources={sources} onChange={setSources} />
-            </>
-          ) : (
-            <>
-              <h2>Step 2 — Connect SoundCloud</h2>
-              <p className="sub" style={{ marginTop: 0 }}>
-                Sign in once. We store your account securely on this machine and refresh
-                it automatically.
-              </p>
-              <ConnectPanel account={account} onChange={onAccount} />
-            </>
-          )}
-        </div>
-
-        <div className="wizard__foot">
-          <Button kind="ghost" disabled={step === 0} onClick={() => setStep(0)}>Back</Button>
-          {step === 0 ? (
-            <Button kind="primary" disabled={sources.length === 0} onClick={() => setStep(1)}>
-              Next
-            </Button>
-          ) : (
-            <Button kind="primary" disabled={!account.connected || saving} onClick={finish}>
-              {saving ? "Finishing…" : "Start uploading"}
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
+    <WelcomeCard app="Uploader" step={3} title="Connect SoundCloud"
+      sub="Sign in once. Your login stays on this computer and keeps itself fresh."
+      foot={<>{back}<Button kind="primary" disabled={!account.connected || saving} onClick={finish}>
+        {saving ? "Finishing…" : "Start uploading"}
+      </Button></>}>
+      <ConnectPanel account={account} onChange={onAccount} />
+    </WelcomeCard>
   );
 }

@@ -17,3 +17,11 @@ def test_discover_reads_wav_duration(mixes_dir):
 
 def test_discover_ignores_missing_dir(tmp_path):
     assert discover([tmp_path / "does-not-exist"]) == []
+
+
+def test_discover_skips_recordings_inside_logic_projects(tmp_path):
+    (tmp_path / "Night Drive.logicx" / "Media" / "Audio Files").mkdir(parents=True)
+    (tmp_path / "Night Drive.logicx" / "Media" / "Audio Files" / "Vox#01.wav").write_bytes(b"x")
+    (tmp_path / "Bounces").mkdir()
+    (tmp_path / "Bounces" / "Night Drive.wav").write_bytes(b"x")
+    assert [m["name"] for m in discover([tmp_path])] == ["Night Drive"]

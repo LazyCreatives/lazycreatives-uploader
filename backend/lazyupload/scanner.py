@@ -27,6 +27,8 @@ def discover(sources: list[Path]) -> list[dict]:
                     continue
                 if p.name.startswith(".") or p.name.startswith("~"):
                     continue
+                if _in_project_package(p, src):
+                    continue
                 st = p.stat()
                 key = str(p.resolve())
                 out[key] = {
@@ -40,6 +42,19 @@ def discover(sources: list[Path]) -> list[dict]:
             except OSError:
                 continue  # vanished/locked mid-scan — just skip it
     return sorted(out.values(), key=lambda m: m["mtime"], reverse=True)
+
+
+# Logic Pro projects are folders Finder shows as one file; the audio inside them is
+# the project's own recordings, never a finished mix.
+_PACKAGE_SUFFIXES = (".logicx", ".logic")
+
+
+def _in_project_package(path: Path, src: Path) -> bool:
+    try:
+        parts = path.relative_to(src).parts[:-1]
+    except ValueError:
+        parts = path.parent.parts
+    return any(part.lower().endswith(_PACKAGE_SUFFIXES) for part in parts)
 
 
 def _wav_duration(path: Path) -> float | None:

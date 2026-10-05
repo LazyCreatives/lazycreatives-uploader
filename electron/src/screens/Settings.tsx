@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getOpenAtLogin, makeApi, pickImage, readImage, setOpenAtLogin } from "../api";
 import type { Account, Config, Entitlement, MetadataTemplate, Sharing } from "../types";
 import { Button, PageHeader, ProBadge } from "../components/ui";
@@ -47,11 +47,29 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
     setDraft((d) => ({ ...d, [k]: v }));
   }
 
-  async function save() {
-    const saved = await api.saveSettings(draft);
-    setDraft(saved); onCfg(saved);
-    setSavedFlash(true); setTimeout(() => setSavedFlash(false), 1500);
-  }
+  // Changes save by themselves a moment after you make them; no Save button to forget.
+  const lastSaved = useRef(JSON.stringify(cfg));
+  const flashTimer = useRef<number | undefined>(undefined);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  useEffect(() => {
+    const json = JSON.stringify(draft);
+    if (json === lastSaved.current) return;
+    const t = window.setTimeout(async () => {
+      setSaveError(null);
+      try {
+        const saved = await api.saveSettings(draft);
+        lastSaved.current = JSON.stringify(saved);
+        setDraft((d) => (JSON.stringify(d) === json ? saved : d));  // keep newer edits made meanwhile
+        onCfg(saved);
+        setSavedFlash(true);
+        window.clearTimeout(flashTimer.current);
+        flashTimer.current = window.setTimeout(() => setSavedFlash(false), 1800);
+      } catch (e) {
+        setSaveError(`Couldn't save that change: ${String((e as Error).message)}`);
+      }
+    }, 500);
+    return () => window.clearTimeout(t);
+  }, [draft]);
   async function toggleLogin(v: boolean) { setAtLogin(await setOpenAtLogin(v)); }
 
   async function chooseArt() {
@@ -76,10 +94,10 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
   return (
     <div className="settings">
       <PageHeader title="Settings" sub="Your SoundCloud accounts, the folders to watch, and what every upload starts with."
-        actions={<>
-          {savedFlash && <span className="pill pill--ok">Saved</span>}
-          <Button kind="primary" onClick={save}>Save settings</Button>
-        </>} />
+        actions={savedFlash
+          ? <span className="pill pill--ok" role="status">Saved</span>
+          : <span className="faint settings-autosave">Changes save by themselves</span>} />
+      {saveError && <div className="banner banner--warn">{saveError}</div>}
 
       <div className="card">
         <h2>Look</h2>

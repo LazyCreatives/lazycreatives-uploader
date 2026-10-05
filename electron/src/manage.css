@@ -154,7 +154,9 @@
 }
 
 /* ---- Crate look: genre stripe, play, cover, waveform per row ---- */
-.track-cols { --cols: 4px 16px 28px 36px minmax(0, 1fr) minmax(90px, 160px) minmax(110px, 170px) 56px 44px 72px 92px; }
+/* the title column keeps room for a name at the default window size; the waveform
+   and project columns give way first */
+.track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) minmax(48px, 1fr) minmax(104px, 1fr) 56px 44px 72px 92px; }
 .table--crate .track-cols .mixrow__check { margin: 0; }
 
 /* ---- Sleeve look: a wall of cover cards ---- */
@@ -170,7 +172,8 @@
 
 /* ---- Upload, Sleeve look: one card per mix; click a card to pick it ---- */
 .mix-sleeves { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
-.mix-sleeve__check { position: absolute; left: 10px; bottom: 12px; }
+/* top-left, clear of the catalogue number (bottom-left) and the status pill (top-right) */
+.mix-sleeve__check { position: absolute; left: 10px; top: 11px; }
 .sleeve--done .sleeve__art { opacity: 0.55; }
 .mix-sleeve__draft { margin-top: 6px; }
 .track-sleeve__top .fmt-badge { flex: none; }

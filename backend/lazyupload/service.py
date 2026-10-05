@@ -691,6 +691,39 @@ def _meta_for(item: dict, defaults: dict) -> TrackMeta:
     )
 
 
+def short_reason(exc: BaseException) -> str:
+    """A few plain words on why one mix didn't post, for its row on the Upload page.
+    The full message still goes in the event's `error` and in History."""
+    if isinstance(exc, FileNotFoundError):
+        return "The file was moved or deleted."
+    if isinstance(exc, PermissionError):
+        return "Couldn't open the file."
+    if isinstance(exc, soundcloud.RateLimitError):
+        return "SoundCloud is busy. Wait a minute and try again."
+    if isinstance(exc, soundcloud.AuthError):
+        return "SoundCloud needs you to reconnect."
+    try:
+        import requests
+        if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+            return "Couldn't reach SoundCloud. Check your internet."
+        if isinstance(exc, requests.HTTPError):
+            code = getattr(getattr(exc, "response", None), "status_code", None)
+            if code == 413:
+                return "The file is too big for SoundCloud."
+            if code and code >= 500:
+                return "SoundCloud had a problem. Try again soon."
+            return "SoundCloud turned it down."
+    except ImportError:  # pragma: no cover
+        pass
+    if isinstance(exc, OSError):
+        return "Couldn't read the file."
+    msg = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
+    # A short, friendly message from our own code reads fine as is.
+    if msg and len(msg) <= 80 and isinstance(exc, (RuntimeError, soundcloud.SoundCloudError)):
+        return msg
+    return "Something went wrong."
+
+
 def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None,
                progress=None, cancel=None, force: bool = False,
                release_at: str | None = None) -> dict:
@@ -733,22 +766,23 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                 break
             path = item["path"]
             name = item.get("name") or Path(path).stem
-            emit({"type": "track_start", "index": i, "name": name, "total": total})
+            emit({"type": "track_start", "index": i, "name": name, "path": path,
+                  "total": total})
             try:
                 size = Path(path).stat().st_size
                 h = item.get("file_hash") or _hashed(catalog, path, size, Path(path).stat().st_mtime)
                 if not force and h in uploaded:
                     skipped += 1
                     results.append(UploadResult(name=name, status="skipped", file_hash=h))
-                    emit({"type": "track_skipped", "index": i, "name": name,
+                    emit({"type": "track_skipped", "index": i, "name": name, "path": path,
                           "reason": "duplicate"})
                     continue
                 meta = _meta_for(item, defaults)
                 if release_at:
                     meta.sharing = "private"  # publish privately, flip public later
 
-                def on_prog(sent, tot, _i=i, _n=name):
-                    emit({"type": "track_progress", "index": _i, "name": _n,
+                def on_prog(sent, tot, _i=i, _n=name, _p=path):
+                    emit({"type": "track_progress", "index": _i, "name": _n, "path": _p,
                           "sent": sent, "size": tot})
 
                 art = item.get("artwork_path") or default_art
@@ -774,7 +808,8 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                 ok += 1
                 results.append(UploadResult(name=name, status="uploaded", file_hash=h,
                                             sc_track_id=tid, permalink_url=url))
-                emit({"type": "track_done", "index": i, "name": name, "permalink_url": url})
+                emit({"type": "track_done", "index": i, "name": name, "path": path,
+                      "permalink_url": url})
             except Exception as e:  # one bad track must not abort the batch
                 errors += 1
                 msg = str(e)[:300]
@@ -784,7 +819,8 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                     status="error", timestamp=default_timestamp(), error=msg,
                     account=account_label(catalog))
                 results.append(UploadResult(name=name, status="error", error=msg))
-                emit({"type": "track_error", "index": i, "name": name, "error": msg})
+                emit({"type": "track_error", "index": i, "name": name, "path": path,
+                      "error": msg, "reason": short_reason(e)})
         emit({"type": "upload_done", "ok_count": ok, "error_count": errors,
               "skipped_count": skipped, "cancelled": cancelled})
         return {"ok_count": ok, "error_count": errors, "skipped_count": skipped,

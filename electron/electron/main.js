@@ -4,6 +4,7 @@ const fs = require("fs");
 const { startSidecar, stopSidecar, killGroup } = require("./sidecar");
 const { createTray } = require("./tray");
 const { startUpdater } = require("./updater");
+const { windowStateOptions, installAppMenu, registerDesktopIpc, showWindow } = require("./desktop");
 
 const isDev = !!process.env.LAZYUP_DEV;
 let win = null;
@@ -19,7 +20,7 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+    showWindow(win);
   });
 }
 
@@ -39,8 +40,10 @@ const ICON = path.join(__dirname, "..", "build", "icon.png");
 const hasIcon = () => fs.existsSync(ICON);
 
 function createWindow() {
+  // Reopens at the size and place it was last closed at (see desktop.js).
+  const placement = windowStateOptions();
   win = new BrowserWindow({
-    width: 1100, height: 760, backgroundColor: "#0D0E10",
+    ...placement.options, backgroundColor: "#0D0E10",
     ...(hasIcon() ? { icon: ICON } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -51,6 +54,7 @@ function createWindow() {
       ],
     },
   });
+  placement.track(win);
   if (process.platform === "darwin" && app.dock && hasIcon()) {
     try { app.dock.setIcon(ICON); } catch (err) { console.error("[main] dock icon:", err.message); }
   }
@@ -93,6 +97,8 @@ async function pick(options) {
   lastPickedDir = options.properties.includes("openDirectory") ? picked : path.dirname(picked);
   return picked;
 }
+
+registerDesktopIpc(() => win);
 
 ipcMain.handle("pick-folder", () => pick({ properties: ["openDirectory"] }));
 
@@ -175,8 +181,10 @@ app.whenReady().then(async () => {
     }
     sidecar = await startSidecar(sidecarOpts);
     createWindow();
+    installAppMenu({ appName: "LazyCreatives Uploader", website: "https://lazycreatives.github.io/", getWindow: () => win });
     tray = createTray({
-      onShow: () => { if (win) win.show(); },
+      appName: "LazyCreatives Uploader",
+      onShow: () => showWindow(win),
       onQuit: () => { isQuitting = true; app.quit(); },
     });
     startUpdater({

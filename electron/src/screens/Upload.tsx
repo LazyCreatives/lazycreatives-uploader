@@ -1,17 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import { makeApi, openExternal, pickImage, readImage } from "../api";
+import { makeApi, openExternal, pickImage, readImage, revealPath } from "../api";
+import { openMenu, type MenuItem } from "../components/Desktop";
+import { copyText } from "../desktop";
 import type { Config, Entitlement, Mix, Sharing, UploadItemInput } from "../types";
 import { Button, fmtBytes, fmtDuration, PageHeader, SubLine, ProBadge, ProgressBar } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Cover } from "../components/Cover";
 import { PlayButton, SongWave, type SongMeta } from "../components/Player";
 import { genreColor, useLook } from "../look";
-import type { UploadState, ScanState } from "../useProgress";
+import { EmptyState } from "../components/SlothSpot";
+import type { ItemState, UploadState, ScanState } from "../useProgress";
 
 const api = makeApi();
 
 export function Upload({ cfg, ent, scan, upload, resetUpload }: {
-  cfg: Config; ent: Entitlement; scan: ScanState; upload: UploadState; resetUpload: () => void;
+  cfg: Config; ent: Entitlement; scan: ScanState; upload: UploadState;
+  resetUpload: (queue?: string[], keepOthers?: boolean) => void;
 }) {
   const [look] = useLook();
   const [mixes, setMixes] = useState<Mix[] | null>(null);
@@ -42,9 +46,10 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
     if (p) setCoverArt(p);
   }
   // When an upload finishes, refresh the list so published mixes flip to "uploaded".
-  useEffect(() => { if (upload.done) { void rescan(); setRunning(false); } }, [upload.done]);
+  // Whatever was ticked and didn't go up (a failed mix) stays ticked for the next post.
+  useEffect(() => { if (upload.done) { void rescan(selected); setRunning(false); } }, [upload.done]);
 
-  async function rescan() {
+  async function rescan(keep?: Set<string>) {
     setError(null);
     try {
       const m = await api.scan();
@@ -52,7 +57,8 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
       // default-select everything not yet uploaded, skipping lower-quality format
       // duplicates (highest quality wins). Single-only on Free.
       const fresh = m.filter((x) => !x.uploaded && !x.superseded_by).map((x) => x.path);
-      setSelected(new Set(ent.features.batch ? fresh : fresh.slice(0, 1)));
+      const pick = keep ? fresh.filter((p) => keep.has(p)) : fresh;
+      setSelected(new Set(ent.features.batch ? pick : pick.slice(0, 1)));
     } catch (e) {
       setError(String((e as Error).message));
     }
@@ -79,12 +85,14 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
     }
   }
 
-  async function start() {
-    if (selected.size === 0) return;
-    setError(null); resetUpload(); setRunning(true);
+  // Post the ticked mixes, or just `only` (Try again on one mix that failed).
+  async function start(only?: string) {
+    const paths = only ? [only] : (mixes || []).filter((m) => selected.has(m.path)).map((m) => m.path);
+    if (paths.length === 0) return;
+    setError(null); resetUpload(paths, !!only); setRunning(true);
     const tmpl = cfg.templates.find((t) => t.name === templateName);
     const items: UploadItemInput[] = (mixes || [])
-      .filter((m) => selected.has(m.path))
+      .filter((m) => paths.includes(m.path))
       .map((m) => {
         // Pre-fill from the Backups match: genre -> SoundCloud genre, BPM -> a tag.
         const tags = [
@@ -124,7 +132,13 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
     }
   }
 
-  const trackPct = upload.size > 0 ? (upload.sent / upload.size) * 100 : (running ? 5 : 0);
+  // The whole post: finished mixes plus how far the current one has got.
+  const finished = upload.completed + upload.skipped + upload.errors;
+  const overallPct = upload.total > 0
+    ? ((finished + (upload.size > 0 && upload.current ? upload.sent / upload.size : 0)) / upload.total) * 100
+    : (running ? 3 : 0);
+  const busy = running || upload.active;
+  const itemOf = (m: Mix): ItemState | undefined => upload.items[m.path] ?? upload.items[m.name];
   const newCount = (mixes || []).filter((m) => !m.uploaded && !m.superseded_by).length;
   const matched = (mixes || []).filter((m) => m.genre || m.bpm).length;
   const dupeCount = (mixes || []).filter((m) => m.superseded_by).length;
@@ -140,12 +154,53 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
     title: m.name, sub: m.project_match ? `From ${m.project_match}` : m.genre || "", genre: m.genre,
     cover: m.project_match || m.name,
   });
-  const statusBadge = (m: Mix) => m.uploaded
+  // Right-click on a mix (both looks).
+  const mixMenu = (m: Mix): MenuItem[] => [
+    ...(m.permalink_url ? [
+      { label: "Open on SoundCloud", onClick: () => openExternal(m.permalink_url!) },
+      { label: "Copy SoundCloud link", onClick: () => { copyText(m.permalink_url!); } }, "-" as const] : []),
+    { label: "Show the file", onClick: () => revealPath(m.path) },
+    { label: "Copy file path", onClick: () => { copyText(m.path); } },
+    ...(!m.uploaded && !m.superseded_by ? ["-" as const,
+      { label: m.wip ? "Mark as final" : "Mark as a draft", onClick: () => toggleWip(m), disabled: running }] : []),
+  ];
+  const retry = (m: Mix) => (
+    <button type="button" className="btn btn--ghost btn--sm mixstate__retry" disabled={busy}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); void start(m.path); }}>Try again</button>
+  );
+  // How this mix is doing in the post that is running (or just ran), or null.
+  const liveBadge = (m: Mix) => {
+    const it = itemOf(m);
+    if (!it) return null;
+    const pct = it.size > 0 ? Math.round((it.sent / it.size) * 100) : 0;
+    switch (it.phase) {
+      case "waiting": return <span className="pill pill--skipped">Waiting</span>;
+      case "uploading": return (
+        <span className="mixstate mixstate--up">
+          <span className="mixstate__label">Uploading <span className="num">{pct}%</span></span>
+          <span className="mixstate__bar"><span style={{ width: `${it.size > 0 ? pct : 8}%` }}
+            className={it.size > 0 ? "" : "mixstate__bar--wait"} /></span>
+        </span>);
+      case "posted": return (
+        <button type="button" className="pill pill--ok mixstate--ok linkbtn" title={it.url ? "Open on SoundCloud" : undefined}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); it.url && openExternal(it.url); }}>Posted ✓</button>);
+      case "skipped": return <span className="pill pill--skipped" title="Already on SoundCloud">Skipped</span>;
+      case "failed": return <span className="pill pill--error" title={it.error}>Failed</span>;
+    }
+  };
+  // The line under the name that explains a skip or a failure, with Try again.
+  const liveNote = (m: Mix) => {
+    const it = itemOf(m);
+    if (it?.phase === "skipped") return <span className="mixstate__note">Skipped (already on SoundCloud)</span>;
+    if (it?.phase === "failed") return <span className="mixstate__note mixstate__note--err" title={it.error}>{it.reason}</span>;
+    return null;
+  };
+  const statusBadge = (m: Mix) => liveBadge(m) ?? (m.uploaded
     ? <button type="button" className="pill pill--ok linkbtn"
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); m.permalink_url && openExternal(m.permalink_url); }}>Posted</button>
     : m.superseded_by
       ? <span className="pill pill--skipped">Using {m.superseded_by}</span>
-      : <span className="pill" style={{ ["--dot" as any]: "var(--accent)" }}>New</span>;
+      : <span className="pill" style={{ ["--dot" as any]: "var(--accent)" }}>New</span>);
   const draftButton = (m: Mix) => m.wip
     ? <button type="button" className="chip chip--on" style={{ height: 24 }}
         title="Draft: kept private and replaced on each new bounce. Click to mark as final."
@@ -157,10 +212,10 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
   return (
     <div>
       <PageHeader title="Upload" sub={summary} actions={<>
-        <Button kind="quiet" onClick={rescan} disabled={scan.active || running}>
+        <Button kind="quiet" onClick={() => rescan()} disabled={scan.active || busy}>
           <Icon name="refresh" />{scan.active ? "Looking…" : "Look again"}
         </Button>
-        <Button kind="primary" disabled={selected.size === 0 || running || upload.active} onClick={start}>
+        <Button kind="primary" disabled={selected.size === 0 || busy} onClick={() => start()}>
           {running ? "Posting…" : selected.size ? `Post ${selected.size} to SoundCloud` : "Post to SoundCloud"}
         </Button>
       </>} />
@@ -168,18 +223,18 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
       {error && <div className="banner banner--warn"><Icon name="alert" className="banner__icon" />{error}</div>}
 
       {(running || upload.active || upload.done) && (
-        <section className="card section">
-          <div className="row-spread" style={{ marginBottom: 10 }}>
-            <b style={{ fontWeight: 600 }}>{upload.done ? "Done" : upload.current ? `Uploading “${upload.current}”` : "Getting ready…"}</b>
-            <span className="num muted">{upload.completed + upload.skipped + upload.errors} / {upload.total}</span>
+        <section className="card section up-overall">
+          <div className="row-spread">
+            <b style={{ fontWeight: 600 }}>{upload.done ? (upload.cancelled ? "Stopped" : "Done")
+              : upload.current ? `Posting ${Math.min(finished + 1, upload.total)} of ${upload.total}` : "Getting ready…"}</b>
+            <span className="muted up-overall__counts">
+              {upload.completed} posted · {upload.skipped} skipped · {upload.errors} failed
+              {upload.lastUrl && (
+                <> · <button className="linkbtn" onClick={() => openExternal(upload.lastUrl!)}>open the last one on SoundCloud</button></>
+              )}
+            </span>
           </div>
-          <ProgressBar pct={upload.done ? 100 : trackPct} active={!upload.done} />
-          <div className="muted" style={{ marginTop: 10, fontSize: 12.5 }}>
-            {upload.completed} posted · {upload.skipped} skipped · {upload.errors} failed
-            {upload.lastUrl && (
-              <> · <button className="linkbtn" onClick={() => openExternal(upload.lastUrl!)}>open the last one on SoundCloud</button></>
-            )}
-          </div>
+          <ProgressBar pct={upload.done ? 100 : overallPct} active={!upload.done} />
         </section>
       )}
 
@@ -239,11 +294,9 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
       )}
 
       {mixes && mixes.length === 0 && (
-        <div className="table"><div className="empty">
-          <div className="empty__icon"><Icon name="folder" size={28} /></div>
-          <div className="empty__title">No audio in your watched folders</div>
-          Export a mix into one of them, or add a folder in Settings.
-        </div></div>
+        <div className="table"><EmptyState pose="empty-crate" title="No mixes in your watched folders yet">
+          Export a mix into one of them, or add the folder you export into in Settings.
+        </EmptyState></div>
       )}
 
       {visible.length > 0 && look === "sleeve" && (
@@ -251,10 +304,12 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
           {visible.map((m) => {
             const meta = mixMeta(m);
             const picked = selected.has(m.path);
-            const locked = m.uploaded || running;
+            const locked = m.uploaded || busy;
+            const note = liveNote(m);
+            const it = itemOf(m);
             return (
-              <div key={m.path} className={`sleeve${picked ? " sleeve--selected" : ""}${m.uploaded || m.superseded_by ? " sleeve--done" : ""}`}
-                role="button" tabIndex={0} aria-pressed={picked}
+              <div key={m.path} className={`sleeve${picked ? " sleeve--selected" : ""}${m.uploaded || m.superseded_by ? " sleeve--done" : ""}${it?.phase === "failed" ? " sleeve--failed" : ""}`}
+                role="button" tabIndex={0} aria-pressed={picked} onContextMenu={(e) => openMenu(e, mixMenu(m))}
                 onClick={() => { if (!locked) toggle(m.path); }}
                 onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !locked) { e.preventDefault(); toggle(m.path); } }}>
                 <div className="sleeve__art">
@@ -263,6 +318,9 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
                   <input type="checkbox" className="mixrow__check mix-sleeve__check" disabled={locked} checked={picked}
                     onClick={(e) => e.stopPropagation()} onChange={() => toggle(m.path)} aria-label={`Pick ${m.name}`} />
                   <PlayButton path={m.path} meta={meta} size={34} className="sleeve__play" />
+                  {it?.phase === "uploading" && (
+                    <span className="mix-sleeve__bar"><span style={{ width: `${it.size > 0 ? (it.sent / it.size) * 100 : 0}%` }} /></span>
+                  )}
                 </div>
                 <div className="sleeve__meta">
                   <div className="track-sleeve__top">
@@ -274,7 +332,9 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
                     <span className="mono">{m.duration ? fmtDuration(m.duration) : ""}</span>
                   </div>
                   <SongWave path={m.path} meta={meta} height={18} />
-                  {!m.superseded_by && !m.uploaded && <div className="mix-sleeve__draft">{draftButton(m)}</div>}
+                  {note
+                    ? <div className="mix-sleeve__state">{note}{it?.phase === "failed" && retry(m)}</div>
+                    : !m.superseded_by && !m.uploaded && <div className="mix-sleeve__draft">{draftButton(m)}</div>}
                 </div>
               </div>
             );
@@ -290,25 +350,30 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
           </div>
           {visible.map((m, i) => {
             const meta = mixMeta(m);
+            const note = liveNote(m);
+            const it = itemOf(m);
             return (
             <label key={m.path} className={`row cols mix-cols scanrow--enter${selected.has(m.path) ? " row--selected" : ""}`}
-              style={{ ["--i" as any]: i, cursor: m.uploaded || running ? "default" : "pointer" }}>
+              onContextMenu={(e) => openMenu(e, mixMenu(m))}
+              style={{ ["--i" as any]: i, cursor: m.uploaded || busy ? "default" : "pointer" }}>
               <span className="stripe" style={{ background: genreColor(m.genre) }} />
-              <input type="checkbox" className="mixrow__check" disabled={m.uploaded || running}
+              <input type="checkbox" className="mixrow__check" disabled={m.uploaded || busy}
                 checked={selected.has(m.path)} onChange={() => toggle(m.path)} aria-label={`Pick ${m.name}`} />
               <PlayButton path={m.path} meta={meta} size={28} />
               <span className="fmt-badge">{m.ext.replace(".", "")}</span>
               <div className="row__main" style={{ opacity: m.uploaded || m.superseded_by ? 0.6 : 1 }}>
                 <div className="row__title">{m.name}</div>
-                <SubLine parts={[m.genre, m.bpm ? `${m.bpm} BPM` : "",
-                  m.dupe_formats && m.dupe_formats.length ? `also ${m.dupe_formats.join(", ")}` : ""]} />
+                {note
+                  ? <div className="row__sub">{note}</div>
+                  : <SubLine parts={[m.genre, m.bpm ? `${m.bpm} BPM` : "",
+                      m.dupe_formats && m.dupe_formats.length ? `also ${m.dupe_formats.join(", ")}` : ""]} />}
               </div>
               <SongWave path={m.path} meta={meta} height={24} />
               <span className={`col-trunc${m.project_match ? "" : " faint"}`}>{m.project_match || "Not linked"}</span>
               <span className="col-num">{m.duration ? fmtDuration(m.duration) : "—"}</span>
               <span className="col-num">{fmtBytes(m.size)}</span>
               <span>{!m.superseded_by && draftButton(m)}</span>
-              {statusBadge(m)}
+              <span className="mixstate__cell">{statusBadge(m)}{it?.phase === "failed" && retry(m)}</span>
             </label>
             );
           })}

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { makeApi } from "./api";
 import { Nav, type Tab } from "./components/Nav";
 import { LcBrand } from "./components/LcBrand";
-import { PlayerBar } from "./components/Player";
+import { PlayerBar, togglePlaying } from "./components/Player";
 import "./look";
 import { Setup } from "./screens/Setup";
 import { Home } from "./screens/Home";
@@ -10,12 +10,20 @@ import { Upload } from "./screens/Upload";
 import { Manage } from "./screens/Manage";
 import { History } from "./screens/History";
 import { Settings } from "./screens/Settings";
-import { WhatsNewHost } from "./components/WhatsNew";
+import { WhatsNewHost, openWhatsNew } from "./components/WhatsNew";
+import { ConfirmHost, ContextMenuHost, DropZone, ShortcutsPanel, ToastHost, toast } from "./components/Desktop";
+import { baseName, folderOf, isInside, keep, recall, useDesktopCommands, useEscapeToClose, useFileDrop, useIconProgress, type Dropped } from "./desktop";
 import { useLiveProgress } from "./useProgress";
 import type { Account, Config, Entitlement } from "./types";
+import { EmptyState } from "./components/SlothSpot";
 import { useBackForwardInput, useNav, type Place } from "./nav";
 
 const api = makeApi();
+const TABS: Tab[] = ["home", "upload", "manage", "history", "settings"];
+const LAST_PAGE = "lc-last-page";
+
+// Mixes Uploader can post; dropping one adds the folder it sits in.
+const AUDIO_FILE = /\.(wav|aiff?|flac|mp3|m4a|aac|ogg|opus)$/i;
 
 export default function App() {
   const [cfg, setCfg] = useState<Config | null | "error">(null);
@@ -23,7 +31,8 @@ export default function App() {
   const [ent, setEnt] = useState<Entitlement | null>(null);
   // Where you are: a tab, maybe a track open for editing on it. Kept as a back/forward
   // history (side mouse buttons, Alt+arrows), the same as in Backups.
-  const nav = useNav<Place & { tab: Tab }>({ tab: "home" });
+  // The app opens on the page it was closed on.
+  const nav = useNav<Place & { tab: Tab }>({ tab: recall<Tab>(LAST_PAGE, "home", (v) => TABS.includes(v as Tab)) });
   useBackForwardInput(nav.back, nav.forward);
   const { tab } = nav.place;
   const sub = nav.place.sub ?? null;
@@ -36,6 +45,48 @@ export default function App() {
     if (p && p.tab === tab && !p.sub) nav.back(); else setTab(tab);
   };
   const live = useLiveProgress();
+  const [showKeys, setShowKeys] = useState(false);
+  const [viewKey, setViewKey] = useState(0);  // bumped to reload a page after a drop
+  useEffect(() => { keep(LAST_PAGE, tab); }, [tab]);
+
+  // Keyboard shortcuts and the menu bar (see desktop.ts).
+  useDesktopCommands((cmd) => {
+    if (cmd === "settings") setTab("settings");
+    else if (cmd === "back") nav.back();
+    else if (cmd === "forward") nav.forward();
+    else if (cmd === "play") togglePlaying();
+    else if (cmd === "whats-new") openWhatsNew();
+    else if (cmd === "shortcuts") setShowKeys(true);
+  });
+  // Escape closes an open track (its panel closes itself too; this covers the rest).
+  useEscapeToClose(sub ? closeSub : null);
+
+  // How far an upload has got, on the dock / taskbar icon.
+  const u = live.upload;
+  useIconProgress(u.active ? (u.size ? u.sent / u.size : u.total ? u.completed / u.total : 0) : null);
+
+  // Drop a folder (or a mix) on the window to add it to the folders Uploader watches.
+  async function addDropped(items: Dropped[]) {
+    if (!cfg || cfg === "error") return;
+    const folders = [...new Set(items.flatMap((d) =>
+      d.kind === "folder" ? [d.path] : d.kind === "file" && AUDIO_FILE.test(d.path) ? [folderOf(d.path)] : []))];
+    if (!folders.length) { toast("Drop a folder of mixes (or a mix) to watch it."); return; }
+    const fresh = folders.filter((f) => !isInside(f, cfg.sources));
+    const goUpload = { label: "Go to Upload", onClick: () => setTab("upload") };
+    if (!fresh.length) {
+      toast(folders.length === 1 ? `Already watching ${baseName(folders[0])}.` : "Already watching those folders.", goUpload);
+      return;
+    }
+    try {
+      const saved = await api.saveSettings({ ...cfg, sources: [...cfg.sources, ...fresh] });
+      setCfg(saved);
+      setViewKey((k) => k + 1);
+      toast(fresh.length === 1 ? `Now watching ${baseName(fresh[0])}.` : `Now watching ${fresh.length} more folders.`, goUpload);
+    } catch {
+      toast("Couldn't add that folder. Try Add folder in Settings.");
+    }
+  }
+  const dragging = useFileDrop(addDropped, !!cfg && cfg !== "error" && !!account && cfg.sources.length > 0 && account.connected);
 
   // Was the app already set up when it opened? Only then can "What's new" show
   // on a first run of this version (a fresh install has nothing new to show).
@@ -78,9 +129,10 @@ export default function App() {
   if (cfg === "error") {
     return (
       <div className="splash">
-        <div className="card" style={{ borderColor: "var(--danger)", color: "var(--danger)", maxWidth: 380 }}>
-          Couldn't reach the upload service.
-        </div>
+        <EmptyState pose="tangled" title="Uploader couldn't start its engine"
+          action={<button className="btn btn--primary" onClick={() => (window as any).lazyupload?.relaunch?.()}>Restart the app</button>}>
+          The part of the app that talks to SoundCloud didn't answer. Restarting the app usually fixes it; nothing you posted is lost. If it keeps happening, use Help, Report a problem.
+        </EmptyState>
       </div>
     );
   }
@@ -101,7 +153,7 @@ export default function App() {
         account={account.account} tier={ent.tier} beta={Boolean(ent.beta)} />
       <div className="main">
         <div className="content">
-          <div key={tab} className="view-enter">
+          <div key={tab === "settings" || tab === "upload" ? `${tab}-${viewKey}` : tab} className="view-enter">
             {tab === "home" ? (
               <Home account={account} onAccount={setAccount} onUpload={() => setTab("upload")}
                 onHistory={() => setTab("history")} />
@@ -121,6 +173,11 @@ export default function App() {
       </div>
       <PlayerBar />
       <WhatsNewHost setUp={setUpAtOpen.current === true} />
+      <ContextMenuHost />
+      <ToastHost />
+      <ConfirmHost />
+      <DropZone show={dragging} title="Drop to watch" hint="Drop a folder of mixes to add it to the folders Uploader watches." />
+      {showKeys && <ShortcutsPanel onClose={() => setShowKeys(false)} />}
     </div>
   );
 }
