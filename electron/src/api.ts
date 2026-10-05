@@ -41,6 +41,10 @@ export function makeApi() {
     async scan(sources?: string[]): Promise<Mix[]> {
       return (await req("POST", "/api/scan", { sources })).mixes;
     },
+    // Give mixes a genre of their own; null goes back to the project's genre.
+    async setMixGenre(paths: string[], genre: string | null): Promise<{ ok: boolean }> {
+      return req("POST", "/api/mixes/genre", { paths, genre });
+    },
     async setWip(name: string, wip: boolean): Promise<{ wip: { key: string; name: string; permalink_url: string | null }[] }> {
       return req("POST", "/api/wip", { name, wip });
     },

@@ -18,7 +18,7 @@
 .flowbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 14px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
 .flowbar__steps { display: flex; gap: 18px; }
 .flowstep { display: inline-flex; align-items: center; gap: 8px; color: var(--text-faint); font-size: 13.5px; font-weight: 500; padding: 0; background: none; }
-.flowstep__n { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border-strong); color: var(--text-faint); font: 500 11px var(--font-mono); }
+.flowstep__n { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border-strong); color: var(--text-faint); font: 500 12px var(--font-mono); }
 .flowstep--on { color: var(--text); background: none; }
 .flowstep--on .flowstep__n { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .flowstep--done { color: var(--text-dim); }
@@ -38,7 +38,7 @@
 .mixstate__label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
 .mixstate__label .num { color: var(--text); }
 .mixstate__bar { display: block; width: 84px; max-width: 100%; height: 3px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
-.mixstate__bar > span { display: block; height: 100%; border-radius: 2px; background: var(--accent); transition: width .25s ease; }
+.mixstate__bar > span { display: block; height: 100%; border-radius: 2px; background: var(--accent); transition: width .7s var(--ease-glide); }
 .mixstate__bar--wait { animation: mixstateWait 1.1s ease-in-out infinite alternate; }
 @keyframes mixstateWait { from { margin-left: 0; } to { margin-left: 70%; } }
 .pill.mixstate--ok { color: var(--accent-2); }
@@ -47,16 +47,16 @@
 .btn.mixstate__retry { height: 24px; padding: 0 8px; font-size: 12px; flex: none; }
 /* sleeve: the pill says "Uploading 42%", the bar runs along the bottom of the cover */
 .sleeve__badge .mixstate__bar { display: none; }
-.sleeve__badge .mixstate__label { color: var(--text); font-size: 11.5px; }
+.sleeve__badge .mixstate__label { color: var(--text); font-size: 12px; }
 .mix-sleeve__bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(10, 11, 13, 0.6); }
-.mix-sleeve__bar > span { display: block; height: 100%; background: var(--accent); transition: width .25s ease; }
+.mix-sleeve__bar > span { display: block; height: 100%; background: var(--accent); transition: width .7s var(--ease-glide); }
 .mix-sleeve__state { margin-top: 6px; display: grid; justify-items: start; gap: 6px; }
 .mix-sleeve__state .mixstate__note { line-height: 1.35; }
 .sleeve--failed { border-color: rgba(230, 111, 106, 0.5); }
 .fmt-badge {
   display: inline-flex; align-items: center; justify-content: center; height: 20px; padding: 0 6px; flex-shrink: 0;
   border: 1px solid var(--border-strong); border-radius: 4px; background: none;
-  font: 500 11px var(--font-mono); color: var(--text-dim); text-transform: uppercase;
+  font: 500 12px var(--font-mono); color: var(--text-dim); text-transform: uppercase;
 }
 .toolchk { display: flex; align-items: center; gap: 7px; color: var(--text-dim); font-size: 13px; cursor: pointer; white-space: nowrap; }
 
@@ -97,7 +97,7 @@
 .up-hero__stats { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 20px; margin: 0; }
 .up-hero__stats dt { font-size: 12px; color: var(--text-faint); }
 .up-hero__stats dd { margin: 2px 0 0; font: 500 22px var(--font-mono); display: grid; }
-.up-hero__stats dd span { font: 400 11.5px var(--font); color: var(--text-faint); }
+.up-hero__stats dd span { font: 400 12px var(--font); color: var(--text-faint); }
 .up-shelf { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; }
 @media (max-width: 1150px) { .up-shelf { grid-template-columns: repeat(4, minmax(0, 1fr)); } .up-shelf > :nth-child(n+5) { display: none; } }
 @media (max-width: 950px) { .up-hero { grid-template-columns: 1fr; } }

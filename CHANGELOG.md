@@ -14,6 +14,24 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## 0.1.3 (5 October 2026)
+
+### New
+- **Correct a mix's genre.** Genres you fix in Backups now show here too. To give one mix its own genre (say, a remix), right-click it on the Upload page or click its genre. Guessed genres have a dotted underline; ones you set don't. Works in both looks.
+- **Your own genres.** Genres you type yourself stay at the top of the genre list.
+- **Find any track on Your tracks.** The search box forgives typos and half-typed words and also looks at project names and music apps. New pickers narrow the list by music app, genre, tempo, project and search score, only offering what your own tracks have. The Public and Private buttons show how many tracks each would show, "Showing 2 of 8 tracks" has a Clear all button, and in the Crate look clicking a column heading sorts by it.
+
+### Better
+- **Follows songs renamed in Backups.** When you tidy a song's names in Backups, Uploader still knows which project each mix came from, still plays and outlines it, and still knows it's already on SoundCloud.
+- **Matches mixes to projects more often.** Dates, tempo and key in a mix's name ("2026-10-01 Night Drive 124bpm Amin") no longer stop Uploader finding its project, the same way Backups now reads them.
+- **Calmer screens in the Crate look.** The coloured stripe is kept for genres only: menus, pop-ups, the welcome box and the update panel no longer have a blue edge.
+- **Sloth drawings that move.** "Nothing posted yet" now shows a sleepy sloth napping on a branch, and a search on Your tracks that finds nothing shows a sloth peering through a magnifying glass. Both sit still if you turn animations off in your computer's settings. Works in both looks.
+- **A look of its own.** A new sturdy font and deep ink colours, covers made like printed record sleeves (the same as in Backups), level meters that move while a mix plays, slightly bigger small text, long project names that wrap instead of being cut off, and the sloth now says a word when a page is empty.
+
+### Fixed
+- **Signing in to SoundCloud on work or college networks.** Sign-in no longer fails with a "certificate verify failed" message on networks that check secure traffic; Uploader now trusts the same certificates as your computer.
+- **Bitwig recordings stay out of your mixes.** Audio inside a Bitwig project folder (its samples, recordings and bounced clips) is no longer listed as a mix to upload; songs you export from Bitwig still are.
+
 ## 0.1.2 (5 October 2026)
 
 ### New

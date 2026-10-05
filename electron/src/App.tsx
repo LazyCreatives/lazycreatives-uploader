@@ -12,6 +12,7 @@ import { History } from "./screens/History";
 import { Settings } from "./screens/Settings";
 import { WhatsNewHost, openWhatsNew } from "./components/WhatsNew";
 import { ConfirmHost, ContextMenuHost, DropZone, ShortcutsPanel, ToastHost, toast } from "./components/Desktop";
+import { GenrePickHost } from "./components/GenrePick";
 import { baseName, folderOf, isInside, keep, recall, useDesktopCommands, useEscapeToClose, useFileDrop, useIconProgress, type Dropped } from "./desktop";
 import { useLiveProgress } from "./useProgress";
 import type { Account, Config, Entitlement } from "./types";
@@ -176,6 +177,7 @@ export default function App() {
       <ContextMenuHost />
       <ToastHost />
       <ConfirmHost />
+      <GenrePickHost />
       <DropZone show={dragging} title="Drop to watch" hint="Drop a folder of mixes to add it to the folders Uploader watches." />
       {showKeys && <ShortcutsPanel onClose={() => setShowKeys(false)} />}
     </div>

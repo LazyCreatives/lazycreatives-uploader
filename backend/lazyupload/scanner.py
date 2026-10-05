@@ -15,6 +15,7 @@ def discover(sources: list[Path]) -> list[dict]:
     'render in progress' files some DAWs leave behind.
     """
     out: dict[str, dict] = {}
+    bitwig_dirs: dict[Path, bool] = {}
     for src in sources:
         if not src or not src.is_dir():
             continue
@@ -27,7 +28,7 @@ def discover(sources: list[Path]) -> list[dict]:
                     continue
                 if p.name.startswith(".") or p.name.startswith("~"):
                     continue
-                if _in_project_package(p, src):
+                if _in_project_package(p, src) or _in_bitwig_project(p, src, bitwig_dirs):
                     continue
                 st = p.stat()
                 key = str(p.resolve())
@@ -55,6 +56,35 @@ def _in_project_package(path: Path, src: Path) -> bool:
     except ValueError:
         parts = path.parent.parts
     return any(part.lower().endswith(_PACKAGE_SUFFIXES) for part in parts)
+
+
+# A Bitwig project folder keeps the project's own audio in these subfolders: samples,
+# recordings and bounced clips, never a finished mix. Only inside a Bitwig project
+# folder, since "Bounce" is also a usual name for a folder of finished songs.
+_BITWIG_DIRS = {"samples", "recordings", "master-recordings", "bounce", "plugin-states",
+                "auto-backups"}
+
+
+def _is_bitwig_folder(d: Path, cache: dict) -> bool:
+    if d not in cache:
+        try:
+            cache[d] = (d / ".bitwig-project").is_file() or any(d.glob("*.bwproject"))
+        except OSError:
+            cache[d] = False
+    return cache[d]
+
+
+def _in_bitwig_project(path: Path, src: Path, cache: dict) -> bool:
+    try:
+        rel = path.relative_to(src).parts[:-1]
+    except ValueError:
+        return False
+    d = src
+    for part in rel:
+        if part.lower() in _BITWIG_DIRS and _is_bitwig_folder(d, cache):
+            return True
+        d = d / part
+    return False
 
 
 def _wav_duration(path: Path) -> float | None:

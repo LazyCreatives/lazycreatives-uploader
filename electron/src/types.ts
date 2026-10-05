@@ -32,6 +32,9 @@ export interface Mix {
   bpm?: number | null;
   genre?: string | null;
   genre_emoji?: string | null;
+  genre_by_you?: boolean;           // the producer set this genre (in Backups or for this mix)
+  genre_mix?: boolean;              // set for this mix only, in Uploader
+  genre_project?: string | null;    // the Backups project's genre
   project_match?: string | null;
   project_id?: string | null;
   project_link?: "exact" | "name";  // exact = Backups linked this very file to the project

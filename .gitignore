@@ -21,3 +21,7 @@ electron/release/
 # OS
 .DS_Store
 Thumbs.db
+
+# Impeccable design checker: per-machine state
+.impeccable/
+.claude/settings.local.json

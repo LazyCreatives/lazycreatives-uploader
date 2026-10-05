@@ -25,3 +25,16 @@ def test_discover_skips_recordings_inside_logic_projects(tmp_path):
     (tmp_path / "Bounces").mkdir()
     (tmp_path / "Bounces" / "Night Drive.wav").write_bytes(b"x")
     assert [m["name"] for m in discover([tmp_path])] == ["Night Drive"]
+
+
+def test_discover_skips_audio_inside_bitwig_projects(tmp_path):
+    proj = tmp_path / "Night Drive"
+    for sub in ("samples", "recordings", "bounce"):
+        (proj / sub).mkdir(parents=True)
+        (proj / sub / f"{sub}-1.wav").write_bytes(b"x")
+    (proj / "Night Drive.bwproject").write_bytes(b"BtWg")
+    (proj / "exported" / "2026-10-05 101500").mkdir(parents=True)
+    (proj / "exported" / "2026-10-05 101500" / "Night Drive.wav").write_bytes(b"x")
+    (tmp_path / "Bounce").mkdir()                       # not a Bitwig project folder
+    (tmp_path / "Bounce" / "Sunday Keys.wav").write_bytes(b"x")
+    assert sorted(m["name"] for m in discover([tmp_path])) == ["Night Drive", "Sunday Keys"]

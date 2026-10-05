@@ -43,7 +43,7 @@ function createWindow() {
   // Reopens at the size and place it was last closed at (see desktop.js).
   const placement = windowStateOptions();
   win = new BrowserWindow({
-    ...placement.options, backgroundColor: "#0D0E10",
+    ...placement.options, backgroundColor: "#0B0E12",
     ...(hasIcon() ? { icon: ICON } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),

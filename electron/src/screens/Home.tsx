@@ -63,7 +63,7 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
     {ready ? "Review and post" : "Upload new mixes"}</Button>;
   // The empty "Latest uploads" box: point at the mixes waiting, if there are any.
   const emptyBox = (
-    <div className="table"><EmptyState pose={ready ? "waving" : "napping"} title="Nothing posted yet"
+    <div className="table"><EmptyState pose={ready ? "waving" : "napping"} title="Nothing posted yet" say={ready ? "Your mixes are waiting. Go on." : "Wake me when there’s a mix."}
       action={ready ? <Button sm onClick={onUpload}>Post your first mix</Button> : undefined}>
       {ready ? readyInFolder(waiting.count) : "Your first upload will show up here."}
     </EmptyState></div>

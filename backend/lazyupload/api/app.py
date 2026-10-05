@@ -18,7 +18,7 @@ from lazyupload.api.progress import ProgressHub
 from lazyupload.api.schemas import (
     AccountActivateRequest, ActivateRequest, ArtworkRequest, BulkArtworkRequest,
     BulkDeleteRequest, BulkTrackUpdate, Config, DisconnectRequest, ScanRequest,
-    TrackUpdate, UploadRequest, WipRequest,
+    MixGenreRequest, TrackUpdate, UploadRequest, WipRequest,
 )
 from lazyupload.catalog import Catalog
 from lazyupload.connect import SoundCloudConnectSession
@@ -204,6 +204,12 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         app.state.hub.bind_loop(asyncio.get_running_loop())
         mixes = await asyncio.to_thread(service.scan_mixes, catalog, sources, progress)
         return {"mixes": mixes}
+
+    @app.post("/api/mixes/genre", dependencies=[Depends(require_token)])
+    def set_mix_genre(req: MixGenreRequest):
+        genre = (req.genre or "").strip() or None
+        service.set_mix_genre(catalog, req.paths, genre)
+        return {"ok": True}
 
     @app.post("/api/wip", dependencies=[Depends(require_token)])
     async def set_wip(req: WipRequest):

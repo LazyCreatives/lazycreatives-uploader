@@ -34,17 +34,17 @@
 .art-thumb--ph { color: var(--text-faint); }
 
 .mng-cover { margin-top: 16px; }
-.mng-cover__label { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 2px; }
+.mng-cover__label { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 2px; }
 
 /* ---- duplicate-cleanup hint under the filter chips ---- */
 .mng-dupehint { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text-dim); }
 
 /* ---- clickable genre tag suggestions (edit drawer) ---- */
 .mng-tagsugg { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 14px; }
-.mng-tagsugg__label { font-size: 11.5px; color: var(--text-faint); margin-right: 2px; }
+.mng-tagsugg__label { font-size: 12px; color: var(--text-faint); margin-right: 2px; }
 .mng-tagchip {
   border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--accent);
-  border-radius: 999px; padding: 3px 9px; font: inherit; font-size: 11.5px; font-weight: 600;
+  border-radius: 999px; padding: 3px 9px; font: inherit; font-size: 12px; font-weight: 600;
   cursor: pointer; transition: background .14s, border-color .14s;
 }
 .mng-tagchip:hover { background: var(--accent-soft); border-color: rgba(136, 178, 214, 0.4); }
@@ -111,7 +111,7 @@
   margin-top: 16px; padding: 13px 14px; border-radius: var(--radius);
   background: var(--surface-2); border: 1px solid var(--border);
 }
-.mng-matched__label { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 9px; }
+.mng-matched__label { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 9px; }
 .mng-matched__name { font-weight: 600; }
 
 /* ---- typed-confirm delete summary ---- */
@@ -137,13 +137,13 @@
 .mng-seo-check { display: flex; align-items: center; gap: 9px; font-size: 12.5px; }
 .mng-seo-check__mark {
   display: inline-grid; place-items: center; width: 17px; height: 17px; flex-shrink: 0;
-  border-radius: 5px; font-size: 11px; font-weight: 700;
+  border-radius: 5px; font-size: 12px; font-weight: 700;
 }
 .mng-seo-check__mark.is-ok { background: var(--ok-soft); color: var(--accent-2); }
 .mng-seo-check__mark.is-part { background: var(--warn-soft); color: var(--warn); }
 .mng-seo-check__mark.is-bad { background: var(--danger-soft); color: var(--danger); }
 .mng-seo-check__label { flex: 1; color: var(--text-dim); }
-.mng-seo-check__pts { color: var(--text-faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.mng-seo-check__pts { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 .mng-seo-sugg { margin: 12px 0 0; padding-left: 18px; display: grid; gap: 5px; }
 .mng-seo-sugg li { font-size: 12px; color: var(--text-dim); }
 
@@ -168,7 +168,7 @@
 .track-sleeve__top { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
 .track-sleeve__top .iconbtn { width: 24px; height: 24px; flex: none; }
 .track-sleeve__sub { display: flex; justify-content: space-between; gap: 8px; color: var(--text-faint); font-size: 12px; min-width: 0; margin-bottom: 6px; }
-.track-sleeve__sub .mono { flex: none; font-size: 11.5px; }
+.track-sleeve__sub .mono { flex: none; font-size: 12px; }
 
 /* ---- Upload, Sleeve look: one card per mix; click a card to pick it ---- */
 .mix-sleeves { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
@@ -177,3 +177,56 @@
 .sleeve--done .sleeve__art { opacity: 0.55; }
 .mix-sleeve__draft { margin-top: 6px; }
 .track-sleeve__top .fmt-badge { flex: none; }
+.mix-sleeve__draft { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mix-sleeve__draft { min-width: 0; overflow: hidden; }
+.mix-sleeve__draft .genrechip { min-width: 0; flex: 0 1 auto; overflow: hidden; }
+.mix-sleeve__draft .genrechip__pen { display: none; }
+.mix-sleeve__draft .genrechip { padding: 0 8px; gap: 5px; }
+.mix-sleeve__draft .genrechip > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; }
+.mix-sleeve__draft .genrechip__how { display: none; }
+.mix-sleeve__draft > :last-child { white-space: nowrap; flex-shrink: 0; }
+.row__sub .mix-genre { color: inherit; font-size: inherit; }
+.row__sub .mix-genre:hover { color: var(--accent); }
+
+/* ---- search + filters: the search box, privacy buttons and sort on top; the DAW /
+   genre / BPM / project / score pickers, the count and "Clear all" under them.
+   Same shape as the Backups Library. ---- */
+.find { display: grid; gap: 10px; margin-bottom: 16px; }
+.find__top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.find__row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.find__search {
+  flex: 1 1 280px; max-width: 460px; position: relative; display: flex; align-items: center;
+  color: var(--text-faint);
+}
+.find__search > svg { position: absolute; left: 11px; pointer-events: none; }
+.find__search input[type="search"] { width: 100%; padding-left: 34px; padding-right: 32px; }
+.find__search input[type="search"]::-webkit-search-cancel-button { display: none; }
+.find__search:focus-within { color: var(--text-dim); }
+.find__x {
+  position: absolute; right: 6px; width: 24px; height: 24px; display: grid; place-items: center;
+  border: none; background: transparent; color: var(--text-faint); cursor: pointer; border-radius: 4px;
+}
+.find__x:hover { color: var(--text); background: var(--surface-3); }
+.find__top .toolchk { margin-left: auto; }
+.find__n { color: var(--text-faint); font-family: var(--font-mono); font-size: 11.5px; margin-left: 4px; }
+.seg__opt--on .find__n { color: var(--text-dim); }
+.find__pick { width: auto; min-width: 128px; height: 30px; padding-top: 0; padding-bottom: 0; font-size: 12.5px; }
+.find__pick--on { border-color: var(--accent); color: var(--text); }
+.find__count { margin-left: auto; font-size: 12.5px; color: var(--text-dim); white-space: nowrap; }
+.find__count b { color: var(--text); font-weight: 600; }
+.find__clear {
+  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: transparent;
+  color: var(--text-dim); font: 500 12.5px var(--font); cursor: pointer;
+}
+.find__clear:hover { color: var(--text); border-color: var(--border-interactive); }
+
+/* Crate table headings sort the table: click one, click again to flip it */
+.find__sort {
+  display: inline-flex; align-items: center; gap: 4px; min-width: 0; padding: 0; border: none; background: none;
+  font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer;
+  text-align: left; white-space: nowrap; width: 100%;
+}
+.find__sort.col-num { justify-content: flex-end; }
+.find__sort:hover, .find__sort--on { color: var(--text); }
+.find__sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }

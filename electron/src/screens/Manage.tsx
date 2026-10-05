@@ -3,19 +3,20 @@ import { makeApi, openExternal, pickImage, readImage, revealPath } from "../api"
 import { askConfirm, CopyButton, openMenu, type MenuItem } from "../components/Desktop";
 import { copyText, keep, recall } from "../desktop";
 import type { BulkResult, Config, Entitlement, SeoScore, Sharing, Track, TrackUpdate } from "../types";
-import { Button, PageHeader, SubLine, ProBadge, Segmented, fmtDuration } from "../components/ui";
+import { Button, PageHeader, SubLine, ProBadge, fmtDuration } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Art, PlayButton, SongWave, type SongMeta } from "../components/Player";
 import { genreColor, useLook } from "../look";
 import { EmptyState } from "../components/SlothSpot";
+import {
+  BPM_BANDS, FIRST_DESC, LOW_SCORE, NO_FILTERS, applyFilters, dawName, isFiltered, isPrivate, pickerOptions,
+  privacyCounts, sortTracks, type PrivacyFilter, type SortKey, type TrackFilters,
+} from "../trackFilter";
 import "../manage.css";
 
 const api = makeApi();
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 const BULK_CONFIRM_THRESHOLD = 25;   // confirm before a long sequential bulk write
-
-type PrivacyFilter = "all" | "public" | "private";
-type SortKey = "date" | "title" | "plays" | "duration" | "bpm" | "seo";
 
 const SEO_GRADE_CLASS: Record<string, string> = {
   A: "seo--a", B: "seo--b", C: "seo--c", D: "seo--d", F: "seo--f",
@@ -40,14 +41,9 @@ function fmtDate(iso: string | null | undefined): string {
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-// Human DAW label for the chip.
-const DAW_LABEL: Record<string, string> = {
-  ableton: "Ableton", flstudio: "FL", logic: "Logic", "logic pro": "Logic",
-  cubase: "Cubase", studioone: "Studio One", bitwig: "Bitwig", reaper: "Reaper",
-  protools: "Pro Tools", reason: "Reason", garageband: "GarageBand",
-};
+// Short DAW label for the "From project" line ("FL" fits where "FL Studio" doesn't).
 function dawLabel(daw: string): string {
-  return DAW_LABEL[daw.toLowerCase()] || daw;
+  return daw.toLowerCase() === "flstudio" ? "FL" : dawName(daw);
 }
 
 // A track's confident backup is "stale" if its newest backup (or the matched
@@ -61,7 +57,6 @@ function backupStale(t: Track): boolean {
   return false;
 }
 
-function isPrivate(t: Track): boolean { return t.sharing === "private"; }
 function isMatched(t: Track): boolean { return !!t.project_match; }
 
 // A re-enriched track returned by an edit/bulk op lacks the dupe_* fields (those are set
@@ -87,15 +82,14 @@ function friendlyError(msg: string): string {
 // page number are not, so the list never opens half-empty.
 const KEPT_KEY = "lc-tracks-view";
 const START = {
-  rawSearch: "", privacy: "all" as PrivacyFilter, sortKey: "date" as SortKey, sortDesc: true,
-  matchedOnly: false, hasBackup: false, missingOnly: false, needsSeo: false, dupesOnly: false,
-  page: 0, pageSize: 50,
+  ...NO_FILTERS, sortKey: "date" as SortKey, sortDesc: true, page: 0, pageSize: 50,
 };
 const savedView = recall<Partial<typeof START>>(KEPT_KEY, {}, (v) => !!v && typeof v === "object");
 const kept = { ...START };
 for (const k of Object.keys(START) as (keyof typeof START)[]) {
-  if (k !== "rawSearch" && k !== "page" && typeof savedView[k] === typeof START[k]) (kept as any)[k] = savedView[k];
+  if (k !== "q" && k !== "page" && typeof savedView[k] === typeof START[k]) (kept as any)[k] = savedView[k];
 }
+if (!(kept.sortKey in FIRST_DESC)) kept.sortKey = "date";
 
 // openTrack: the track whose edit panel is open (its id), or null. Opening and closing
 // go through the app's back/forward history, so the mouse's back button closes it.
@@ -111,24 +105,29 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   const [error, setError] = useState<string | null>(null);
 
   // toolbar / filter state
-  const [rawSearch, setRawSearch] = useState(kept.rawSearch);
-  const [search, setSearch] = useState(() => kept.rawSearch.trim().toLowerCase());
-  const [privacy, setPrivacy] = useState<PrivacyFilter>(kept.privacy);
+  const [filters, setFiltersState] = useState<TrackFilters>(() => {
+    const f = { ...NO_FILTERS };
+    for (const k of Object.keys(NO_FILTERS) as (keyof TrackFilters)[]) (f as any)[k] = kept[k];
+    return f;
+  });
+  const setFilters = (patch: Partial<TrackFilters> | null) =>
+    setFiltersState((f) => (patch ? { ...f, ...patch } : { ...NO_FILTERS }));
+  const [search, setSearch] = useState(() => kept.q.trim());
   const [sortKey, setSortKey] = useState<SortKey>(kept.sortKey);
   const [sortDesc, setSortDesc] = useState(kept.sortDesc);
-  const [matchedOnly, setMatchedOnly] = useState(kept.matchedOnly);
-  const [hasBackup, setHasBackup] = useState(kept.hasBackup);
-  const [missingOnly, setMissingOnly] = useState(kept.missingOnly);
-  const [needsSeo, setNeedsSeo] = useState(kept.needsSeo);
-  const [dupesOnly, setDupesOnly] = useState(kept.dupesOnly);
   const [page, setPage] = useState(kept.page);
   const [pageSize, setPageSize] = useState(kept.pageSize);
   useEffect(() => {
-    Object.assign(kept, { rawSearch, privacy, sortKey, sortDesc, matchedOnly, hasBackup, missingOnly, needsSeo, dupesOnly, page, pageSize });
+    Object.assign(kept, { ...filters, sortKey, sortDesc, page, pageSize });
   });
   useEffect(() => {
-    keep(KEPT_KEY, { privacy, sortKey, sortDesc, matchedOnly, hasBackup, missingOnly, needsSeo, dupesOnly, pageSize });
-  }, [privacy, sortKey, sortDesc, matchedOnly, hasBackup, missingOnly, needsSeo, dupesOnly, pageSize]);
+    keep(KEPT_KEY, { ...filters, q: "", sortKey, sortDesc, pageSize });
+  }, [filters, sortKey, sortDesc, pageSize]);
+  // Pick a sort; picking the one already in use flips it.
+  function sortBy(key: SortKey) {
+    if (key === sortKey) { setSortDesc((d) => !d); return; }
+    setSortKey(key); setSortDesc(FIRST_DESC[key]);
+  }
 
   // selection + dialogs
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -157,12 +156,12 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
 
   // debounce search (~200ms)
   useEffect(() => {
-    const id = window.setTimeout(() => setSearch(rawSearch.trim().toLowerCase()), 200);
+    const id = window.setTimeout(() => setSearch(filters.q.trim()), 200);
     return () => window.clearTimeout(id);
-  }, [rawSearch]);
+  }, [filters.q]);
 
   // reset to first page whenever the filtered set changes (not on coming back to the page)
-  const filterKey = JSON.stringify([search, privacy, sortKey, sortDesc, matchedOnly, hasBackup, missingOnly, needsSeo, dupesOnly, pageSize]);
+  const filterKey = JSON.stringify([{ ...filters, q: search }, sortKey, sortDesc, pageSize]);
   const lastFilterKey = useRef(filterKey);
   useEffect(() => {
     if (lastFilterKey.current === filterKey) return;
@@ -171,37 +170,14 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   }, [filterKey]);
 
   // ---- filter + sort (client-side) ----
-  const filtered = useMemo(() => {
-    let list = tracks || [];
-    if (privacy !== "all") list = list.filter((t) => (privacy === "private" ? isPrivate(t) : !isPrivate(t)));
-    if (matchedOnly) list = list.filter(isMatched);
-    if (hasBackup) list = list.filter((t) => (t.backups?.count ?? 0) > 0);
-    if (missingOnly) list = list.filter((t) => (t.missing_count ?? 0) > 0);
-    if (needsSeo) list = list.filter((t) => (t.seo?.score ?? 100) < 70);
-    if (dupesOnly) list = list.filter((t) => (t.dupe_count ?? 0) > 1);
-    if (search) {
-      list = list.filter((t) => {
-        const hay = [t.title, t.genre, ...(t.tags || [])].join(" ").toLowerCase();
-        return hay.includes(search);
-      });
-    }
-    const dir = sortDesc ? -1 : 1;
-    const sorted = [...list].sort((a, b) => {
-      let av: number | string, bv: number | string;
-      switch (sortKey) {
-        case "title": av = a.title.toLowerCase(); bv = b.title.toLowerCase(); break;
-        case "plays": av = a.playback_count ?? 0; bv = b.playback_count ?? 0; break;
-        case "duration": av = a.duration ?? 0; bv = b.duration ?? 0; break;
-        case "bpm": av = a.bpm ?? 0; bv = b.bpm ?? 0; break;
-        case "seo": av = a.seo?.score ?? -1; bv = b.seo?.score ?? -1; break;
-        default: av = a.created_at ? Date.parse(a.created_at) : 0; bv = b.created_at ? Date.parse(b.created_at) : 0;
-      }
-      if (av < bv) return -1 * dir;
-      if (av > bv) return 1 * dir;
-      return 0;
-    });
-    return sorted;
-  }, [tracks, privacy, matchedOnly, hasBackup, missingOnly, needsSeo, dupesOnly, search, sortKey, sortDesc]);
+  // The search box waits for a pause in typing; everything else applies at once.
+  const active = useMemo(() => ({ ...filters, q: search }), [filters, search]);
+  const filtered = useMemo(
+    () => sortTracks(applyFilters(tracks || [], active), sortKey, sortDesc),
+    [tracks, active, sortKey, sortDesc]);
+  const counts = useMemo(() => privacyCounts(tracks || [], active), [tracks, active]);
+  const options = useMemo(() => pickerOptions(tracks || []), [tracks]);
+  const anyFilter = isFiltered(filters);
 
   // Lower-quality duplicate copies (e.g. the MP3 when a FLAC of the same title exists).
   const lossyDupes = useMemo(
@@ -213,7 +189,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   }
   // When the last duplicate is cleaned up, drop the (now-hidden) Duplicates filter so the
   // list doesn't dead-end as an empty filtered view with no visible way to clear it.
-  useEffect(() => { if (dupesOnly && lossyDupes.length === 0) setDupesOnly(false); }, [lossyDupes.length, dupesOnly]);
+  useEffect(() => { if (filters.dupes && lossyDupes.length === 0) setFilters({ dupes: false }); }, [lossyDupes.length, filters.dupes]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages - 1);
@@ -373,11 +349,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
     finally { setBulkBusy(false); }
   }
 
-  function clearFilters() {
-    setRawSearch(""); setSearch(""); setPrivacy("all");
-    setMatchedOnly(false); setHasBackup(false); setMissingOnly(false); setNeedsSeo(false);
-    setDupesOnly(false);
-  }
+  function clearFilters() { setFilters(null); setSearch(""); }
 
   const friendly = error ? friendlyError(error) : null;
   const loading = tracks === null;
@@ -387,9 +359,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
     <div>
       <PageHeader title="Your tracks"
         sub={loading ? "Loading your SoundCloud…" : <>
-          {filtered.length === (tracks || []).length
-            ? `${(tracks || []).length} on SoundCloud`
-            : `${filtered.length} of ${(tracks || []).length} shown`}
+          {`${(tracks || []).length} on SoundCloud`}
           {matchedCount ? ` · ${matchedCount} linked to projects` : ""}
           {" · change details, privacy or covers"}{canBulk ? " for many at once" : ""}
         </>}
@@ -397,53 +367,102 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
 
       {friendly && <div className="banner banner--warn"><Icon name="alert" className="banner__icon" />{friendly}</div>}
 
-      {/* ---- toolbar; the bulk bar sits under it when tracks are ticked ---- */}
-      <div className="toolbar">
-        <label className="search" style={{ flex: 1, minWidth: 180 }}>
-          <Icon name="search" />
-          <input type="text" placeholder="Search title, genre or tag"
-            value={rawSearch} onChange={(e) => setRawSearch(e.target.value)} aria-label="Search tracks" data-find
-            onKeyDown={(e) => { if (e.key === "Escape") setRawSearch(""); }} />
-        </label>
-        <Segmented<PrivacyFilter> value={privacy} onChange={setPrivacy}
-          options={[{ value: "all", label: "All" }, { value: "public", label: "Public" }, { value: "private", label: "Private" }]} />
-        <label className="toolchk">
-          Sort
-          <select value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)} aria-label="Sort by">
-            <option value="date">Date</option>
-            <option value="title">Title</option>
-            <option value="plays">Plays</option>
-            <option value="duration">Length</option>
-            <option value="bpm">BPM</option>
-            <option value="seo">Search score</option>
-          </select>
-        </label>
-        <button type="button" className="iconbtn" onClick={() => setSortDesc((d) => !d)}
-          aria-label={sortDesc ? "Sorted high to low" : "Sorted low to high"} title={sortDesc ? "High to low" : "Low to high"}>
-          <Icon name={sortDesc ? "arrowDown" : "arrowUp"} />
-        </button>
-      </div>
-      <div className="toolbar">
-        <button type="button" className={`chip${matchedOnly ? " chip--on" : ""}`}
-          aria-pressed={matchedOnly} onClick={() => setMatchedOnly((v) => !v)}>Linked to a project</button>
-        <button type="button" className={`chip${hasBackup ? " chip--on" : ""}`}
-          aria-pressed={hasBackup} onClick={() => setHasBackup((v) => !v)}>Project backed up</button>
-        <button type="button" className={`chip${missingOnly ? " chip--on" : ""}`}
-          aria-pressed={missingOnly} onClick={() => setMissingOnly((v) => !v)}>Missing samples</button>
-        <button type="button" className={`chip${needsSeo ? " chip--on" : ""}`}
-          aria-pressed={needsSeo} onClick={() => setNeedsSeo((v) => !v)} title="Search score below 70">Hard to find</button>
-        {lossyDupes.length > 0 && (
-          <button type="button" className={`chip${dupesOnly ? " chip--on" : ""}`}
-            aria-pressed={dupesOnly} onClick={() => setDupesOnly((v) => !v)}
-            title="Same title uploaded in more than one format (e.g. FLAC + MP3)">Duplicates</button>
-        )}
-        {canBulk && lossyDupes.length > 0 && (
-          <span className="faint" style={{ fontSize: 12.5, marginLeft: "auto" }}>
-            {lossyDupes.length} lower-quality {lossyDupes.length === 1 ? "copy" : "copies"} ·{" "}
-            <button type="button" className="linkbtn" onClick={selectLossyDupes}>tick {lossyDupes.length === 1 ? "it" : "them"}</button>
-          </span>
-        )}
-      </div>
+      {/* ---- search and filters; the bulk bar sits under them when tracks are ticked ---- */}
+      {!loading && (tracks || []).length > 0 && (
+        <div className="find">
+          <div className="find__top">
+            <label className="find__search">
+              <Icon name="search" size={15} />
+              <input type="search" placeholder="Search tracks, projects, genres, tags…" value={filters.q}
+                aria-label="Search tracks" spellCheck={false} data-find
+                onChange={(e) => setFilters({ q: e.target.value })}
+                onKeyDown={(e) => { if (e.key === "Escape") setFilters({ q: "" }); }} />
+              {filters.q && <button type="button" className="find__x" aria-label="Clear search"
+                onClick={() => setFilters({ q: "" })}><Icon name="close" size={13} /></button>}
+            </label>
+            <div className="seg" role="group" aria-label="Privacy">
+              {([["all", "All"], ["public", "Public"], ["private", "Private"]] as [PrivacyFilter, string][]).map(([k, label]) => (
+                <button key={k} type="button" className={`seg__opt${filters.privacy === k ? " seg__opt--on" : ""}`}
+                  aria-pressed={filters.privacy === k} onClick={() => setFilters({ privacy: k })}>
+                  {label} <span className="find__n">{counts[k]}</span>
+                </button>
+              ))}
+            </div>
+            <label className="toolchk">
+              Sort
+              <select value={sortKey} onChange={(e) => sortBy(e.target.value as SortKey)} aria-label="Sort by">
+                <option value="date">Date posted</option>
+                <option value="title">Title</option>
+                <option value="project">Project</option>
+                <option value="plays">Plays</option>
+                <option value="duration">Length</option>
+                <option value="bpm">BPM</option>
+                <option value="seo">Search score</option>
+              </select>
+            </label>
+            <button type="button" className="iconbtn" onClick={() => setSortDesc((d) => !d)}
+              aria-label={sortDesc ? "Sorted high to low" : "Sorted low to high"} title={sortDesc ? "High to low" : "Low to high"}>
+              <Icon name={sortDesc ? "arrowDown" : "arrowUp"} />
+            </button>
+          </div>
+          <div className="find__row">
+            {options.daws.length > 1 && (
+              <select className={filters.daw ? "find__pick find__pick--on" : "find__pick"} value={filters.daw}
+                aria-label="DAW" onChange={(e) => setFilters({ daw: e.target.value })}>
+                <option value="">Any DAW</option>
+                {options.daws.map((d) => <option key={d} value={d}>{dawName(d)}</option>)}
+              </select>
+            )}
+            {options.genres.length > 0 && (
+              <select className={filters.genre ? "find__pick find__pick--on" : "find__pick"} value={filters.genre}
+                aria-label="Genre" onChange={(e) => setFilters({ genre: e.target.value })}>
+                <option value="">Any genre</option>
+                {options.genres.map((g) => <option key={g} value={g}>{g}</option>)}
+              </select>
+            )}
+            <select className={filters.bpm ? "find__pick find__pick--on" : "find__pick"} value={filters.bpm}
+              aria-label="BPM" onChange={(e) => setFilters({ bpm: e.target.value })}>
+              <option value="">Any BPM</option>
+              {BPM_BANDS.map((b) => <option key={b.key} value={b.key}>{b.label} BPM</option>)}
+            </select>
+            <select className={filters.project !== "any" ? "find__pick find__pick--on" : "find__pick"} value={filters.project}
+              aria-label="Project" onChange={(e) => setFilters({ project: e.target.value as TrackFilters["project"] })}>
+              <option value="any">Any project</option>
+              <option value="linked">Linked to a project</option>
+              <option value="backedup">Project backed up</option>
+              <option value="missing">Missing samples</option>
+              <option value="unlinked">Not linked yet</option>
+            </select>
+            <select className={filters.score !== "any" ? "find__pick find__pick--on" : "find__pick"} value={filters.score}
+              aria-label="Search score" onChange={(e) => setFilters({ score: e.target.value as TrackFilters["score"] })}>
+              <option value="any">Any search score</option>
+              <option value="low">Hard to find (under {LOW_SCORE})</option>
+              <option value="good">Easy to find ({LOW_SCORE} and up)</option>
+            </select>
+            {lossyDupes.length > 0 && (
+              <button type="button" className={`chip${filters.dupes ? " chip--on" : ""}`}
+                aria-pressed={filters.dupes} onClick={() => setFilters({ dupes: !filters.dupes })}
+                title="Same title uploaded in more than one format (e.g. FLAC + MP3)">Duplicates</button>
+            )}
+            <span className="find__count">
+              {anyFilter
+                ? <>Showing <b>{filtered.length}</b> of {(tracks || []).length} track{(tracks || []).length === 1 ? "" : "s"}</>
+                : <>{(tracks || []).length} track{(tracks || []).length === 1 ? "" : "s"}</>}
+            </span>
+            {anyFilter && (
+              <button type="button" className="find__clear" onClick={clearFilters}>
+                <Icon name="close" size={12} />Clear all
+              </button>
+            )}
+          </div>
+          {canBulk && lossyDupes.length > 0 && (
+            <div className="mng-dupehint">
+              {lossyDupes.length} lower-quality {lossyDupes.length === 1 ? "copy" : "copies"} of tracks you posted twice ·{" "}
+              <button type="button" className="linkbtn" onClick={selectLossyDupes}>tick {lossyDupes.length === 1 ? "it" : "them"}</button>
+            </div>
+          )}
+        </div>
+      )}
 
       {showBulkBar && (
         <div className="mng-bulk">
@@ -475,13 +494,13 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
 
       {/* ---- states ---- */}
       {!loading && (tracks || []).length === 0 && !error && (
-        <div className="table"><EmptyState pose="napping" title="No tracks on your SoundCloud yet">
+        <div className="table"><EmptyState pose="napping" title="No tracks on your SoundCloud yet" say="Quiet in here.">
           Post your first mix from Upload and it shows here.
         </EmptyState></div>
       )}
       {!loading && (tracks || []).length > 0 && filtered.length === 0 && (
-        <div className="table"><EmptyState pose="searching" title="No tracks match"
-          action={<Button sm onClick={clearFilters}>Clear filters</Button>}>
+        <div className="table"><EmptyState pose="searching" title={search ? `No tracks match “${search}”` : "No tracks match"} say="I looked everywhere."
+          action={<Button sm onClick={clearFilters}>Clear search and filters</Button>}>
           Try fewer words or a different filter.
         </EmptyState></div>
       )}
@@ -498,8 +517,12 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
       </div>}
       {pageItems.length > 0 && look === "crate" && <div className="table table--crate">
         <div className="row cols cols-head track-cols">
-          <span /><span /><span /><span /><span>Track</span><span>Waveform</span><span>From project</span>
-          <span className="col-num">Plays</span><span className="col-num">Score</span>
+          <span /><span /><span /><span />
+          <SortHead k="title" label="Track" sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
+          <span>Waveform</span>
+          <SortHead k="project" label="From project" sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
+          <SortHead k="plays" label="Plays" num sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
+          <SortHead k="seo" label="Score" num sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
           <span>Privacy</span><span />
         </div>
         {pageItems.map((t, i) => (
@@ -554,6 +577,20 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
           onConfirm={async () => { const res = await runBulkDelete(); if (res) setConfirmDelete(false); }} />
       )}
     </div>
+  );
+}
+
+// A Crate table heading that sorts the table: click it, click again to flip it.
+function SortHead({ k, label, num, sortKey, desc, onSort }: {
+  k: SortKey; label: string; num?: boolean; sortKey: SortKey; desc: boolean; onSort: (k: SortKey) => void;
+}) {
+  const on = sortKey === k;
+  return (
+    <button type="button" className={`find__sort${num ? " col-num" : ""}${on ? " find__sort--on" : ""}`}
+      onClick={() => onSort(k)} aria-sort={on ? (desc ? "descending" : "ascending") : "none"}
+      title={`Sort by ${label.toLowerCase()}`}>
+      {label}{on && <Icon name={desc ? "arrowDown" : "arrowUp"} size={11} />}
+    </button>
   );
 }
 
@@ -715,7 +752,7 @@ function TrackCard({ track, defaultArt, selected, onCheck, onEdit, onContextMenu
           )}
         </div>
         <div className="track-sleeve__sub">
-          <span className="col-trunc">{t.project_match ? `From ${t.project_match}` : t.genre || "No genre"}</span>
+          <span className="col-wrap2" title={t.project_match ?? undefined}>{t.project_match ? `From ${t.project_match}` : t.genre || "No genre"}</span>
           <span className="mono">{t.playback_count != null ? `${t.playback_count.toLocaleString()} plays` : ""}</span>
         </div>
         <SongWave path={t.local_path} scUrl={t.local_path ? null : t.waveform_url} meta={meta} height={18} />

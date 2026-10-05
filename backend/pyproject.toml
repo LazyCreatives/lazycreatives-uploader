@@ -8,6 +8,7 @@ dependencies = [
     "websockets>=12",      # uvicorn needs a WS library to serve /ws/progress live
     "apscheduler>=3.10,<4", # scheduled / watch-folder auto-uploads
     "requests>=2.31",       # multipart upload + OAuth token calls to SoundCloud
+    "truststore>=0.10",     # use the OS certificate store (work/college networks)
     "pillow>=10",           # render waveform cover art
     "numpy>=1.26",          # waveform FFT / dynamics analysis for cover art
     "soundfile>=0.12",      # decode local audio (wav/flac/aiff/mp3) for cover analysis

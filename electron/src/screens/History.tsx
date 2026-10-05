@@ -73,7 +73,7 @@ export function History() {
     <div>
       <PageHeader title="History" sub="Everything Uploader has posted, newest first." />
       {rows && rows.length === 0 && (
-        <EmptyState pose="napping" title="Nothing posted yet">
+        <EmptyState pose="napping" title="Nothing posted yet" say="Nothing yet. I’m patient.">
           Every mix you post shows here, newest first, with a link to it on SoundCloud.
         </EmptyState>
       )}

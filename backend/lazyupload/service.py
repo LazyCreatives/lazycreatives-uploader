@@ -278,7 +278,7 @@ def _enrich_track(catalog: Catalog, t: dict, upload_map: dict | None = None) -> 
     # The local file this app posted, so the track can be played and outlined here.
     try:
         row = upload_map.get(t.get("id")) if upload_map is not None else catalog.upload_by_track_id(t.get("id"))
-        path = (row or {}).get("file_path")
+        path = projectmeta.current_path((row or {}).get("file_path"))
         t["local_path"] = path if path and Path(path).is_file() else None
     except Exception:
         t["local_path"] = None
@@ -492,7 +492,7 @@ def generate_waveform_cover(catalog: Catalog, track_id: int) -> dict:
     if not track:
         raise RuntimeError("Track not found.")
     rec = catalog.upload_by_track_id(track_id)
-    file_path = rec.get("file_path") if rec else None
+    file_path = projectmeta.current_path(rec.get("file_path")) if rec else None
     with tempfile.TemporaryDirectory() as td:
         png = _render_cover(track, name, watermark, f"{td}/cover.png",
                             avatar_url=avatar, color=color, file_path=file_path)
@@ -518,7 +518,7 @@ def bulk_generate_waveform_covers(catalog: Catalog, ids: list[int]) -> list[dict
             track = track_map.get(tid)
             if not track:
                 raise RuntimeError("Track not found.")
-            file_path = (upload_map.get(tid) or {}).get("file_path")
+            file_path = projectmeta.current_path((upload_map.get(tid) or {}).get("file_path"))
             png = _render_cover(track, name, watermark, f"{td}/cover_{tid}.png",
                                 avatar_img=avatar_img, color=color, file_path=file_path)
             updated = client.set_artwork(tid, png)
@@ -644,6 +644,36 @@ def mark_format_dupes(mixes: list[dict]) -> None:
                 m["superseded_by"] = (best.get("ext") or "").lstrip(".").upper()
 
 
+# ---- genre the producer set for a single mix -----------------------------------
+# Most mixes take their genre from their Backups project (corrected there for the
+# whole project). When one mix differs, e.g. a remix, the producer can set its own
+# genre here; it is kept by file path in Uploader's settings.
+MIX_GENRES = "mix_genres"
+
+
+def set_mix_genre(catalog: Catalog, paths: list[str], genre: str | None) -> dict:
+    """Set (or with genre=None, clear) the genre of these mixes. Returns the map."""
+    saved = dict(catalog.get_setting(MIX_GENRES) or {})
+    for p in paths:
+        if genre:
+            saved[p] = genre
+        else:
+            saved.pop(p, None)
+    catalog.set_setting(MIX_GENRES, saved)
+    return saved
+
+
+def apply_mix_genres(mixes: list[dict], catalog: Catalog) -> None:
+    """In-place: mixes with a genre of their own show it, flagged as set by you."""
+    saved = catalog.get_setting(MIX_GENRES) or {}
+    for m in mixes:
+        g = saved.get(m.get("path"))
+        m["genre_mix"] = bool(g)
+        if g:
+            m["genre"] = g
+            m["genre_by_you"] = True
+
+
 def scan_mixes(catalog: Catalog, sources: list[Path], progress=None) -> list[dict]:
     """Discover mixes and mark which are already on SoundCloud (by content hash)."""
     found = discover(sources)
@@ -666,6 +696,7 @@ def scan_mixes(catalog: Catalog, sources: list[Path], progress=None) -> list[dic
                       "total": len(found), "name": m["name"]})
     _prune_hash_cache(catalog, {m["path"] for m in found})
     projectmeta.annotate(out)  # borrow BPM/genre from the sibling Backups catalog by name
+    apply_mix_genres(out, catalog)  # a genre the producer set for one mix wins
     mark_format_dupes(out)     # same track in multiple formats -> keep the best one
     annotate_wip(out, catalog) # flag tracks the user is iterating on (WIP + watched)
     if progress:

@@ -18,7 +18,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-_RENDER_EXTS = ("wav", "aif", "aiff", "mp3", "flac", "m4a", "ogg", "wma")
+_RENDER_EXTS = ("wav", "aifc", "aiff", "aif", "mp3", "flac", "m4a", "ogg", "wma", "aac", "opus")
 
 
 def _candidate_db_paths() -> list[Path]:
@@ -52,13 +52,29 @@ def find_backups_db() -> Path | None:
     return None
 
 
+# Dates, tempos and keys people put in render names: "2026-10-01 Night Drive",
+# "Night Drive 07.10.26", "Night Drive 124bpm Amin", "Sunset (128 BPM) F#m".
+_DATES = re.compile(r"\b(?:19|20)\d\d[-_. ]?[01]\d[-_. ]?[0-3]\d\b"
+                    r"|\b[0-3]?\d[-_.][01]?\d[-_.](?:19|20)?\d\d\b")
+_KEY = r"[a-g](?:#|b|sharp|flat)?\s?(?:maj(?:or)?|min(?:or)?|m)?"
+_TEMPO = re.compile(rf"\b\d{{2,3}}\s*bpm\b(?:[\s_-]*{_KEY}\b)?|\bbpm\s*\d{{2,3}}\b"
+                    r"|\b[a-g](?:#|b)?\s?(?:maj(?:or)?|min(?:or)?)\s*$|\s[a-g](?:#|b)m\s*$")
+
+
+def _undecorate(s: str) -> str:
+    s = re.sub(rf"\.({'|'.join(_RENDER_EXTS)})$", "", s).replace("_", " ")
+    s = re.sub(r"\(autosaved[^)]*\)", " ", s)        # Ableton autosave tag
+    s = _DATES.sub(" ", s)
+    s = re.sub(r"[\[(]\s*\d{1,4}\s*(bpm)?\s*[\])]", " ", s)  # "(128 bpm)" decorations
+    s = _TEMPO.sub(" ", s)
+    return _TEMPO.sub(" ", s.strip())
+
+
 def normalize(name: str) -> str:
     """Reduce a render filename or project name to a comparable key: lowercase, drop
-    the audio extension and common render/version decorations, collapse punctuation."""
-    s = (name or "").lower().strip()
-    s = re.sub(rf"\.({'|'.join(_RENDER_EXTS)})$", "", s)
-    s = re.sub(r"\(autosaved[^)]*\)", " ", s)          # Ableton autosave tag
-    s = re.sub(r"[\[(]\s*\d{1,4}\s*(bpm)?\s*[\])]", " ", s)  # "(128 bpm)" decorations
+    the audio extension, dates, tempo/key tags and common render/version decorations,
+    collapse punctuation. Kept identical to Backups' ``exports.normalize``."""
+    s = _undecorate((name or "").lower().strip())
     # trailing render/version markers: " master", " final v2", " mixdown 3", "_2", …
     s = re.sub(r"[\s_-]+(v?\d+|master(ed)?|final|mix(down)?|render|bounce|export|wip|draft)\b",
                " ", s)
@@ -122,12 +138,19 @@ def _load_full(con) -> list[dict]:
     back to the minimal columns if a newer/older Backups schema lacks some."""
     cols = ("project_id", "name", "daw", "owner", "bpm", "genre", "genre_emoji",
             "tracks", "plugins", "missing_count", "size", "mtime")
-    try:
+    rows = None
+    try:  # Backups 0.1.10+ also records whether the producer set the genre
         rows = con.execute(
             "SELECT project_id, name, daw, owner, bpm, genre, genre_emoji, tracks, "
-            "plugins, missing_count, size, mtime FROM discovered").fetchall()
+            "plugins, missing_count, size, mtime, genre_by_you FROM discovered").fetchall()
+        cols = (*cols, "genre_by_you")
     except sqlite3.Error:
-        rows = None
+        try:
+            rows = con.execute(
+                "SELECT project_id, name, daw, owner, bpm, genre, genre_emoji, tracks, "
+                "plugins, missing_count, size, mtime FROM discovered").fetchall()
+        except sqlite3.Error:
+            rows = None
     if rows is None:
         try:  # degrade to just the essentials so BPM/genre still flow
             rows = con.execute("SELECT name, bpm, genre, genre_emoji FROM discovered").fetchall()
@@ -152,6 +175,7 @@ def _load_full(con) -> list[dict]:
             "bpm": r.get("bpm"),
             "genre": r.get("genre"),
             "genre_emoji": r.get("genre_emoji"),
+            "genre_by_you": bool(r.get("genre_by_you")),
             "daw": r.get("daw"),
             "track_count": r.get("tracks"),
             "plugins": plugins,
@@ -180,6 +204,49 @@ def _load_exports(con) -> dict[str, str]:
     return {str(path): str(pid) for path, pid in rows if path and pid}
 
 
+def _load_renamed(con) -> list[dict]:
+    """Backups' "Tidy names" record: old -> new for every song file, project folder and
+    project id it renamed, oldest first, so a song posted before a rename stays tied
+    to its file and project. Older Backups catalogs have no such table: empty."""
+    try:
+        rows = con.execute("SELECT old, new, kind, batch_id FROM renamed ORDER BY at, rowid").fetchall()
+    except sqlite3.Error:
+        return []
+    return [{"old": o, "new": n, "kind": k, "batch_id": b} for o, n, k, b in rows]
+
+
+def follow_with(rows: list[dict]):
+    """Follow renames batch by batch, oldest first; within one rename each name moves
+    once ("v2" -> "v1" alongside "FINAL 3" -> "v2" doesn't chain). Kept identical to
+    Backups' ``tidy.follow_with``."""
+    batches: list[tuple[dict, list]] = []
+    current = None
+    for r in rows:
+        if current is None or r.get("batch_id") != current:
+            current = r.get("batch_id")
+            batches.append(({}, []))
+        names, folders = batches[-1]
+        if r["kind"] == "folder":
+            folders.append((r["old"], r["new"]))
+        else:
+            names[r["old"]] = r["new"]
+
+    def follow(p: str) -> str:
+        if not p:
+            return p
+        for names, folders in batches:
+            if p in names:
+                p = names[p]
+                continue
+            for o, n in folders:
+                if p.startswith(o + os.sep):
+                    p = n + p[len(o):]
+                    break
+        return p
+
+    return follow
+
+
 def _norm_path(path) -> str:
     try:
         return str(Path(path).resolve())
@@ -190,7 +257,7 @@ def _norm_path(path) -> str:
 # cache: re-read only when the catalog file changes. Guarded by a lock because the Manage
 # join calls lookup_meta from the FastAPI threadpool, not just the single scan thread.
 _cache: dict = {"path": None, "mtime": None, "by_name": {}, "by_id": {}, "ambiguous": set(),
-                "by_path": {}}
+                "by_path": {}, "renamed": []}
 _cache_lock = threading.Lock()
 
 
@@ -199,7 +266,7 @@ def _load_map(db: Path) -> dict:
     dict (back-compat for the scan flow); ambiguous holds keys that >1 distinct project
     normalizes to, so Manage can refuse to assert a guessed match. by_id is the
     collision-proof lookup for hash-anchored joins."""
-    empty = {"by_name": {}, "by_id": {}, "ambiguous": set(), "by_path": {}}
+    empty = {"by_name": {}, "by_id": {}, "ambiguous": set(), "by_path": {}, "renamed": []}
     uri = f"file:{db}?mode=ro&immutable=1"
     try:
         con = sqlite3.connect(uri, uri=True, timeout=2)
@@ -209,6 +276,7 @@ def _load_map(db: Path) -> dict:
         projects = _load_full(con)
         snap_by_id, snap_by_name = _load_snapshot_aggregates(con)
         by_path = _load_exports(con)
+        renamed = _load_renamed(con)
     finally:
         con.close()
 
@@ -235,11 +303,12 @@ def _load_map(db: Path) -> dict:
                 ambiguous.add(key)
             if not prev.get("genre") and meta.get("genre"):
                 by_name[key] = meta
-    return {"by_name": by_name, "by_id": by_id, "ambiguous": ambiguous, "by_path": by_path}
+    return {"by_name": by_name, "by_id": by_id, "ambiguous": ambiguous, "by_path": by_path,
+            "renamed": renamed}
 
 
 def _maps() -> dict:
-    empty = {"by_name": {}, "by_id": {}, "ambiguous": set(), "by_path": {}}
+    empty = {"by_name": {}, "by_id": {}, "ambiguous": set(), "by_path": {}, "renamed": []}
     db = find_backups_db()
     if not db:
         return empty
@@ -252,7 +321,40 @@ def _maps() -> dict:
             loaded = _load_map(db)
             _cache.update(path=str(db), mtime=mtime, **loaded)
         return {"by_name": _cache["by_name"], "by_id": _cache["by_id"],
-                "ambiguous": _cache["ambiguous"], "by_path": _cache["by_path"]}
+                "ambiguous": _cache["ambiguous"], "by_path": _cache["by_path"],
+                "renamed": _cache["renamed"]}
+
+
+def current_path(path) -> str | None:
+    """Where a song file is now, if Backups' "Tidy names" renamed it (or its folder)
+    since; the path itself otherwise."""
+    if not path:
+        return path
+    try:
+        rows = [r for r in _maps()["renamed"] if r["kind"] in ("file", "folder")]
+    except Exception:
+        return path
+    if not rows:
+        return path
+    follow = follow_with(rows)
+    now = follow(str(path))
+    if now == str(path):
+        now = follow(_norm_path(path))
+        if now == _norm_path(path):
+            return path
+    return now
+
+
+def current_id(project_id):
+    """A Backups project id as it is now (an id comes from where the project file is,
+    so renaming the file gives it a new one)."""
+    if not project_id:
+        return project_id
+    try:
+        rows = [r for r in _maps()["renamed"] if r["kind"] == "project"]
+    except Exception:
+        return project_id
+    return follow_with(rows)(str(project_id)) if rows else project_id
 
 
 def _meta_map() -> dict:
@@ -282,7 +384,7 @@ def lookup_meta_by_id(project_id: str) -> dict | None:
     to a project we persisted at upload time)."""
     if not project_id:
         return None
-    return _maps()["by_id"].get(str(project_id))
+    return _maps()["by_id"].get(str(current_id(project_id)))
 
 
 def lookup_by_path(path) -> dict | None:
@@ -293,12 +395,17 @@ def lookup_by_path(path) -> dict | None:
     if not path:
         return None
     maps = _maps()
+    path = current_path(path)  # a song renamed by Backups' "Tidy names" since
     pid = maps["by_path"].get(_norm_path(path)) or maps["by_path"].get(str(path))
     return maps["by_id"].get(pid) if pid else None
 
 
 def resolve(path, name: str) -> dict | None:
-    """Best project for a render: Backups' exact file link, else a strict name match."""
+    """Best project for a render: Backups' exact file link, else a strict name match
+    (by the file's current name, if Backups renamed it)."""
+    now = current_path(path)
+    if now and now != path:
+        name = Path(now).stem
     return lookup_by_path(path) or lookup_meta(name)
 
 
@@ -325,6 +432,8 @@ def annotate(mixes: list[dict]) -> int:
             mix["genre"] = hit["genre"]
         if hit.get("genre_emoji"):
             mix["genre_emoji"] = hit["genre_emoji"]
+        mix["genre_project"] = hit.get("genre")       # the project's genre in Backups
+        mix["genre_by_you"] = bool(hit.get("genre_by_you"))
         mix["project_match"] = hit.get("project")
         mix["project_id"] = hit.get("project_id")
         mix["project_link"] = "exact" if pid and maps["by_id"].get(pid) is hit else "name"

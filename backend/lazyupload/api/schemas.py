@@ -107,6 +107,12 @@ class BulkArtworkRequest(BaseModel):
     artwork_path: str = Field(..., max_length=1024)
 
 
+class MixGenreRequest(BaseModel):
+    """Give one or more mixes a genre of their own (None goes back to the project's)."""
+    paths: list[str] = Field(..., min_length=1, max_length=5000)
+    genre: str | None = Field(None, max_length=40)
+
+
 class WipRequest(BaseModel):
     """Mark/unmark a track (by name) as work-in-progress (watched + re-published)."""
     name: str = Field(..., max_length=300)

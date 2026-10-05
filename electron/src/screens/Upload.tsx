@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { makeApi, openExternal, pickImage, readImage, revealPath } from "../api";
-import { openMenu, type MenuItem } from "../components/Desktop";
+import { openMenu, toast, type MenuItem } from "../components/Desktop";
+import { GenreChip, pickGenre } from "../components/GenrePick";
 import { copyText } from "../desktop";
 import type { Config, Entitlement, Mix, Sharing, UploadItemInput } from "../types";
-import { Button, fmtBytes, fmtDuration, PageHeader, SubLine, ProBadge, ProgressBar } from "../components/ui";
+import { Button, fmtBytes, fmtDuration, PageHeader, ProBadge, ProgressBar } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Cover } from "../components/Cover";
 import { PlayButton, SongWave, type SongMeta } from "../components/Player";
@@ -85,6 +86,38 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
     }
   }
 
+  // Correct a mix's genre. A mix from a Backups project takes the project's genre
+  // (correct it there for the whole project); this sets one just for this mix.
+  async function changeGenre(m: Mix) {
+    const pick = await pickGenre({
+      title: m.name, cover: m.project_match || m.name,
+      current: m.genre || null, setByYou: !!m.genre_by_you,
+      guess: m.genre_mix ? m.genre_project ?? null : undefined,
+      resetLabel: "Use the project's genre",
+      yours: (mixes || []).filter((x) => x.genre_by_you && x.genre).map((x) => x.genre!),
+      why: m.bpm ? `from its project's tempo (${m.bpm} BPM) and name` : "from its project's name",
+      note: m.project_match
+        ? `This sets the genre for this mix only. To change it for the whole of ${m.project_match}, change it in Backups.`
+        : "This mix isn't linked to a Backups project, so the genre is kept here for this mix.",
+    });
+    if (pick === undefined) return;
+    const prev = m.genre_mix ? m.genre || null : null;
+    // show it straight away, without looking through the folders again
+    const show = (g: string | null) => setMixes((list) => list && list.map((x) => x.path !== m.path ? x
+      : g ? { ...x, genre: g, genre_mix: true, genre_by_you: true }
+        : { ...x, genre: x.genre_project ?? null, genre_mix: false, genre_by_you: !!m.genre_by_you && !m.genre_mix }));
+    try {
+      await api.setMixGenre([m.path], pick);
+      show(pick);
+      toast(pick ? `${m.name} is now ${pick}.` : `${m.name} is back to its project's genre.`, {
+        label: "Undo",
+        onClick: async () => { await api.setMixGenre([m.path], prev).catch(() => {}); show(prev); },
+      });
+    } catch {
+      toast("Couldn't change the genre. Try again.");
+    }
+  }
+
   // Post the ticked mixes, or just `only` (Try again on one mix that failed).
   async function start(only?: string) {
     const paths = only ? [only] : (mixes || []).filter((m) => selected.has(m.path)).map((m) => m.path);
@@ -159,6 +192,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
     ...(m.permalink_url ? [
       { label: "Open on SoundCloud", onClick: () => openExternal(m.permalink_url!) },
       { label: "Copy SoundCloud link", onClick: () => { copyText(m.permalink_url!); } }, "-" as const] : []),
+    { label: m.genre ? "Change genre…" : "Set genre…", onClick: () => changeGenre(m) },
     { label: "Show the file", onClick: () => revealPath(m.path) },
     { label: "Copy file path", onClick: () => { copyText(m.path); } },
     ...(!m.uploaded && !m.superseded_by ? ["-" as const,
@@ -294,7 +328,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
       )}
 
       {mixes && mixes.length === 0 && (
-        <div className="table"><EmptyState pose="empty-crate" title="No mixes in your watched folders yet">
+        <div className="table"><EmptyState pose="empty-crate" title="No mixes in your watched folders yet" say="Empty crate. Nothing to post.">
           Export a mix into one of them, or add the folder you export into in Settings.
         </EmptyState></div>
       )}
@@ -328,13 +362,16 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
                     <span className="fmt-badge">{m.ext.replace(".", "")}</span>
                   </div>
                   <div className="track-sleeve__sub">
-                    <span className="col-trunc">{m.project_match ? `From ${m.project_match}` : "Not linked to a project"}</span>
+                    <span className="col-wrap2" title={m.project_match ?? undefined}>{m.project_match ? `From ${m.project_match}` : "Not linked to a project"}</span>
                     <span className="mono">{m.duration ? fmtDuration(m.duration) : ""}</span>
                   </div>
                   <SongWave path={m.path} meta={meta} height={18} />
                   {note
                     ? <div className="mix-sleeve__state">{note}{it?.phase === "failed" && retry(m)}</div>
-                    : !m.superseded_by && !m.uploaded && <div className="mix-sleeve__draft">{draftButton(m)}</div>}
+                    : !m.superseded_by && !m.uploaded && <div className="mix-sleeve__draft">
+                        <GenreChip genre={m.genre ?? null} setByYou={!!m.genre_by_you} onClick={() => changeGenre(m)} />
+                        {draftButton(m)}
+                      </div>}
                 </div>
               </div>
             );
@@ -365,11 +402,16 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
                 <div className="row__title">{m.name}</div>
                 {note
                   ? <div className="row__sub">{note}</div>
-                  : <SubLine parts={[m.genre, m.bpm ? `${m.bpm} BPM` : "",
-                      m.dupe_formats && m.dupe_formats.length ? `also ${m.dupe_formats.join(", ")}` : ""]} />}
+                  : <div className="row__sub">
+                      <button type="button" className={`linkbtn mix-genre${m.genre_by_you || !m.genre ? "" : " genre-guess"}`}
+                        title={m.genre ? (m.genre_by_you ? "Genre set by you. Click to change" : "Genre guessed from the project. Click to correct it") : "Set a genre"}
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); changeGenre(m); }}>{m.genre || "Set genre"}</button>
+                      {[m.bpm ? `${m.bpm} BPM` : "", m.dupe_formats && m.dupe_formats.length ? `also ${m.dupe_formats.join(", ")}` : ""]
+                        .filter(Boolean).map((t) => ` · ${t}`).join("")}
+                    </div>}
               </div>
               <SongWave path={m.path} meta={meta} height={24} />
-              <span className={`col-trunc${m.project_match ? "" : " faint"}`}>{m.project_match || "Not linked"}</span>
+              <span className={`col-wrap2${m.project_match ? "" : " faint"}`} title={m.project_match ?? undefined}>{m.project_match || "Not linked"}</span>
               <span className="col-num">{m.duration ? fmtDuration(m.duration) : "—"}</span>
               <span className="col-num">{fmtBytes(m.size)}</span>
               <span>{!m.superseded_by && draftButton(m)}</span>
