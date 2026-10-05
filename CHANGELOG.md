@@ -14,6 +14,20 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## Unreleased
+
+## 0.1.1 (5 October 2026)
+
+### New
+- **Back and forward with your mouse's side buttons.** The extra buttons on the side of a mouse now go back to the last page and forward again, like a web browser. On the keyboard it's Alt + left/right arrow on Windows and Linux, and Cmd + [ or ] on a Mac. Nothing happens while you're typing in a box.
+- **Your tracks remembers where you were.** Go to another page and come back, or close a track's details, and the list is on the same page and scrolled to the same spot with the same search, filters and sort. The track you had open lights up for a moment. Works in both looks.
+
+### Better
+- **Runs on a newer app engine** with the latest security and speed fixes. Everything looks and works the same, and file pickers still open in the folder you last used. On a Mac it needs macOS 13 (Ventura) or newer.
+
+### Fixed
+- **The app icon now shows the Lazy Creatives logo** (the sloth, with a small upload arrow) in the installer, the Dock, the taskbar and the menu bar, instead of the old shield.
+
 ## 0.1.0 (4 October 2026)
 
 ### New

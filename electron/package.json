@@ -1,7 +1,7 @@
 {
   "name": "lazycreatives-uploader",
   "productName": "LazyCreatives Uploader",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "LazyCreatives Uploader — automatically publish your finished mixes to SoundCloud",
   "main": "electron/main.js",
   "scripts": {
@@ -23,6 +23,9 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "build/icon.png",
+      "build/tray.png",
+      "build/tray@2x.png",
       "package.json"
     ],
     "extraResources": [
@@ -82,8 +85,8 @@
     "@vitejs/plugin-react": "^6.0.2",
     "concurrently": "^9.2.4",
     "cross-env": "^7.0.3",
-    "electron": "^31.3.1",
-    "electron-builder": "^24.13.3",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
     "jsdom": "^25.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

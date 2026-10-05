@@ -13,6 +13,7 @@ import { Settings } from "./screens/Settings";
 import { WhatsNewHost } from "./components/WhatsNew";
 import { useLiveProgress } from "./useProgress";
 import type { Account, Config, Entitlement } from "./types";
+import { useBackForwardInput, useNav, type Place } from "./nav";
 
 const api = makeApi();
 
@@ -20,7 +21,20 @@ export default function App() {
   const [cfg, setCfg] = useState<Config | null | "error">(null);
   const [account, setAccount] = useState<Account | null>(null);
   const [ent, setEnt] = useState<Entitlement | null>(null);
-  const [tab, setTab] = useState<Tab>("home");
+  // Where you are: a tab, maybe a track open for editing on it. Kept as a back/forward
+  // history (side mouse buttons, Alt+arrows), the same as in Backups.
+  const nav = useNav<Place & { tab: Tab }>({ tab: "home" });
+  useBackForwardInput(nav.back, nav.forward);
+  const { tab } = nav.place;
+  const sub = nav.place.sub ?? null;
+  const setTab = (t: Tab, open: string | null = null) => nav.go({ tab: t, sub: open });
+  // a track opens in a panel over its list, so the list stays where it was underneath
+  const openTrack = (id: string) => nav.go({ tab: "manage", sub: id }, { overlay: true });
+  // Close an open track: step back if that's where we came from, else stay on the list.
+  const closeSub = () => {
+    const p = nav.prev;
+    if (p && p.tab === tab && !p.sub) nav.back(); else setTab(tab);
+  };
   const live = useLiveProgress();
 
   // Was the app already set up when it opened? Only then can "What's new" show
@@ -83,7 +97,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Nav tab={tab} busy={busy} onNavigate={setTab}
+      <Nav tab={tab} busy={busy} onNavigate={(t) => setTab(t)}
         account={account.account} tier={ent.tier} beta={Boolean(ent.beta)} />
       <div className="main">
         <div className="content">
@@ -94,7 +108,8 @@ export default function App() {
             ) : tab === "upload" ? (
               <Upload cfg={cfg} ent={ent} scan={live.scan} upload={live.upload} resetUpload={live.resetUpload} />
             ) : tab === "manage" ? (
-              <Manage ent={ent} cfg={cfg} />
+              <Manage ent={ent} cfg={cfg} openTrack={sub}
+                onOpenTrack={openTrack} onCloseTrack={closeSub} />
             ) : tab === "history" ? (
               <History />
             ) : (

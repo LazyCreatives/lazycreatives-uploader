@@ -78,7 +78,20 @@ function friendlyError(msg: string): string {
   return msg;
 }
 
-export function Manage({ ent, cfg }: { ent: Entitlement; cfg: Config }) {
+// The search, filters, sort and page, kept while the app is open so "Your tracks"
+// looks the same when you come back to it from another page.
+const kept = {
+  rawSearch: "", privacy: "all" as PrivacyFilter, sortKey: "date" as SortKey, sortDesc: true,
+  matchedOnly: false, hasBackup: false, missingOnly: false, needsSeo: false, dupesOnly: false,
+  page: 0, pageSize: 50,
+};
+
+// openTrack: the track whose edit panel is open (its id), or null. Opening and closing
+// go through the app's back/forward history, so the mouse's back button closes it.
+export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
+  ent: Entitlement; cfg: Config;
+  openTrack: string | null; onOpenTrack: (id: string) => void; onCloseTrack: () => void;
+}) {
   const [look] = useLook();
   const canBulk = ent.features.batch;
 
@@ -87,23 +100,27 @@ export function Manage({ ent, cfg }: { ent: Entitlement; cfg: Config }) {
   const [error, setError] = useState<string | null>(null);
 
   // toolbar / filter state
-  const [rawSearch, setRawSearch] = useState("");
-  const [search, setSearch] = useState("");
-  const [privacy, setPrivacy] = useState<PrivacyFilter>("all");
-  const [sortKey, setSortKey] = useState<SortKey>("date");
-  const [sortDesc, setSortDesc] = useState(true);
-  const [matchedOnly, setMatchedOnly] = useState(false);
-  const [hasBackup, setHasBackup] = useState(false);
-  const [missingOnly, setMissingOnly] = useState(false);
-  const [needsSeo, setNeedsSeo] = useState(false);
-  const [dupesOnly, setDupesOnly] = useState(false);
-  const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(50);
+  const [rawSearch, setRawSearch] = useState(kept.rawSearch);
+  const [search, setSearch] = useState(() => kept.rawSearch.trim().toLowerCase());
+  const [privacy, setPrivacy] = useState<PrivacyFilter>(kept.privacy);
+  const [sortKey, setSortKey] = useState<SortKey>(kept.sortKey);
+  const [sortDesc, setSortDesc] = useState(kept.sortDesc);
+  const [matchedOnly, setMatchedOnly] = useState(kept.matchedOnly);
+  const [hasBackup, setHasBackup] = useState(kept.hasBackup);
+  const [missingOnly, setMissingOnly] = useState(kept.missingOnly);
+  const [needsSeo, setNeedsSeo] = useState(kept.needsSeo);
+  const [dupesOnly, setDupesOnly] = useState(kept.dupesOnly);
+  const [page, setPage] = useState(kept.page);
+  const [pageSize, setPageSize] = useState(kept.pageSize);
+  useEffect(() => {
+    Object.assign(kept, { rawSearch, privacy, sortKey, sortDesc, matchedOnly, hasBackup, missingOnly, needsSeo, dupesOnly, page, pageSize });
+  });
 
   // selection + dialogs
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const lastClickedRef = useRef<number | null>(null);
-  const [editing, setEditing] = useState<Track | null>(null);
+  const editing = openTrack ? (tracks || []).find((t) => String(t.id) === openTrack) ?? null : null;
+  const setEditing = (t: Track | null) => (t ? onOpenTrack(String(t.id)) : onCloseTrack());
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [bulkEdit, setBulkEdit] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -130,8 +147,14 @@ export function Manage({ ent, cfg }: { ent: Entitlement; cfg: Config }) {
     return () => window.clearTimeout(id);
   }, [rawSearch]);
 
-  // reset to first page whenever the filtered set changes
-  useEffect(() => { setPage(0); }, [search, privacy, sortKey, sortDesc, matchedOnly, hasBackup, missingOnly, needsSeo, dupesOnly, pageSize]);
+  // reset to first page whenever the filtered set changes (not on coming back to the page)
+  const filterKey = JSON.stringify([search, privacy, sortKey, sortDesc, matchedOnly, hasBackup, missingOnly, needsSeo, dupesOnly, pageSize]);
+  const lastFilterKey = useRef(filterKey);
+  useEffect(() => {
+    if (lastFilterKey.current === filterKey) return;
+    lastFilterKey.current = filterKey;
+    setPage(0);
+  }, [filterKey]);
 
   // ---- filter + sort (client-side) ----
   const filtered = useMemo(() => {
@@ -589,7 +612,7 @@ function TrackRow({ track, index, defaultArt, selected, onCheck, onQuickPrivacy,
   const art = artFor(t, defaultArt);
   const meta = songMeta(t, art.src);
   return (
-    <label className={`row cols track-cols scanrow--enter${selected ? " row--selected" : ""}`}
+    <label data-nav-key={String(t.id)} className={`row cols track-cols scanrow--enter${selected ? " row--selected" : ""}`}
       style={{ ["--i" as string]: index } as React.CSSProperties}>
       <span className="stripe" style={{ background: genreColor(t.genre) }} />
       <input type="checkbox" className="mixrow__check" checked={selected}
@@ -634,7 +657,7 @@ function TrackCard({ track, defaultArt, selected, onCheck, onEdit }: {
   const art = artFor(t, defaultArt);
   const meta = songMeta(t, art.src);
   return (
-    <div className={`sleeve track-sleeve${selected ? " sleeve--selected" : ""}`} role="button" tabIndex={0}
+    <div data-nav-key={String(t.id)} className={`sleeve track-sleeve${selected ? " sleeve--selected" : ""}`} role="button" tabIndex={0}
       onClick={onEdit} onKeyDown={(e) => { if (e.key === "Enter") onEdit(); }}>
       <div className="sleeve__art">
         <Art meta={meta} />

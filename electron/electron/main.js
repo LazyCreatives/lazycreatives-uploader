@@ -33,15 +33,15 @@ function dbPath() {
   return process.env.LAZYUP_DB || path.join(app.getPath("userData"), "catalog.db");
 }
 
-function maybeIcon() {
-  const p = path.join(__dirname, "..", "build", "icon.png");
-  return fs.existsSync(p) ? p : undefined;
-}
+// The app icon (build/icon.png). Packaged builds carry it inside app.asar; if it is
+// ever missing, run without it rather than fail to start (dock.setIcon throws).
+const ICON = path.join(__dirname, "..", "build", "icon.png");
+const hasIcon = () => fs.existsSync(ICON);
 
 function createWindow() {
   win = new BrowserWindow({
     width: 1100, height: 760, backgroundColor: "#0D0E10",
-    icon: maybeIcon(),
+    ...(hasIcon() ? { icon: ICON } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true, nodeIntegration: false,
@@ -51,6 +51,9 @@ function createWindow() {
       ],
     },
   });
+  if (process.platform === "darwin" && app.dock && hasIcon()) {
+    try { app.dock.setIcon(ICON); } catch (err) { console.error("[main] dock icon:", err.message); }
+  }
   if (isDev) win.loadURL(`http://localhost:${process.env.LAZYUP_VITE_PORT || 5173}`);
   else win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
 
@@ -61,12 +64,18 @@ function createWindow() {
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
-  const LEVELS = ["log", "info", "warn", "error"];
-  win.webContents.on("console-message", (_e, level, message) => {
-    console.log(`[renderer:${LEVELS[level] || level}] ${message}`);
+  win.webContents.on("console-message", ({ level, message }) => {
+    console.log(`[renderer:${level}] ${message}`);
   });
   win.webContents.on("render-process-gone", (_e, details) => {
     console.error("[renderer GONE]", JSON.stringify(details));
+  });
+
+  // Side mouse buttons and the keyboard's Back/Forward keys reach Windows and Linux
+  // apps as window commands; the page treats them like its own back/forward.
+  win.on("app-command", (_e, cmd) => {
+    if (cmd === "browser-backward") win.webContents.send("nav-command", "back");
+    else if (cmd === "browser-forward") win.webContents.send("nav-command", "forward");
   });
 
   win.on("close", (e) => {
@@ -74,18 +83,23 @@ function createWindow() {
   });
 }
 
-ipcMain.handle("pick-folder", async () => {
-  const r = await dialog.showOpenDialog(win, { properties: ["openDirectory"] });
-  return r.canceled ? null : r.filePaths[0];
-});
+// File pickers open where the user last picked something. Electron 43+ would
+// otherwise start every picker in Downloads instead of the last-used folder.
+let lastPickedDir;
+async function pick(options) {
+  const r = await dialog.showOpenDialog(win, { defaultPath: lastPickedDir, ...options });
+  if (r.canceled || !r.filePaths.length) return null;
+  const picked = r.filePaths[0];
+  lastPickedDir = options.properties.includes("openDirectory") ? picked : path.dirname(picked);
+  return picked;
+}
 
-ipcMain.handle("pick-image", async () => {
-  const r = await dialog.showOpenDialog(win, {
-    properties: ["openFile"],
-    filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "webp", "gif"] }],
-  });
-  return r.canceled ? null : r.filePaths[0];
-});
+ipcMain.handle("pick-folder", () => pick({ properties: ["openDirectory"] }));
+
+ipcMain.handle("pick-image", () => pick({
+  properties: ["openFile"],
+  filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "webp", "gif"] }],
+}));
 
 // Read a local image into a data URL for in-app previews. Guarded against huge
 // files so we never blow up the renderer with a 50 MB base64 string.
