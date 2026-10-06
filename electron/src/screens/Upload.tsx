@@ -28,6 +28,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [showDupes, setShowDupes] = useState(false);
+  const [query, setQuery] = useState("");
   const [coverArt, setCoverArt] = useState<string | null>(null);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
@@ -176,7 +177,24 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
   const matched = (mixes || []).filter((m) => m.genre || m.bpm).length;
   const dupeCount = (mixes || []).filter((m) => m.superseded_by).length;
   const wipCount = (mixes || []).filter((m) => m.wip && !m.superseded_by).length;
-  const visible = showDupes ? (mixes || []) : (mixes || []).filter((m) => !m.superseded_by);
+  const q = query.trim().toLowerCase();
+  const visible = (showDupes ? (mixes || []) : (mixes || []).filter((m) => !m.superseded_by))
+    .filter((m) => !q || [m.name, m.project_match, m.genre].some((v) => v && v.toLowerCase().includes(q)));
+  // New mixes first; the ones already on SoundCloud go under their own heading.
+  const fresh = visible.filter((m) => !m.uploaded);
+  const posted = visible.filter((m) => m.uploaded);
+  const pickable = fresh.filter((m) => !m.superseded_by).map((m) => m.path);
+  const allPicked = pickable.length > 0 && pickable.every((p) => selected.has(p));
+  const somePicked = pickable.some((p) => selected.has(p));
+  function toggleAll() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allPicked) { pickable.forEach((p) => next.delete(p)); return next; }
+      if (!ent.features.batch) return new Set(pickable.slice(0, 1));
+      pickable.forEach((p) => next.add(p));
+      return next;
+    });
+  }
 
   const summary = mixes === null ? "Looking through your watched folders…"
     : `${mixes.length} ${mixes.length === 1 ? "mix" : "mixes"} found · ${newCount} new`
@@ -217,7 +235,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
         </span>);
       case "posted": return (
         <button type="button" className="pill pill--ok mixstate--ok linkbtn" title={it.url ? "Open on SoundCloud" : undefined}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); it.url && openExternal(it.url); }}>Posted ✓</button>);
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); it.url && openExternal(it.url); }}><Icon name="check" size={12} />Posted</button>);
       case "skipped": return <span className="pill pill--skipped" title="Already on SoundCloud">Skipped</span>;
       case "failed": return <span className="pill pill--error" title={it.error}>Failed</span>;
     }
@@ -242,6 +260,83 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
     : <button type="button" className="linkbtn faint" style={{ fontSize: 12.5, color: "var(--text-faint)" }}
         title="Mark as a draft: kept private and replaced on each new bounce"
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleWip(m); }}>Mark draft</button>;
+
+  // One mix as a sleeve (Sleeve look) or a row (Crate look).
+  const sleeveCard = (m: Mix) => {
+    const meta = mixMeta(m);
+    const picked = selected.has(m.path);
+    const locked = m.uploaded || busy;
+    const note = liveNote(m);
+    const it = itemOf(m);
+    return (
+      <div key={m.path} className={`sleeve${picked ? " sleeve--selected" : ""}${m.uploaded || m.superseded_by ? " sleeve--done" : ""}${it?.phase === "failed" ? " sleeve--failed" : ""}`}
+        role="button" tabIndex={0} aria-pressed={picked} onContextMenu={(e) => openMenu(e, mixMenu(m))}
+        onClick={() => { if (!locked) toggle(m.path); }}
+        onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !locked) { e.preventDefault(); toggle(m.path); } }}>
+        <div className="sleeve__art">
+          <Cover name={m.project_match || m.name} genre={m.genre} />
+          <span className="sleeve__badge">{statusBadge(m)}</span>
+          <input type="checkbox" className="mixrow__check mix-sleeve__check" disabled={locked} checked={picked}
+            onClick={(e) => e.stopPropagation()} onChange={() => toggle(m.path)} aria-label={`Pick ${m.name}`} />
+          <PlayButton path={m.path} meta={meta} size={34} className="sleeve__play" />
+          {it?.phase === "uploading" && (
+            <span className="mix-sleeve__bar"><span style={{ width: `${it.size > 0 ? (it.sent / it.size) * 100 : 0}%` }} /></span>
+          )}
+        </div>
+        <div className="sleeve__meta">
+          <div className="track-sleeve__top">
+            <div className="sleeve__name" title={m.name}>{m.name}</div>
+            <span className="fmt-badge">{m.ext.replace(".", "")}</span>
+          </div>
+          <div className="track-sleeve__sub">
+            <span className="col-wrap2" title={m.project_match ?? undefined}>{m.project_match ? `From ${m.project_match}` : "Not linked to a project"}</span>
+            <span className="mono">{m.duration ? fmtDuration(m.duration) : ""}</span>
+          </div>
+          <SongWave path={m.path} meta={meta} height={18} />
+          {note
+            ? <div className="mix-sleeve__state">{note}{it?.phase === "failed" && retry(m)}</div>
+            : !m.superseded_by && !m.uploaded && <div className="mix-sleeve__draft">
+                <GenreChip genre={m.genre ?? null} setByYou={!!m.genre_by_you} onClick={() => changeGenre(m)} />
+                {draftButton(m)}
+              </div>}
+        </div>
+      </div>
+    );
+  };
+  const crateRow = (m: Mix, i: number) => {
+    const meta = mixMeta(m);
+    const note = liveNote(m);
+    const it = itemOf(m);
+    return (
+    <label key={m.path} className={`row cols mix-cols scanrow--enter${selected.has(m.path) ? " row--selected" : ""}`}
+      onContextMenu={(e) => openMenu(e, mixMenu(m))}
+      style={{ ["--i" as any]: i, cursor: m.uploaded || busy ? "default" : "pointer" }}>
+      <span className="stripe" style={{ background: genreColor(m.genre) }} />
+      <input type="checkbox" className="mixrow__check" disabled={m.uploaded || busy}
+        checked={selected.has(m.path)} onChange={() => toggle(m.path)} aria-label={`Pick ${m.name}`} />
+      <PlayButton path={m.path} meta={meta} size={28} />
+      <span className="fmt-badge">{m.ext.replace(".", "")}</span>
+      <div className="row__main" style={{ opacity: m.uploaded || m.superseded_by ? 0.6 : 1 }}>
+        <div className="row__title">{m.name}</div>
+        {note
+          ? <div className="row__sub">{note}</div>
+          : <div className="row__sub">
+              <button type="button" className={`linkbtn mix-genre${m.genre_by_you || !m.genre ? "" : " genre-guess"}`}
+                title={m.genre ? (m.genre_by_you ? "Genre set by you. Click to change" : "Genre guessed from the project. Click to correct it") : "Set a genre"}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); changeGenre(m); }}>{m.genre || "Set genre"}</button>
+              {[m.bpm ? `${m.bpm} BPM` : "", m.dupe_formats && m.dupe_formats.length ? `also ${m.dupe_formats.join(", ")}` : ""]
+                .filter(Boolean).map((t) => ` · ${t}`).join("")}
+            </div>}
+      </div>
+      <SongWave path={m.path} meta={meta} height={24} />
+      <span className={`col-wrap2${m.project_match ? "" : " faint"}`} title={m.project_match ?? undefined}>{m.project_match || "Not linked"}</span>
+      <span className="col-num">{m.duration ? fmtDuration(m.duration) : "—"}</span>
+      <span className="col-num">{fmtBytes(m.size)}</span>
+      <span>{!m.superseded_by && !m.uploaded && draftButton(m)}</span>
+      <span className="mixstate__cell">{statusBadge(m)}{it?.phase === "failed" && retry(m)}</span>
+    </label>
+    );
+  };
 
   return (
     <div>
@@ -280,6 +375,17 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
       )}
 
       <div className="toolbar">
+        <label className="find__search upload-search">
+          <Icon name="search" size={15} />
+          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search mixes, projects, genres…"
+            aria-label="Search mixes" spellCheck={false} data-find
+            onKeyDown={(e) => { if (e.key === "Escape") setQuery(""); }} />
+          {query && <button type="button" className="find__x" aria-label="Clear search"
+            onClick={() => setQuery("")}><Icon name="close" size={13} /></button>}
+        </label>
+        {look === "sleeve" && pickable.length > 0 && (
+          <Button kind="quiet" sm onClick={toggleAll} disabled={busy}>{allPicked ? "Untick all" : `Tick all ${pickable.length} new`}</Button>
+        )}
         <label className="toolchk">
           Post as
           <select value={sharing} disabled={!!templateName}
@@ -298,7 +404,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
           </label>
         )}
         <div className="toolchk">
-          Cover
+          Cover for this post
           <span className={`art-thumb art-thumb--sm${coverArt && coverPreview ? "" : " art-thumb--ph"}`} aria-hidden="true">
             {coverArt && coverPreview ? <img src={coverPreview} alt="" /> : <Icon name="music" />}
           </span>
@@ -333,93 +439,35 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
         </EmptyState></div>
       )}
 
-      {visible.length > 0 && look === "sleeve" && (
-        <div className="sleeves mix-sleeves">
-          {visible.map((m) => {
-            const meta = mixMeta(m);
-            const picked = selected.has(m.path);
-            const locked = m.uploaded || busy;
-            const note = liveNote(m);
-            const it = itemOf(m);
-            return (
-              <div key={m.path} className={`sleeve${picked ? " sleeve--selected" : ""}${m.uploaded || m.superseded_by ? " sleeve--done" : ""}${it?.phase === "failed" ? " sleeve--failed" : ""}`}
-                role="button" tabIndex={0} aria-pressed={picked} onContextMenu={(e) => openMenu(e, mixMenu(m))}
-                onClick={() => { if (!locked) toggle(m.path); }}
-                onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !locked) { e.preventDefault(); toggle(m.path); } }}>
-                <div className="sleeve__art">
-                  <Cover name={m.project_match || m.name} genre={m.genre} />
-                  <span className="sleeve__badge">{statusBadge(m)}</span>
-                  <input type="checkbox" className="mixrow__check mix-sleeve__check" disabled={locked} checked={picked}
-                    onClick={(e) => e.stopPropagation()} onChange={() => toggle(m.path)} aria-label={`Pick ${m.name}`} />
-                  <PlayButton path={m.path} meta={meta} size={34} className="sleeve__play" />
-                  {it?.phase === "uploading" && (
-                    <span className="mix-sleeve__bar"><span style={{ width: `${it.size > 0 ? (it.sent / it.size) * 100 : 0}%` }} /></span>
-                  )}
-                </div>
-                <div className="sleeve__meta">
-                  <div className="track-sleeve__top">
-                    <div className="sleeve__name" title={m.name}>{m.name}</div>
-                    <span className="fmt-badge">{m.ext.replace(".", "")}</span>
-                  </div>
-                  <div className="track-sleeve__sub">
-                    <span className="col-wrap2" title={m.project_match ?? undefined}>{m.project_match ? `From ${m.project_match}` : "Not linked to a project"}</span>
-                    <span className="mono">{m.duration ? fmtDuration(m.duration) : ""}</span>
-                  </div>
-                  <SongWave path={m.path} meta={meta} height={18} />
-                  {note
-                    ? <div className="mix-sleeve__state">{note}{it?.phase === "failed" && retry(m)}</div>
-                    : !m.superseded_by && !m.uploaded && <div className="mix-sleeve__draft">
-                        <GenreChip genre={m.genre ?? null} setByYou={!!m.genre_by_you} onClick={() => changeGenre(m)} />
-                        {draftButton(m)}
-                      </div>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      {visible.length > 0 && look === "sleeve" && (<>
+        {fresh.length > 0 && <div className="sleeves mix-sleeves">{fresh.map(sleeveCard)}</div>}
+        {posted.length > 0 && <>
+          <h2 className="mix-split"><Icon name="check" size={15} />Already on SoundCloud<span>{posted.length}</span></h2>
+          <div className="sleeves mix-sleeves">{posted.map(sleeveCard)}</div>
+        </>}
+      </>)}
 
       {visible.length > 0 && look === "crate" && (
         <div className="table table--crate">
           <div className="row cols cols-head mix-cols">
-            <span /><span /><span /><span>Type</span><span>Mix</span><span>Waveform</span><span>From project</span>
+            <span />
+            <input type="checkbox" className="mixrow__check" ref={(el) => { if (el) el.indeterminate = somePicked && !allPicked; }}
+              checked={allPicked} disabled={pickable.length === 0 || busy} onChange={toggleAll}
+              aria-label={allPicked ? "Untick every mix" : "Tick every new mix"} title={allPicked ? "Untick every mix" : "Tick every new mix"} />
+            <span /><span>Type</span><span>Mix</span><span>Waveform</span><span>From project</span>
             <span className="col-num">Length</span><span className="col-num">Size</span><span>Draft</span><span>Status</span>
           </div>
-          {visible.map((m, i) => {
-            const meta = mixMeta(m);
-            const note = liveNote(m);
-            const it = itemOf(m);
-            return (
-            <label key={m.path} className={`row cols mix-cols scanrow--enter${selected.has(m.path) ? " row--selected" : ""}`}
-              onContextMenu={(e) => openMenu(e, mixMenu(m))}
-              style={{ ["--i" as any]: i, cursor: m.uploaded || busy ? "default" : "pointer" }}>
-              <span className="stripe" style={{ background: genreColor(m.genre) }} />
-              <input type="checkbox" className="mixrow__check" disabled={m.uploaded || busy}
-                checked={selected.has(m.path)} onChange={() => toggle(m.path)} aria-label={`Pick ${m.name}`} />
-              <PlayButton path={m.path} meta={meta} size={28} />
-              <span className="fmt-badge">{m.ext.replace(".", "")}</span>
-              <div className="row__main" style={{ opacity: m.uploaded || m.superseded_by ? 0.6 : 1 }}>
-                <div className="row__title">{m.name}</div>
-                {note
-                  ? <div className="row__sub">{note}</div>
-                  : <div className="row__sub">
-                      <button type="button" className={`linkbtn mix-genre${m.genre_by_you || !m.genre ? "" : " genre-guess"}`}
-                        title={m.genre ? (m.genre_by_you ? "Genre set by you. Click to change" : "Genre guessed from the project. Click to correct it") : "Set a genre"}
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); changeGenre(m); }}>{m.genre || "Set genre"}</button>
-                      {[m.bpm ? `${m.bpm} BPM` : "", m.dupe_formats && m.dupe_formats.length ? `also ${m.dupe_formats.join(", ")}` : ""]
-                        .filter(Boolean).map((t) => ` · ${t}`).join("")}
-                    </div>}
-              </div>
-              <SongWave path={m.path} meta={meta} height={24} />
-              <span className={`col-wrap2${m.project_match ? "" : " faint"}`} title={m.project_match ?? undefined}>{m.project_match || "Not linked"}</span>
-              <span className="col-num">{m.duration ? fmtDuration(m.duration) : "—"}</span>
-              <span className="col-num">{fmtBytes(m.size)}</span>
-              <span>{!m.superseded_by && draftButton(m)}</span>
-              <span className="mixstate__cell">{statusBadge(m)}{it?.phase === "failed" && retry(m)}</span>
-            </label>
-            );
-          })}
+          {fresh.map(crateRow)}
+          {posted.length > 0 && (
+            <div className="row mix-split mix-split--row"><Icon name="check" size={14} />Already on SoundCloud<span>{posted.length}</span></div>
+          )}
+          {posted.map((m, i) => crateRow(m, fresh.length + i))}
         </div>
+      )}
+      {mixes && mixes.length > 0 && visible.length === 0 && (
+        <div className="table"><EmptyState pose="searching" title="No mixes match your search" say="Looked everywhere. Nothing.">
+          Try fewer letters, or clear the search box.
+        </EmptyState></div>
       )}
     </div>
   );

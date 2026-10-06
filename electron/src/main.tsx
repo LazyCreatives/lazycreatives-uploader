@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { TitleBar } from "./components/Desktop";
 // Bundled fonts so the app looks the same on every computer (shared with Backups).
 import "@fontsource/schibsted-grotesk/400.css";
 import "@fontsource/schibsted-grotesk/500.css";
@@ -12,6 +13,7 @@ import "./theme.css";    // Uploader-only bits
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
+    <TitleBar />
     <App />
   </StrictMode>
 );

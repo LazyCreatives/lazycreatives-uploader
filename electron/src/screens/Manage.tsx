@@ -6,7 +6,7 @@ import type { BulkResult, Config, Entitlement, SeoScore, Sharing, Track, TrackUp
 import { Button, PageHeader, SubLine, ProBadge, fmtDuration } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Art, PlayButton, SongWave, type SongMeta } from "../components/Player";
-import { genreColor, useLook } from "../look";
+import { GENRES, genreColor, useLook } from "../look";
 import { EmptyState } from "../components/SlothSpot";
 import {
   BPM_BANDS, FIRST_DESC, LOW_SCORE, NO_FILTERS, applyFilters, dawName, isFiltered, isPrivate, pickerOptions,
@@ -41,10 +41,8 @@ function fmtDate(iso: string | null | undefined): string {
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-// Short DAW label for the "From project" line ("FL" fits where "FL Studio" doesn't).
-function dawLabel(daw: string): string {
-  return daw.toLowerCase() === "flstudio" ? "FL" : dawName(daw);
-}
+// The music app's plain name, the same words Backups uses.
+const dawLabel = dawName;
 
 // A track's confident backup is "stale" if its newest backup (or the matched
 // project's mtime) predates the track itself — borrowed metadata may be out of date.
@@ -617,7 +615,7 @@ function ProjectCell({ track }: { track: Track }) {
         {t.project_match || "Not linked"}
       </div>
       {notes.length > 0 && (
-        <div className="row__sub">
+        <div className="row__sub row__sub--wrap">
           {notes.map((n, i) => (
             <span key={i} title={n.title} style={n.tone === "warn" ? { color: "var(--warn)" } : undefined}>
               {i > 0 ? " · " : ""}{n.text}
@@ -796,7 +794,8 @@ function EditPanel({ track, defaultArt, onClose, onSaved }: {
   const [description, setDescription] = useState(track.description);
   const [genre, setGenre] = useState(track.genre);
   const [sharing, setSharing] = useState<Sharing>(isPrivate(track) ? "private" : "public");
-  const [tags, setTags] = useState(track.tags.join(", "));
+  const [tags, setTags] = useState<string[]>(track.tags);
+  const [tagDraft, setTagDraft] = useState("");
   const [downloadable, setDownloadable] = useState(!!track.downloadable);
   const [busy, setBusy] = useState(false);
   const [artBusy, setArtBusy] = useState(false);
@@ -804,17 +803,44 @@ function EditPanel({ track, defaultArt, onClose, onSaved }: {
   const titleRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => { titleRef.current?.focus(); }, []);
 
+  // Tags typed but not yet turned into a chip still count.
+  const allTags = () => [...tags, ...tagDraft.split(",").map((t) => t.trim()).filter(Boolean)];
+  const dirty = title !== track.title || description !== track.description || genre !== track.genre
+    || sharing !== (isPrivate(track) ? "private" : "public") || downloadable !== !!track.downloadable
+    || allTags().join("\n") !== track.tags.join("\n");
+
   async function save() {
+    if (busy) return;
     setBusy(true); setErr(null);
     try {
       const updated = await api.updateTrack(track.id, {
-        title, description, genre, sharing, downloadable,
-        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+        title, description, genre, sharing, downloadable, tags: allTags(),
       });
       onSaved(updated);
     } catch (e) { setErr(String((e as Error).message)); }
     finally { setBusy(false); }
   }
+  // Closing with unsaved changes asks first, so a stray click outside never loses them.
+  const asking = useRef(false);
+  async function close() {
+    if (asking.current) return;
+    if (dirty && !busy) {
+      asking.current = true;
+      const ok = await askConfirm({ title: "Close without saving?", body: "Your changes to this track will be lost.",
+        confirm: "Close without saving", cancel: "Keep editing" });
+      setTimeout(() => { asking.current = false; }, 0);
+      if (!ok) return;
+    }
+    onClose();
+  }
+  // Cmd/Ctrl+S saves.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") { e.preventDefault(); void save(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   async function changeCover() {
     const path = await pickImage();
@@ -836,21 +862,29 @@ function EditPanel({ track, defaultArt, onClose, onSaved }: {
   }
 
   function addTag(tag: string) {
-    setTags((prev) => {
-      const have = new Set(prev.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean));
-      if (have.has(tag.toLowerCase())) return prev;
-      const p = prev.trim().replace(/,\s*$/, "");
-      return p ? `${p}, ${tag}` : tag;
-    });
+    const t = tag.trim().replace(/,$/, "").trim();
+    if (!t) return;
+    setTags((prev) => prev.some((x) => x.toLowerCase() === t.toLowerCase()) ? prev : [...prev, t]);
   }
-  const haveTags = new Set(tags.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean));
+  function onTagKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(tagDraft); setTagDraft(""); }
+    else if (e.key === "Backspace" && !tagDraft && tags.length) setTags((prev) => prev.slice(0, -1));
+  }
+  const haveTags = new Set(tags.map((t) => t.toLowerCase()));
   const tagSuggestions = (track.seo?.suggested_tags || []).filter((t) => !haveTags.has(t.toLowerCase()));
   const matched = isMatched(track);
+  const meta = songMeta(track, artFor(track, defaultArt).src);
   return (
-    <Overlay onClose={onClose}>
-      <div className="mng-panel__head">
-        <h2>Edit track</h2>
-        <button type="button" className="mng-panel__close" onClick={onClose} aria-label="Close"><Icon name="close" /></button>
+    <Overlay onClose={() => void close()}>
+      <div className="mng-panel__head mng-edit__head">
+        <Art meta={meta} size={48} />
+        <div className="mng-edit__who">
+          <h2 className="col-trunc" title={track.title}>{track.title}</h2>
+          <span className="faint">{[track.project_match ? `From ${track.project_match}` : "", track.duration ? fmtDuration(track.duration) : "",
+            track.created_at ? `posted ${fmtDate(track.created_at)}` : ""].filter(Boolean).join(" · ")}</span>
+        </div>
+        {track.local_path && <PlayButton path={track.local_path} meta={meta} size={32} />}
+        <button type="button" className="mng-panel__close" onClick={() => void close()} aria-label="Close"><Icon name="close" /></button>
       </div>
       <div className="mng-panel__body">
         {track.permalink_url && (
@@ -867,46 +901,53 @@ function EditPanel({ track, defaultArt, onClose, onSaved }: {
           <input ref={titleRef} type="text" value={title} onChange={(e) => setTitle(e.target.value)} /></label>
         <label className="field"><span>Description</span>
           <textarea value={description} onChange={(e) => setDescription(e.target.value)} /></label>
-        <label className="field"><span>Genre</span>
-          <input type="text" value={genre} onChange={(e) => setGenre(e.target.value)} /></label>
-        <label className="field"><span>Privacy</span>
-          <select value={sharing} onChange={(e) => setSharing(e.target.value as Sharing)}>
-            <option value="public">Public</option>
-            <option value="private">Private</option>
-          </select></label>
-        <label className="field" style={{ marginBottom: tagSuggestions.length ? 6 : 0 }}><span>Tags (comma-separated)</span>
-          <input type="text" value={tags} onChange={(e) => setTags(e.target.value)} /></label>
-        <label className="toolchk" style={{ fontSize: 13 }}>
-          <input type="checkbox" checked={downloadable} onChange={(e) => setDownloadable(e.target.checked)} />
-          Allow fans to download the original file
-        </label>
+        <div className="mng-edit__pair">
+          <label className="field"><span>Genre</span>
+            <input type="text" value={genre} onChange={(e) => setGenre(e.target.value)} list="lc-genres" placeholder="Pick or type a genre" />
+            <datalist id="lc-genres">{GENRES.map((g) => <option key={g} value={g} />)}</datalist></label>
+          <label className="field"><span>Privacy</span>
+            <select value={sharing} onChange={(e) => setSharing(e.target.value as Sharing)}>
+              <option value="public">Public</option>
+              <option value="private">Private</option>
+            </select></label>
+        </div>
+        <div className="field"><span>Tags</span>
+          <div className="tagbox" onClick={(e) => (e.currentTarget.querySelector("input") as HTMLInputElement | null)?.focus()}>
+            {tags.map((t) => (
+              <span key={t} className="tagbox__tag">{t}
+                <button type="button" aria-label={`Remove ${t}`} onClick={() => setTags((prev) => prev.filter((x) => x !== t))}><Icon name="close" size={11} /></button>
+              </span>
+            ))}
+            <input type="text" value={tagDraft} onChange={(e) => setTagDraft(e.target.value)} onKeyDown={onTagKey}
+              onBlur={() => { addTag(tagDraft); setTagDraft(""); }}
+              placeholder={tags.length ? "Add a tag" : "Type a tag and press Enter"} aria-label="Add a tag" />
+          </div>
+        </div>
         {tagSuggestions.length > 0 && (
           <div className="mng-tagsugg">
             <span className="mng-tagsugg__label">Suggested for {genre || "this genre"}:</span>
             {tagSuggestions.map((t) => (
               <button type="button" key={t} className="mng-tagchip" onClick={() => addTag(t)}
-                title={`Add “${t}” to tags`}>+ {t}</button>
+                title={`Add “${t}” to tags`}><Icon name="plus" size={11} />{t}</button>
             ))}
           </div>
         )}
+        <label className="toolchk" style={{ fontSize: 13 }}>
+          <input type="checkbox" checked={downloadable} onChange={(e) => setDownloadable(e.target.checked)} />
+          Let listeners download the original file
+        </label>
         {err && <div className="mng-err"><Icon name="alert" />{err}</div>}
 
         <div className="mng-cover">
-          <div className="mng-cover__label">Cover art</div>
+          <div className="field"><span>Cover art</span></div>
           <div className="art-row">
-            <span className={`art-thumb${track.artwork_url || defaultArt ? "" : " art-thumb--ph"}`} aria-hidden="true">
-              {track.artwork_url
-                ? <img src={track.artwork_url} alt="" />
-                : defaultArt
-                  ? <img src={defaultArt} alt="" />
-                  : "🎵"}
-            </span>
+            <Art meta={meta} size={56} className="art-thumb" />
             <Button sm onClick={() => void changeCover()} disabled={artBusy || busy}>
               {artBusy ? "Working…" : "Change cover…"}
             </Button>
             <Button kind="ghost" sm onClick={() => void genWaveCover()} disabled={artBusy || busy}
-              title="Generate a cover from this track's waveform + your name">
-              Waveform cover
+              title="Make a cover from this track's waveform and your name">
+              Make one from the waveform
             </Button>
           </div>
         </div>
@@ -915,14 +956,16 @@ function EditPanel({ track, defaultArt, onClose, onSaved }: {
 
         {matched && (
           <div className="mng-matched">
-            <div className="mng-matched__label">From project</div>
+            <div className="field"><span>From project</span></div>
             <ProjectCell track={track} />
           </div>
         )}
       </div>
       <div className="mng-panel__foot">
-        <Button sm onClick={onClose} disabled={busy}>Cancel</Button>
-        <Button kind="primary" sm onClick={() => void save()} disabled={busy}>{busy ? "Saving…" : "Save"}</Button>
+        <span className="mng-edit__hint faint">{dirty ? "Unsaved changes" : ""}</span>
+        <Button sm onClick={() => void close()} disabled={busy}>Cancel</Button>
+        <Button kind="primary" sm onClick={() => void save()} disabled={busy || !dirty}
+          title={`Save (${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}S)`}>{busy ? "Saving…" : "Save"}</Button>
       </div>
     </Overlay>
   );
@@ -980,7 +1023,7 @@ function DeleteConfirm({ count, busy, onClose, onConfirm }: {
   return (
     <Overlay onClose={onClose} forceModal>
       <div className="mng-panel__head">
-        <h2>Delete {count} tracks</h2>
+        <h2>Delete {count === 1 ? "this track" : `${count} tracks`}</h2>
         <button type="button" className="mng-panel__close" onClick={onClose} aria-label="Close"><Icon name="close" /></button>
       </div>
       <div className="mng-panel__body">

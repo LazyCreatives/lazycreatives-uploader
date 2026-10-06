@@ -69,9 +69,14 @@ export function fmtWhen(s: string | null | undefined): string {
   if (!s) return "—";
   const d = new Date(s.includes("T") ? s : s.replace(" ", "T"));
   if (isNaN(d.getTime())) return s;
-  const sameYear = d.getFullYear() === new Date().getFullYear();
-  const day = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) });
-  return `${day}, ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+  const now = new Date();
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === now.toDateString()) return `Today ${time}`;
+  if (d.toDateString() === yesterday.toDateString()) return `Yesterday ${time}`;
+  const sameYear = d.getFullYear() === now.getFullYear();
+  const day = d.toLocaleDateString([], { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) });
+  return `${day}, ${time}`;
 }
 
 // The grey second line under a row title; renders nothing when every part is empty,

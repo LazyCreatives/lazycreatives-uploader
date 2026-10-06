@@ -51,7 +51,7 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
       Demo mode: no SoundCloud keys are set up, so uploads go to a pretend account.
     </div>
   );
-  const eyebrow = <>
+  const schedLine = <>
     {ov?.last_upload ? `Last upload ${fmtWhen(ov.last_upload)}` : "No uploads yet"}
     {ov && ` · auto-upload ${ov.schedule.enabled ? `every ${ov.schedule.interval_minutes} min` : "off"}`}
   </>;
@@ -74,9 +74,9 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
       {demo}
       <header className="up-hero">
         <div className="up-hero__text">
-          <div className="eyebrow">{eyebrow}</div>
           <h1>{headline}</h1>
           <p className="sub">{subText}</p>
+          <p className="statusline"><Icon name="history" size={13} />{schedLine}</p>
           <div>{mainButton}</div>
         </div>
         <dl className="up-hero__stats">
@@ -129,9 +129,9 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
 
       <header className="page-head">
         <div>
-          <div className="eyebrow">{eyebrow}</div>
           <h1>{headline}</h1>
           <p className="sub">{subText}</p>
+          <p className="statusline"><Icon name="history" size={13} />{schedLine}</p>
         </div>
         <div className="page-head__actions">
           {mainButton}

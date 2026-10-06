@@ -37,7 +37,7 @@ export const BPM_BANDS: { key: string; label: string; lo: number; hi: number }[]
 export const LOW_SCORE = 70;
 
 const DAW_LABEL: Record<string, string> = {
-  ableton: "Ableton", flstudio: "FL Studio", logic: "Logic", "logic pro": "Logic",
+  ableton: "Ableton", flstudio: "FL Studio", logic: "Logic Pro", "logic pro": "Logic Pro",
   cubase: "Cubase", studioone: "Studio One", bitwig: "Bitwig", reaper: "Reaper",
   protools: "Pro Tools", reason: "Reason", garageband: "GarageBand", dawproject: "DAWproject",
 };

@@ -28,6 +28,7 @@ const PATHS = {
   arrowDown: "M12 5v14M6 13l6 6 6-6",
   arrowUp: "M12 19V5M6 11l6-6 6 6",
   chevronRight: "M9 6l6 6-6 6",
+  chevronLeft: "M15 6l-6 6 6 6",
   chevronDown: "M6 9l6 6 6-6",
   plus: "M12 5v14M5 12h14",
   link: "M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1",

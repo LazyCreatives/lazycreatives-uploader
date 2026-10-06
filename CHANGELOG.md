@@ -14,6 +14,15 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## 0.1.4 (6 October 2026)
+
+### Better
+- **Easier Upload page.** A search box finds a mix by name, project or genre; a box in the Crate heading (or "Tick all" in Sleeve) ticks or unticks every new mix; mixes already on SoundCloud move under their own "Already on SoundCloud" heading and no longer offer "Mark draft". Both looks.
+- **History by day.** Posts are grouped under Today, Yesterday and earlier days, with a search box, Posted/Failed/Skipped buttons with counts, and "Show older posts" once you have more than 100.
+- **Better Edit track panel.** The track's cover, name and a play button head the panel, tags are separate chips you add with Enter and remove with a click, genre suggests the usual genres as you type, Ctrl+S (Cmd+S) saves, and closing with unsaved changes asks first.
+- **Same words and times as Backups.** Music apps are called by their full names, times follow your computer's clock and say Today or Yesterday, and project details on Your tracks wrap onto a second line instead of being cut off.
+- **A tidier top on Windows.** The white Windows title bar and the File / Edit / View menu row are gone; the app's own dark colour now runs right to the top, with Windows' minimise, maximise and close buttons on the right. The ☰ button at the top left opens the old menus. Dragging, snapping and double-click to maximise work as before. Both looks; Mac and Linux are unchanged.
+
 ## 0.1.3 (5 October 2026)
 
 ### New

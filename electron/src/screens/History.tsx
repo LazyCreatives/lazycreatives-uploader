@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { makeApi, openExternal, revealPath } from "../api";
 import { openMenu } from "../components/Desktop";
 import { copyText } from "../desktop";
 import type { UploadRow } from "../types";
-import { fmtBytes, fmtWhen, PageHeader } from "../components/ui";
+import { Button, fmtBytes, fmtWhen, PageHeader } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Cover } from "../components/Cover";
 import { PlayButton, SongWave } from "../components/Player";
@@ -18,9 +18,27 @@ const STATUS: Record<string, { pill: string; label: string }> = {
   skipped: { pill: "pill--skipped", label: "Skipped" },
 };
 
+function parseWhen(s: string): Date { return new Date(s.includes("T") ? s : s.replace(" ", "T")); }
+function fmtTime(s: string): string {
+  const d = parseWhen(s);
+  return isNaN(d.getTime()) ? s : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+// "Today", "Yesterday", or the day it happened.
+export function dayLabel(s: string, now: Date = new Date()): string {
+  const d = parseWhen(s);
+  if (isNaN(d.getTime())) return "Earlier";
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (d.toDateString() === now.toDateString()) return "Today";
+  if (d.toDateString() === y.toDateString()) return "Yesterday";
+  return d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long",
+    ...(d.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }) });
+}
+
 // One fixed-column table of uploads; Home shows the latest few with the same columns.
 // Each row carries the mix's cover, a play button and its waveform.
-export function UploadTable({ rows }: { rows: UploadRow[] }) {
+// With `byDay`, rows sit under a heading per day and the When column shows just the time.
+export function UploadTable({ rows, byDay }: { rows: UploadRow[]; byDay?: boolean }) {
+  let lastDay = "";
   return (
     <div className="table table--crate">
       <div className="row cols cols-head history-cols">
@@ -29,10 +47,16 @@ export function UploadTable({ rows }: { rows: UploadRow[] }) {
       </div>
       {rows.map((r) => {
         const st = STATUS[r.status] ?? { pill: "", label: r.status };
+        const day = byDay ? dayLabel(r.timestamp) : "";
+        const heading = byDay && day !== lastDay
+          ? <div key={`day-${day}`} className="row hist-day">{day}<span>{rows.filter((x) => dayLabel(x.timestamp) === day).length}</span></div>
+          : null;
+        lastDay = day;
         const meta = { title: r.title, sub: r.project_match ? `From ${r.project_match}` : `Posted ${fmtWhen(r.timestamp)}`,
           cover: r.project_match || r.title, genre: r.project_genre };
-        return (
-          <div key={r.id} className="row cols history-cols" onContextMenu={(e) => openMenu(e, [
+        return (<Fragment key={r.id}>
+          {heading}
+          <div className="row cols history-cols" onContextMenu={(e) => openMenu(e, [
             ...(r.permalink_url ? [
               { label: "Open on SoundCloud", onClick: () => openExternal(r.permalink_url!) },
               { label: "Copy SoundCloud link", onClick: () => { copyText(r.permalink_url!); } }, "-" as const] : []),
@@ -50,7 +74,7 @@ export function UploadTable({ rows }: { rows: UploadRow[] }) {
             <span className={`pill ${st.pill}`}>{st.label}</span>
             <span className="muted" style={{ textTransform: "capitalize" }}>{r.sharing}</span>
             <span className="col-num">{fmtBytes(r.size)}</span>
-            <span className="col-num">{fmtWhen(r.timestamp)}</span>
+            <span className="col-num">{byDay ? fmtTime(r.timestamp) : fmtWhen(r.timestamp)}</span>
             <span className="col-act">
               {r.permalink_url
                 ? <button className="iconbtn" title="Open on SoundCloud" aria-label={`Open ${r.title} on SoundCloud`}
@@ -59,15 +83,28 @@ export function UploadTable({ rows }: { rows: UploadRow[] }) {
                     onClick={() => revealPath(r.file_path)}><Icon name="folder" /></button>}
             </span>
           </div>
-        );
+        </Fragment>);
       })}
     </div>
   );
 }
 
+type ResultFilter = "all" | "uploaded" | "error" | "skipped";
+const PAGE = 100;
+
 export function History() {
   const [rows, setRows] = useState<UploadRow[] | null>(null);
-  useEffect(() => { api.history(100).then(setRows).catch(() => setRows([])); }, []);
+  const [limit, setLimit] = useState(PAGE);
+  const [query, setQuery] = useState("");
+  const [result, setResult] = useState<ResultFilter>("all");
+  useEffect(() => { api.history(limit).then(setRows).catch(() => setRows((r) => r ?? [])); }, [limit]);
+
+  const q = query.trim().toLowerCase();
+  const matching = (rows ?? []).filter((r) => !q || [r.title, r.project_match, r.project_genre, r.sharing]
+    .some((v) => v && v.toLowerCase().includes(q)));
+  const count = (k: ResultFilter) => k === "all" ? matching.length : matching.filter((r) => r.status === k).length;
+  const shown = result === "all" ? matching : matching.filter((r) => r.status === result);
+  const more = rows !== null && rows.length >= limit;
 
   return (
     <div>
@@ -77,7 +114,36 @@ export function History() {
           Every mix you post shows here, newest first, with a link to it on SoundCloud.
         </EmptyState>
       )}
-      {rows && rows.length > 0 && <UploadTable rows={rows} />}
+      {rows && rows.length > 0 && <>
+        <div className="toolbar">
+          <label className="find__search upload-search">
+            <Icon name="search" size={15} />
+            <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search posts, projects, genres…"
+              aria-label="Search history" spellCheck={false} data-find
+              onKeyDown={(e) => { if (e.key === "Escape") setQuery(""); }} />
+            {query && <button type="button" className="find__x" aria-label="Clear search"
+              onClick={() => setQuery("")}><Icon name="close" size={13} /></button>}
+          </label>
+          <div className="seg" role="group" aria-label="Result">
+            {([["all", "All"], ["uploaded", "Posted"], ["error", "Failed"], ["skipped", "Skipped"]] as [ResultFilter, string][]).map(([k, label]) => (
+              <button key={k} type="button" className={`seg__opt${result === k ? " seg__opt--on" : ""}`}
+                aria-pressed={result === k} onClick={() => setResult(k)}>
+                {label} <span className="find__n">{count(k)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        {shown.length > 0
+          ? <UploadTable rows={shown} byDay />
+          : <div className="table"><EmptyState pose="searching" title="Nothing matches" say="Looked everywhere. Nothing.">
+              Try fewer letters, or pick All.
+            </EmptyState></div>}
+        {more && (
+          <div className="hist-more">
+            <Button sm onClick={() => setLimit((l) => l + PAGE)}>Show older posts</Button>
+          </div>
+        )}
+      </>}
     </div>
   );
 }
