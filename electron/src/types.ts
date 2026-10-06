@@ -225,3 +225,12 @@ export interface UploadItemInput {
   size?: number;
   artwork_path?: string;
 }
+
+// A listener's comment on one of your SoundCloud tracks.
+export interface TrackComment {
+  t: number | null;          // seconds into the track; null when not pinned to a moment
+  body: string;
+  user: string;
+  avatar_url?: string | null;
+  created_at?: string | null;
+}

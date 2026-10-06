@@ -96,3 +96,48 @@ def squeeze(samples, bars: int = BARS) -> list[float] | None:
     out = [max(vals[int(i * step):max(int(i * step) + 1, int((i + 1) * step))] or [0.0]) for i in range(bars)]
     top = max(out) or 1.0
     return [round(v / top, 3) for v in out]
+
+
+_LEVEL_SLICES = 240
+_level_cache: dict[tuple[str, float, int], dict | None] = {}
+
+
+def levels(path: str) -> dict | None:
+    """How loud a WAV or AIFF is, for the checklist before posting: the highest peak
+    and the average (RMS) level, both in dB below full scale. Sampled like `peaks`, so
+    it is a close reading, not a mastering meter. None for other formats."""
+    import math
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = (path, st.st_mtime, st.st_size)
+    if key in _level_cache:
+        return _level_cache[key]
+    out: dict | None = None
+    try:
+        f, big = _open(path)
+        if f is not None:
+            with f:
+                width, total = f.getsampwidth(), f.getnframes()
+                if total > 0 and width in (1, 2, 3, 4):
+                    step = max(1, total // _LEVEL_SLICES)
+                    run = min(step, 4 * _RUN)
+                    top, sq, n = 0, 0, 0
+                    for i in range(_LEVEL_SLICES):
+                        start = i * step
+                        if start >= total:
+                            break
+                        f.setpos(start)
+                        a = _to16(f.readframes(run), width, big)
+                        if a:
+                            top = max(top, max(abs(x) for x in a))
+                            sq += sum(x * x for x in a)
+                            n += len(a)
+                    if n:
+                        db = lambda v: round(20 * math.log10(v), 1) if v > 0 else -96.0  # noqa: E731
+                        out = {"peak_db": min(0.0, db(top / 32767)), "rms_db": db(math.sqrt(sq / n) / 32768)}
+    except (wave.Error, EOFError, OSError, ValueError, getattr(aifc, "Error", ValueError)):
+        out = None
+    _level_cache[key] = out
+    return out

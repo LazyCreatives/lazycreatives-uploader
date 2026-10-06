@@ -3,13 +3,15 @@ const path = require("path");
 const fs = require("fs");
 const { startSidecar, stopSidecar, killGroup } = require("./sidecar");
 const { createTray } = require("./tray");
+const { createCompanion } = require("./companion");
 const { startUpdater } = require("./updater");
-const { windowChromeOptions, windowStateOptions, installAppMenu, registerDesktopIpc, showWindow } = require("./desktop");
+const { windowMaterial, windowChromeOptions, installTextMenu, windowStateOptions, installAppMenu, registerDesktopIpc, showWindow } = require("./desktop");
 
 const isDev = !!process.env.LAZYUP_DEV;
 let win = null;
 let sidecar = null;
 let tray = null;
+let companion = null; // the narrow window beside the music program (companion.js)
 let isQuitting = false;
 let stopping = null;
 
@@ -39,27 +41,39 @@ function dbPath() {
 const ICON = path.join(__dirname, "..", "build", "icon.png");
 const hasIcon = () => fs.existsSync(ICON);
 
+function webPreferences(material) {
+  return {
+    preload: path.join(__dirname, "preload.js"),
+    contextIsolation: true, nodeIntegration: false,
+    additionalArguments: [
+      `--lazyup-token=${sidecar.token}`,
+      `--lazyup-port=${sidecar.port}`,
+      `--lc-material=${material}`,
+    ],
+  };
+}
+
+// The page, or with hash "companion" the narrow window's view of it.
+function loadPage(w, hash) {
+  if (isDev) w.loadURL(`http://localhost:${process.env.LAZYUP_VITE_PORT || 5173}/${hash ? `#${hash}` : ""}`);
+  else w.loadFile(path.join(__dirname, "..", "dist", "index.html"), hash ? { hash } : undefined);
+}
+
 function createWindow() {
   // Reopens at the size and place it was last closed at (see desktop.js).
   const placement = windowStateOptions();
+  const material = windowMaterial();
   win = new BrowserWindow({
-    ...placement.options, ...windowChromeOptions(), backgroundColor: "#0B0E12",
+    ...placement.options, ...windowChromeOptions(process.platform, material),
     ...(hasIcon() ? { icon: ICON } : {}),
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true, nodeIntegration: false,
-      additionalArguments: [
-        `--lazyup-token=${sidecar.token}`,
-        `--lazyup-port=${sidecar.port}`,
-      ],
-    },
+    webPreferences: webPreferences(material),
   });
   placement.track(win);
+  installTextMenu(win);
   if (process.platform === "darwin" && app.dock && hasIcon()) {
     try { app.dock.setIcon(ICON); } catch (err) { console.error("[main] dock icon:", err.message); }
   }
-  if (isDev) win.loadURL(`http://localhost:${process.env.LAZYUP_VITE_PORT || 5173}`);
-  else win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+  loadPage(win);
 
   // The renderer only ever talks to the localhost sidecar — block navigation and
   // remote windows. External links (SoundCloud, the OAuth page) go via IPC.
@@ -182,8 +196,20 @@ app.whenReady().then(async () => {
     sidecar = await startSidecar(sidecarOpts);
     createWindow();
     installAppMenu({ appName: "LazyCreatives Uploader", website: "https://lazycreatives.github.io/", getWindow: () => win });
+    companion = createCompanion({
+      getMainWindow: () => win,
+      showMain: () => showWindow(win),
+      windowOptions: () => ({
+        ...windowChromeOptions(process.platform, "none"),
+        ...(hasIcon() ? { icon: ICON } : {}),
+        webPreferences: webPreferences("none"),
+      }),
+      load: (w) => { installTextMenu(w); loadPage(w, "companion"); },
+    });
+    companion.addToMenu();
     tray = createTray({
       appName: "LazyCreatives Uploader",
+      items: [companion.menuItem],
       onShow: () => showWindow(win),
       onQuit: () => { isQuitting = true; app.quit(); },
     });

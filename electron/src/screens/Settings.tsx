@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { getOpenAtLogin, makeApi, pickImage, readImage, setOpenAtLogin } from "../api";
 import type { Account, Config, Entitlement, MetadataTemplate, Sharing } from "../types";
-import { Button, PageHeader, ProBadge } from "../components/ui";
+import { Button, PageHeader, ProBadge, TagsInput } from "../components/ui";
+import { Icon } from "../components/Icon";
+import { toast } from "../components/Desktop";
 import { Folders } from "../components/Folders";
 import { ConnectPanel } from "../components/Connect";
-import { LookPicker } from "../components/LookPicker";
+import { LookPicker, ThemePicker } from "../components/LookPicker";
+import { GlyphPicker } from "../components/Marks";
 import { UpdateCheck } from "../components/UpdateCheck";
 
 const api = makeApi();
@@ -16,7 +19,7 @@ const BLANK_TEMPLATE: MetadataTemplate = {
 
 const LOGIN_STORAGE: Record<NonNullable<Account["login_storage"]>, string> = {
   windows: "Your SoundCloud login is encrypted and locked to your Windows user account.",
-  keychain: "Your SoundCloud login is encrypted, with the key kept in your computer's own keychain.",
+  keychain: "Your SoundCloud login is encrypted, with the key kept in your computer’s own keychain.",
   file: "Your SoundCloud login is encrypted. No system keychain was found, so the key is kept in a file only your user account can open.",
   plain: "No secure storage was found on this computer, so your SoundCloud login is saved without encryption.",
 };
@@ -65,7 +68,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
         window.clearTimeout(flashTimer.current);
         flashTimer.current = window.setTimeout(() => setSavedFlash(false), 1800);
       } catch (e) {
-        setSaveError(`Couldn't save that change: ${String((e as Error).message)}`);
+        setSaveError(`Couldn’t save that change: ${String((e as Error).message)}`);
       }
     }, 500);
     return () => window.clearTimeout(t);
@@ -88,6 +91,13 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
     set("templates", draft.templates.map((x, j) => (j === i ? t : x)));
   }
 
+  // Removing a template takes effect at once, with Undo on the message along the bottom.
+  function removeTemplate(i: number) {
+    const before = draft.templates;
+    set("templates", before.filter((_, j) => j !== i));
+    toast(`Removed the template “${before[i].name}”.`, { label: "Undo", onClick: () => set("templates", before) });
+  }
+
   const canAuto = ent.features.auto_upload;
   const canTemplates = ent.features.metadata_templates;
 
@@ -103,6 +113,12 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
         <h2>Look</h2>
         <p className="sub" style={{ margin: "0 0 12px" }}>How the app is laid out. Switch any time; nothing else changes.</p>
         <LookPicker />
+        <h3 style={{ margin: "18px 0 4px" }}>Light or dark</h3>
+        <p className="sub" style={{ margin: "0 0 10px" }}>Ink or paper, in either look. Match my computer follows your computer's own setting.</p>
+        <ThemePicker />
+        <h3 style={{ margin: "18px 0 4px" }}>Rating mark</h3>
+        <p className="sub" style={{ margin: "0 0 10px" }}>What ratings are drawn with. Rate a track from its row in Your tracks, or right-click it.</p>
+        <GlyphPicker />
       </div>
 
       <div className="card">
@@ -133,15 +149,14 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
           <input type="text" value={draft.default_genre}
             onChange={(e) => set("default_genre", e.target.value)} placeholder="e.g. House" /></label>
         <label className="field"><span>Tags (comma-separated)</span>
-          <input type="text" value={draft.default_tags.join(", ")}
-            onChange={(e) => set("default_tags", e.target.value.split(",").map((t) => t.trim()).filter(Boolean))} /></label>
+          <TagsInput tags={draft.default_tags} onChange={(t) => set("default_tags", t)} /></label>
         <label className="field"><span>Default description</span>
           <textarea value={draft.default_description}
             onChange={(e) => set("default_description", e.target.value)} /></label>
         <label className="toolchk" style={{ fontSize: 13.5 }}>
           <input type="checkbox" checked={draft.changelog_comments !== false}
             onChange={(e) => set("changelog_comments", e.target.checked)} />
-          Comment a timestamped changelog when a WIP track is re-bounced
+          Comment a timestamped changelog when a draft is re-bounced
         </label>
         <div className="field" style={{ marginBottom: 0 }}>
           <span>Default cover art</span>
@@ -149,7 +164,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
             <span className={`art-thumb${draft.default_artwork_path && artPreview ? "" : " art-thumb--ph"}`} aria-hidden="true">
               {draft.default_artwork_path && artPreview
                 ? <img src={artPreview} alt="" />
-                : "🎵"}
+                : <Icon name="music" />}
             </span>
             <div className="art-row__actions">
               <Button sm onClick={chooseArt}>Choose image…</Button>
@@ -158,7 +173,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
               )}
             </div>
           </div>
-          <span className="sub" style={{ marginTop: 6 }}>Applied as the cover for uploads that don't pick their own art.</span>
+          <span className="sub" style={{ marginTop: 6 }}>Applied as the cover for uploads that don’t pick their own art.</span>
         </div>
         <label className="toolchk" style={{ fontSize: 13.5, marginTop: 14 }}>
           <input type="checkbox" checked={draft.cover_watermark !== false}
@@ -200,10 +215,9 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
                     <input type="text" value={t.genre} onChange={(e) => setTemplate(i, { ...t, genre: e.target.value })} /></label>
                 </div>
                 <label className="field"><span>Tags (comma-separated)</span>
-                  <input type="text" value={t.tags.join(", ")}
-                    onChange={(e) => setTemplate(i, { ...t, tags: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} /></label>
+                  <TagsInput tags={t.tags} onChange={(tags) => setTemplate(i, { ...t, tags })} /></label>
                 <div style={{ textAlign: "right" }}>
-                  <Button kind="danger" sm onClick={() => set("templates", draft.templates.filter((_, j) => j !== i))}>Remove</Button>
+                  <Button kind="danger" sm onClick={() => removeTemplate(i)}>Remove</Button>
                 </div>
               </div>
             ))}
@@ -249,7 +263,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
         {ent.tier === "free" ? (
           <>
             <p className="sub" style={{ marginTop: 0 }}>
-              You're on <b>Free</b>. Pro unlocks auto-upload, batch publishing, multiple
+              You’re on <b>Free</b>. Pro unlocks auto-upload, batch publishing, multiple
               accounts, saved templates, and scheduled release.
             </p>
             <div style={{ display: "flex", gap: 8 }}>

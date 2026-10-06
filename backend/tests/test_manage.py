@@ -80,3 +80,17 @@ def test_tracks_crud_over_api(client):
     dele = client.delete(f"/api/tracks/{tid}")
     assert dele.status_code == 200
     assert len(client.get("/api/tracks").json()["tracks"]) == 1
+
+
+def test_comments_come_back_in_seconds(catalog):
+    _connect_mock(catalog)
+    t = next(x for x in service.list_tracks(catalog) if x["title"].startswith("Warehouse"))
+    comments = service.list_comments(catalog, t["id"])
+    assert [c["t"] for c in comments] == [412.0, 1530.0, 2611.0]
+    assert comments[0]["user"] == "nightbus" and comments[0]["body"] == "this bassline!!"
+
+
+def test_normalize_comment_without_a_moment():
+    from lazyupload.soundcloud import normalize_comment
+    c = normalize_comment({"body": "nice", "timestamp": None, "user": {"username": "a"}})
+    assert c["t"] is None and c["user"] == "a"

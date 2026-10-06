@@ -353,6 +353,12 @@ def update_track(catalog: Catalog, track_id: int, fields: dict) -> dict:
     return updated
 
 
+def list_comments(catalog: Catalog, track_id: int) -> list[dict]:
+    if not connected(catalog):
+        raise RuntimeError("not_connected")
+    return client_for(catalog).list_comments(track_id)
+
+
 def delete_track(catalog: Catalog, track_id: int) -> None:
     if not connected(catalog):
         raise RuntimeError("not_connected")

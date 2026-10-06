@@ -309,6 +309,21 @@ def _hires_artwork(url):
                   r"-t500x500.\2", url)
 
 
+def normalize_comment(raw: dict) -> dict:
+    """A comment as the app uses it: where it sits in the track (seconds; None when it
+    isn't pinned to a moment), the text, who left it and when."""
+    user = raw.get("user") or {}
+    ts = raw.get("timestamp")
+    try:
+        at = round(int(ts) / 1000, 2) if ts is not None and int(ts) >= 0 else None
+    except (TypeError, ValueError):
+        at = None
+    return {"t": at, "body": str(raw.get("body") or ""),
+            "user": user.get("username") or raw.get("username") or "",
+            "avatar_url": user.get("avatar_url"),
+            "created_at": _iso_created_at(raw.get("created_at"))}
+
+
 def normalize_track(raw: dict) -> dict:
     """Flatten a SoundCloud (or mock) track into the shape the UI manages."""
     dur_ms = raw.get("duration") or 0
@@ -454,6 +469,22 @@ class SoundCloudClient:
         r = requests.delete(f"{API_BASE}/tracks/{track_id}", headers=self._headers(), timeout=30)
         _raise_for_status(r)
 
+    def list_comments(self, track_id: int, max_total: int = 200) -> list[dict]:
+        """The comments left on a track, normalized (see normalize_comment), following
+        next_href up to max_total."""
+        out: list[dict] = []
+        url = f"{API_BASE}/tracks/{track_id}/comments"
+        params: dict | None = {"limit": 100, "linked_partitioning": "true"}
+        while url and len(out) < max_total:
+            r = requests.get(url, headers=self._headers(), params=params, timeout=30)
+            _raise_for_status(r)
+            body = r.json()
+            items = body.get("collection", []) if isinstance(body, dict) else body
+            out.extend(normalize_comment(c) for c in items if isinstance(c, dict))
+            url = body.get("next_href") if isinstance(body, dict) else None
+            params = None
+        return out[:max_total]
+
     def add_comment(self, track_id: int, body: str, timestamp_ms: int = 0) -> dict:
         """Post a comment on a track. `timestamp_ms` anchors it to a playback position
         (0 = the very start). Used to leave a changelog when a WIP track is re-bounced."""
@@ -492,6 +523,20 @@ _SEED_TRACKS = [
      "permalink_url": "https://soundcloud.com/demo/rainy-day-beat", "duration": 142000,
      "playback_count": 0, "created_at": "2025/03/14 09:30:00 +0000"},
 ]
+
+
+# Listeners' comments on the demo live set (kept apart from the library, which only
+# holds what the app itself posted).
+_SEED_COMMENTS = {
+    900000001: [
+        {"body": "this bassline!!", "timestamp": 412000, "user": {"username": "nightbus"},
+         "created_at": "2024/11/03 10:12:00 +0000"},
+        {"body": "the switch-up here", "timestamp": 1530000, "user": {"username": "mara.k"},
+         "created_at": "2024/11/04 18:40:00 +0000"},
+        {"body": "need an ID on this one", "timestamp": 2611000, "user": {"username": "dubplate_dan"},
+         "created_at": "2024/11/09 22:05:00 +0000"},
+    ],
+}
 
 
 class MockSoundCloudClient:
@@ -588,6 +633,13 @@ class MockSoundCloudClient:
         if len(kept) == len(lib):
             raise RuntimeError("Track not found.")  # real SC returns 404 for an unknown id
         self._save(kept)
+
+    def list_comments(self, track_id: int, max_total: int = 200) -> list[dict]:
+        for t in self._load():
+            if t.get("id") == track_id:
+                said = t.get("comments") or _SEED_COMMENTS.get(track_id, [])
+                return [normalize_comment(c) for c in said][:max_total]
+        raise RuntimeError("Track not found.")
 
     def add_comment(self, track_id: int, body: str, timestamp_ms: int = 0) -> dict:
         comment = {"body": body, "timestamp": int(timestamp_ms or 0)}

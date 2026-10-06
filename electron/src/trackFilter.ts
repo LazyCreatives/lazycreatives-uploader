@@ -3,6 +3,7 @@
 // tempo and project), so another producer never sees a list of things they don't use.
 import type { Track } from "./types";
 import { fuzzyScore } from "./fuzzy";
+import { ratingOf } from "./marks";
 
 export type PrivacyFilter = "all" | "public" | "private";
 export type ProjectFilter = "any" | "linked" | "backedup" | "missing" | "unlinked";
@@ -17,11 +18,19 @@ export interface TrackFilters {
   project: ProjectFilter;
   score: ScoreFilter;
   dupes: boolean;
+  year: string;     // "" = any, else the year it was posted ("2025")
+  rated: number;    // 0 = any, else at least this many marks
 }
 
 export const NO_FILTERS: TrackFilters = {
-  q: "", privacy: "all", daw: "", genre: "", bpm: "", project: "any", score: "any", dupes: false,
+  q: "", privacy: "all", daw: "", genre: "", bpm: "", project: "any", score: "any", dupes: false, year: "", rated: 0,
 };
+
+// The year a track was posted, as text ("2025"), or "" when unknown.
+export function yearOf(t: Pick<Track, "created_at">): string {
+  const y = t.created_at ? new Date(t.created_at).getFullYear() : NaN;
+  return isNaN(y) ? "" : String(y);
+}
 
 // Same tempo bands as the Backups Library.
 export const BPM_BANDS: { key: string; label: string; lo: number; hi: number }[] = [
@@ -53,7 +62,7 @@ export function isFiltered(f: TrackFilters): boolean {
 
 // Everything but the search box and privacy (which has its own counted buttons).
 export function extraFilterCount(f: TrackFilters): number {
-  return [f.daw, f.genre, f.bpm, f.project !== "any", f.score !== "any", f.dupes].filter(Boolean).length;
+  return [f.daw, f.genre, f.bpm, f.project !== "any", f.score !== "any", f.dupes, f.year, f.rated].filter(Boolean).length;
 }
 
 /** The DAWs and genres your own tracks have, for the pickers. */
@@ -70,7 +79,7 @@ export function applyFilters(tracks: Track[], f: TrackFilters, skipPrivacy = fal
   return tracks.filter((t) => {
     if (!skipPrivacy && f.privacy !== "all" && isPrivate(t) !== (f.privacy === "private")) return false;
     if (f.daw && (t.daw || "") !== f.daw) return false;
-    if (f.genre && (t.genre || "").trim() !== f.genre) return false;
+    if (f.genre && (f.genre === "-" ? !!(t.genre || "").trim() : (t.genre || "").trim() !== f.genre)) return false;  // "-": no genre
     if (band) {
       const b = t.bpm ? Math.round(t.bpm) : null;
       if (b == null || b < band.lo || b >= band.hi) return false;
@@ -82,6 +91,8 @@ export function applyFilters(tracks: Track[], f: TrackFilters, skipPrivacy = fal
     if (f.score === "low" && !((t.seo?.score ?? 100) < LOW_SCORE)) return false;
     if (f.score === "good" && !((t.seo?.score ?? -1) >= LOW_SCORE)) return false;
     if (f.dupes && !((t.dupe_count ?? 0) > 1)) return false;
+    if (f.year && yearOf(t) !== f.year) return false;
+    if (f.rated && ratingOf(`sc:${t.id}`) < f.rated) return false;
     if (q && !fuzzyScore(q, [t.title, t.genre, ...(t.tags || []), t.project_match, t.daw ? dawName(t.daw) : null])) return false;
     return true;
   });
@@ -95,12 +106,12 @@ export function privacyCounts(tracks: Track[], f: TrackFilters): Record<PrivacyF
 }
 
 // ── sorting ──
-export type SortKey = "date" | "title" | "project" | "plays" | "duration" | "bpm" | "seo";
+export type SortKey = "date" | "title" | "project" | "plays" | "duration" | "bpm" | "seo" | "rating";
 
 // The way each sort goes when first picked: newest, A to Z, most played, longest,
-// slowest, and lowest search score first (the ones that need you). Picking it again flips it.
+// slowest, lowest search score first (the ones that need you), and best rated. Picking it again flips it.
 export const FIRST_DESC: Record<SortKey, boolean> = {
-  date: true, title: false, project: false, plays: true, duration: true, bpm: false, seo: false,
+  date: true, title: false, project: false, plays: true, duration: true, bpm: false, seo: false, rating: true,
 };
 
 function sortValue(t: Track, key: SortKey): string | number | null {
@@ -111,6 +122,7 @@ function sortValue(t: Track, key: SortKey): string | number | null {
     case "duration": return t.duration ?? null;
     case "bpm": return t.bpm ? Math.round(t.bpm) : null;
     case "seo": return t.seo ? t.seo.score : null;
+    case "rating": return ratingOf(`sc:${t.id}`) || null;
     default: {
       const d = t.created_at ? Date.parse(t.created_at) : NaN;
       return isNaN(d) ? null : d;
@@ -129,4 +141,17 @@ export function sortTracks(tracks: Track[], key: SortKey, desc: boolean): Track[
       return c !== 0 ? c * dir : a.i - b.i;
     })
     .map((x) => x.t);
+}
+
+// A name for a smart crate made from its filters: "House · 2025 · Private".
+export function describeFilters(f: TrackFilters): string {
+  const band = BPM_BANDS.find((b) => b.key === f.bpm);
+  const project: Record<ProjectFilter, string> = { any: "", linked: "Has a project", backedup: "Backed up", missing: "Missing samples", unlinked: "No project" };
+  const parts = [
+    f.q.trim() ? `“${f.q.trim()}”` : "", f.genre === "-" ? "No genre" : f.genre, f.year, band ? `${band.label} BPM` : "",
+    f.daw ? dawName(f.daw) : "", f.rated ? `${f.rated}+ rated` : "",
+    f.privacy === "all" ? "" : f.privacy === "public" ? "Public" : "Private", project[f.project],
+    f.score === "low" ? "Hard to find" : f.score === "good" ? "Easy to find" : "", f.dupes ? "Duplicates" : "",
+  ].filter(Boolean);
+  return parts.slice(0, 3).join(" · ") || "Everything";
 }

@@ -27,32 +27,60 @@
 /* mixes to pick (Upload) */
 .mixrow { display: flex; align-items: center; gap: 12px; }
 .mixrow__check { width: 16px; height: 16px; }
-.mix-cols { --cols: 4px 16px 28px 44px minmax(130px, 2fr) minmax(56px, 1fr) minmax(90px, 1fr) 52px 64px 84px 128px; }
+/* bigger hit areas (24px or more) round small ticks, info dots and the Mark draft
+   link, without changing how they look */
+.mixrow__check:not(.mix-sleeve__check):not(.track-sleeve__check) { position: relative; }
+.mixrow__check::before { content: ""; position: absolute; inset: -5px; }
+.info::before { content: ""; position: absolute; inset: -6px; border-radius: 50%; }
+.draftbtn { min-height: 24px; padding: 0 2px; }
+/* same first five columns as Your tracks: stripe, tick, play, cover, name */
+.mix-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) minmax(56px, 1fr) minmax(90px, 1fr) 52px 64px 84px 128px; }
+.mix-cols .cover { border-radius: 4px; }
+/* a long genre is cut short inside the line under the name, not chopped mid-letter */
+.row__sub .mix-genre { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+/* WAV / MP3 as a small tag after the name */
+.mix-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mix-title .col-trunc { min-width: 0; }
+.fmt-badge.fmt-badge--tag { height: 16px; padding: 0 4px; font-size: 10.5px; border-radius: 3px; color: var(--text-faint); }
+/* long lists: rows and cards off screen aren't drawn until they scroll into view */
+.table > .row.mix-cols:not(.cols-head) { content-visibility: auto; contain-intrinsic-size: auto 52px; }
+.mix-sleeves > .sleeve { content-visibility: auto; contain-intrinsic-size: auto 260px; }
 
 /* each mix's own progress while a post runs (both looks) */
 .up-overall { padding: 12px 16px; display: grid; gap: 8px; }
 .up-overall .progress { height: 4px; }
 .up-overall__counts { font-size: 12.5px; text-align: right; }
+.up-overall__bar { display: flex; align-items: center; gap: 12px; }
+.up-overall__bar .progress { flex: 1; }
+.up-overall__bar .btn { flex: none; }
+/* "Goes public Tue 7 Oct, 14:00" beside the Post button, or why it can't post yet */
+.up-when { font-size: 12.5px; color: var(--text-dim); white-space: nowrap; }
+.up-when--bad { color: var(--warn); }
+/* the last look before posting: the titles, scrolling inside the box if there are many */
+.lastlook__list { margin: 12px 0 0; padding: 0 0 0 20px; max-height: 240px; overflow: auto; overscroll-behavior: contain; display: grid; gap: 4px; font-size: 13px; }
+.lastlook__list li { min-width: 0; }
+.lastlook__list li > span:first-child { display: inline-block; max-width: 100%; vertical-align: bottom; }
+.lastlook__list li .faint { margin-left: 8px; font-size: 12px; }
 .mixstate__cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .mixstate { display: grid; gap: 4px; min-width: 0; }
 .mixstate__label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
 .mixstate__label .num { color: var(--text); }
 .mixstate__bar { display: block; width: 84px; max-width: 100%; height: 3px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
-.mixstate__bar > span { display: block; height: 100%; border-radius: 2px; background: var(--accent); transition: width .7s var(--ease-glide); }
-.mixstate__bar--wait { animation: mixstateWait 1.1s ease-in-out infinite alternate; }
-@keyframes mixstateWait { from { margin-left: 0; } to { margin-left: 70%; } }
+.mixstate__bar > span { display: block; height: 100%; width: 100%; border-radius: 2px; background: var(--accent); transform: translateX(calc(var(--pct, 0) * 1% - 100%)); transition: transform .7s var(--ease-glide); }
+.mixstate__bar > .mixstate__bar--wait { width: 8%; transform: none; animation: mixstateWait 1.1s ease-in-out infinite alternate; }
+@keyframes mixstateWait { from { transform: translateX(0); } to { transform: translateX(875%); } }
 .pill.mixstate--ok { color: var(--accent-2); }
 .mixstate__note { color: var(--text-faint); font-size: 12px; }
 .mixstate__note--err { color: var(--danger); }
 .btn.mixstate__retry { height: 24px; padding: 0 8px; font-size: 12px; flex: none; }
 /* sleeve: the pill says "Uploading 42%", the bar runs along the bottom of the cover */
 .sleeve__badge .mixstate__bar { display: none; }
-.sleeve__badge .mixstate__label { color: var(--text); font-size: 12px; }
-.mix-sleeve__bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(10, 11, 13, 0.6); }
-.mix-sleeve__bar > span { display: block; height: 100%; background: var(--accent); transition: width .7s var(--ease-glide); }
+.sleeve__badge .mixstate__label { color: var(--on-art); font-size: 12px; }
+.mix-sleeve__bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(10, 11, 13, 0.6); overflow: hidden; }
+.mix-sleeve__bar > span { display: block; height: 100%; width: 100%; background: var(--accent); transform: translateX(calc(var(--pct, 0) * 1% - 100%)); transition: transform .7s var(--ease-glide); }
 .mix-sleeve__state { margin-top: 6px; display: grid; justify-items: start; gap: 6px; }
 .mix-sleeve__state .mixstate__note { line-height: 1.35; }
-.sleeve--failed { border-color: rgba(230, 111, 106, 0.5); }
+.sleeve--failed { border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
 .fmt-badge {
   display: inline-flex; align-items: center; justify-content: center; height: 20px; padding: 0 6px; flex-shrink: 0;
   border: 1px solid var(--border-strong); border-radius: 4px; background: none;
@@ -70,6 +98,16 @@
 
 /* upload history (History + Home) */
 .history-cols { --cols: 4px 28px 36px minmax(130px, 2fr) minmax(56px, 1fr) 84px 72px 64px 110px 32px; }
+
+/* Narrower windows: the lists drop their least needed columns (waveform first, then
+   length and size) so the name keeps room and the last column stays on screen.
+   A hidden cell leaves the grid, so its gap goes with it. */
+@media (max-width: 1099px) {
+  .history-cols { --cols: 4px 28px 36px minmax(130px, 2fr) 84px 72px 110px 32px; }
+  .history-cols > :nth-child(5), .history-cols > :nth-child(8) { display: none; }
+  .mix-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) minmax(90px, 1fr) 84px 128px; }
+  .mix-cols > :nth-child(6), .mix-cols > :nth-child(8), .mix-cols > :nth-child(9) { display: none; }
+}
 
 /* Settings: each section is a row — its name on the left, its controls on the right */
 .settings > .card {
@@ -89,7 +127,7 @@
 .up-hero {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 340px); gap: 28px; align-items: center;
   padding: 26px; margin-bottom: 26px; border: 1px solid var(--border-strong); border-radius: 14px;
-  background: radial-gradient(120% 140% at 0% 0%, rgba(126, 178, 221, 0.13), transparent 55%), var(--surface);
+  background: var(--surface);
 }
 .up-hero__text { display: grid; gap: 10px; min-width: 0; }
 .up-hero__text h1 { font-size: 30px; margin: 0; }
@@ -101,3 +139,34 @@
 .up-shelf { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; }
 @media (max-width: 1150px) { .up-shelf { grid-template-columns: repeat(4, minmax(0, 1fr)); } .up-shelf > :nth-child(n+5) { display: none; } }
 @media (max-width: 950px) { .up-hero { grid-template-columns: 1fr; } }
+
+/* Crate Home: the deck readout on the left, the latest uploads on the right
+   (same pieces as Backups' Home; the readout styles are in lazy-ui.css) */
+.up-deck { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 24px; align-items: start; margin-top: 4px; }
+.up-deck__main { margin-top: 0; min-width: 0; }
+.up-deck .deckcard__row--quiet span { display: inline-flex; align-items: center; gap: 4px; }
+@media (max-width: 1150px) {
+  .up-deck { grid-template-columns: 1fr; }
+  .up-deck .deckcard { grid-template-columns: 240px minmax(0, 1fr); align-items: start; column-gap: 24px; }
+  .up-deck .deckcard__legend { grid-row: 1 / span 2; grid-column: 2; }
+}
+
+/* Sleeve History: the back catalogue, a shelf of covers per month */
+.backcat { display: grid; gap: 30px; }
+.backcat__head { display: flex; align-items: baseline; gap: 12px; margin: 0 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); font-size: 18px; }
+.backcat__head span { font-size: 12.5px; font-weight: 500; color: var(--text-faint); }
+
+/* the checklist in the last look before posting */
+.lastlook { width: min(580px, 100%); }
+[data-look="sleeve"] .lastlook { width: min(580px, 100%); }
+.lastlook__sum { margin-top: 2px !important; }
+.lastlook__checks { list-style: none; padding: 0; gap: 0; max-height: 340px; margin-top: 6px; border-top: 1px solid var(--border); }
+.lastlook__mix { display: grid; gap: 3px; padding: 10px 2px; border-bottom: 1px solid var(--border); }
+.lastlook__name { display: flex; align-items: center; gap: 8px; font-weight: 600; min-width: 0; }
+.lastlook__name svg { flex: none; color: var(--accent-2); }
+.lastlook__mix--look .lastlook__name svg { color: var(--warn); }
+.lastlook__name .faint { margin-left: auto; font-weight: 400; font-size: 12px; }
+.lastlook__check { padding-left: 22px; font-size: 12.5px; line-height: 1.45; }
+.lastlook__check--warn { color: var(--warn); }
+.lastlook__check--tip { color: var(--text-dim); }
+.lastlook__fine { padding-left: 22px; font-size: 12px; color: var(--text-faint); }

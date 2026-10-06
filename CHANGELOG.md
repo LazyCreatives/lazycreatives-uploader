@@ -14,6 +14,52 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## Unreleased
+
+## 0.2.0 (6 October 2026)
+
+### New
+- **Light mode.** Pick Dark, Light or Match my computer in Settings, under Look; both looks come in paper-light too.
+- **A narrow window** that sits beside your music program: drop a mix on it to post it, watch it go up and see your latest posts, always on top if you like (View > Narrow window, or Ctrl+Shift+N / Cmd+Shift+N).
+- **Right-click menus.** Right-click a post on Home to open it on SoundCloud, copy its link or see it in History. Text boxes get Cut, Copy, Paste and spelling fixes.
+- **Point at the waveform** in the player to see the time, and drag to scrub through the mix.
+- **Glass sidebar** on a Mac (frosted) and Windows 11 (tinted by your wallpaper). Older Windows and Linux stay solid.
+- **Ctrl+1, 2, 3… (Cmd on a Mac)** jump to that page in the sidebar.
+- **Rate your tracks** with one to five marks in Your tracks and from the right-click menu. Pick flames, hearts, records or dots in Settings, and sort by rating.
+- **Crate colours.** Give any genre your own colour by right-clicking a track; every stripe and cover of that genre follows it.
+- **Row height** in the Crate look's Your tracks and History: compact, comfortable or tall, remembered for next time.
+- **History in Sleeve is your back catalogue:** every post as its cover, a shelf per month.
+- **Smart crates.** Save any search and filters in Your tracks as a smart crate and show it again in one click.
+- **Find anything with Ctrl+K (Cmd+K on a Mac)**, or the box under the app name: jump to a page, track, genre or smart crate, or post a mix, switch look and more.
+- **Browse by Genre, then Year, then Track** in the Crate look's Your tracks (the columns button). In the Sleeve look the same choices sit over the covers as chips.
+- **Your collection** at the bottom of Home: your tracks in figures, by genre and year, and your most played. In the Sleeve look it reads like a record's liner notes.
+- **Filter by year posted and by rating** in Your tracks.
+- **Preview on hover.** Switch it on in Upload or Your tracks, then point at a mix to hear a few seconds of it. Up and Down move through the list.
+- **Comments on the waveform.** A track's page shows its SoundCloud comments as dots where listeners left them, with the newest three underneath, plus its plays and length.
+- **A checklist before posting.** The last look now checks each mix's title, cover, genre, tags, file type and loudness, and says what is worth fixing first. Nothing stops you posting.
+- **A bigger track page in the Sleeve look:** a large cover with the plays, length and comments printed big.
+
+### Better
+- **Calmer pop-up notes.** Up to three stack up instead of replacing each other, pointing at them holds them, and Home's numbers roll to their new value.
+- **Smoother, quicker movement** across the app, and hover effects only with a mouse.
+- **Long lists and big numbers fit.** Smaller windows drop the least needed columns instead of cutting off the right side, sizes go up to TB, a 4-hour set reads 4:02:03, BPM is rounded, numbers read 123,456 and "1 play" is singular.
+- **A last look before posting.** Before several mixes (or anything public) go up, a short summary shows what will be posted, as Public or Private, and on which account.
+- **Stop after this mix.** A running upload can now be stopped; the mix going up finishes and the rest wait.
+- **Asks before throwing things away.** Disconnecting SoundCloud asks first and keeps you on Settings, removing a template can be undone, and closing Bulk edit with changes asks first.
+- **Clearer lines between rows** in every list, in both looks, and dark, readable text on the orange SoundCloud button.
+- **Same words everywhere.** "Draft" instead of "work in progress", the same Home labels in both looks, and the Upload list lines up with Your tracks (file type shown as a small tag).
+- **Plainer headings, easier keyboard use, smoother long lists**, and dates that follow your computer's settings.
+- **Home in Crate reads like a deck:** one big number for what's posted, with failed, waiting, ready and auto-upload listed underneath, next to your latest uploads.
+- **Calmer covers.** Pointing at a cover slides it aside so its record peeks out, covers deal in once per session, and the glow behind Sleeve Home is gone.
+- **Pop-ups and the edit panel fade out** when they close instead of vanishing in one frame.
+
+### Fixed
+- **The last look before posting sits in the middle again** in the Sleeve look; it had slipped down and could run off the bottom of the window.
+- **A failed post's note shows a warning mark**, not a green tick.
+- **Posting by hand now uses your default.** "Post as" starts on the default release you picked in Settings (it always started on Public), and your default tags are kept alongside the BPM tag.
+- **"Go public later" can't post too early.** Ticking it fills in tomorrow at the same hour, an empty or past time stops the post, and the Post button says when the mixes go public.
+- **Tags in Settings** can be typed normally again; commas and spaces no longer vanish.
+
 ## 0.1.4 (6 October 2026)
 
 ### Better

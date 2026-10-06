@@ -7,7 +7,7 @@
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 8px 12px; margin: 0 0 14px; border-radius: var(--radius-lg);
   position: sticky; top: -28px; z-index: 31;
-  background: #121821; border: 1px solid #233140;
+  background: var(--row-selected); border: 1px solid var(--selected-line);
 }
 .mng-bulk__count { font-weight: 500; margin-right: auto; }
 
@@ -47,7 +47,7 @@
   border-radius: 999px; padding: 3px 9px; font: inherit; font-size: 12px; font-weight: 600;
   cursor: pointer; transition: background .14s, border-color .14s;
 }
-.mng-tagchip:hover { background: var(--accent-soft); border-color: rgba(136, 178, 214, 0.4); }
+.mng-tagchip:hover { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 
 /* ---- pagination ---- */
 .mng-pager { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; margin: 16px 0 4px; }
@@ -56,7 +56,7 @@
 
 /* ---- overlay scrim (shared by drawer + modal) ---- */
 .mng-scrim {
-  position: fixed; inset: 0; z-index: 80; background: rgba(6, 8, 11, 0.6);
+  position: fixed; inset: 0; z-index: 80; background: rgb(var(--scrim-rgb) / calc(0.6 * var(--scrim-k)));
   display: flex; animation: mngScrimIn .18s ease both;
 }
 @keyframes mngScrimIn { from { opacity: 0; } to { opacity: 1; } }
@@ -93,7 +93,7 @@
   cursor: pointer; font-size: 15px; line-height: 1;
 }
 .mng-panel__close:hover { color: var(--text); border-color: var(--accent); }
-.mng-panel__body { padding: 18px; overflow: auto; flex: 1; }
+.mng-panel__body { padding: 18px; overflow: auto; flex: 1; overscroll-behavior: contain; }
 .mng-panel__foot {
   display: flex; gap: 8px; justify-content: flex-end; align-items: center;
   padding: 14px 18px; border-top: 1px solid var(--border);
@@ -103,7 +103,7 @@
 .mng-err {
   display: flex; align-items: center; gap: 8px; margin: 6px 0 0; padding: 9px 11px;
   border-radius: 9px; font-size: 12.5px;
-  background: var(--danger-soft); color: var(--danger); border: 1px solid rgba(242, 112, 110, 0.3);
+  background: var(--danger-soft); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
 }
 
 /* ---- read-only "Matched to <project>" mini-section in the drawer ---- */
@@ -147,6 +147,13 @@
 .mng-seo-sugg { margin: 12px 0 0; padding-left: 18px; display: grid; gap: 5px; }
 .mng-seo-sugg li { font-size: 12px; color: var(--text-dim); }
 
+/* closing: the drawer slides back out, the box drops a little, both faster than in */
+.exit[data-leaving] .mng-scrim { animation: wnewFadeOut var(--dur-quick) var(--ease-leave) both; }
+.exit[data-leaving] .mng-drawer { animation: mngOutX var(--dur-quick) var(--ease-leave) both; }
+.exit[data-leaving] .mng-modal { animation: mngOutY var(--dur-quick) var(--ease-leave) both; }
+@keyframes mngOutX { to { opacity: 0; transform: translateX(24px); } }
+@keyframes mngOutY { to { opacity: 0; transform: translateY(6px) scale(0.98); } }
+
 @media (prefers-reduced-motion: reduce) {
   .mng-bulk, .mng-scrim, .mng-drawer, .mng-modal {
     animation: none !important;
@@ -156,13 +163,21 @@
 /* ---- Crate look: genre stripe, play, cover, waveform per row ---- */
 /* the title column keeps room for a name at the default window size; the waveform
    and project columns give way first */
-.track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) minmax(48px, 1fr) minmax(104px, 1fr) 56px 44px 72px 92px; }
+/* stripe · tick · play · cover · track · rating · waveform · from project · plays · score · privacy · actions */
+.track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) 78px minmax(48px, 1fr) minmax(104px, 1fr) 56px 44px 72px 92px; }
 .table--crate .track-cols .mixrow__check { margin: 0; }
+/* narrower windows: rating, waveform and project step out (the project shows in the edit panel) */
+@media (max-width: 1099px) {
+  .track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) 56px 44px 72px 92px; }
+  .track-cols > :nth-child(6), .track-cols > :nth-child(7), .track-cols > :nth-child(8) { display: none; }
+}
 
 /* ---- Sleeve look: a wall of cover cards ---- */
 .track-sleeves { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 .track-sleeve .sleeve__art img.cover { width: 100%; height: 100%; border-radius: 0; display: block; }
-.track-sleeve__check { position: absolute; left: 10px; bottom: 12px; opacity: 0; transition: opacity 0.15s; }
+/* faint until you point at the card, so ticking many doesn't depend on hovering */
+.track-sleeve__check { position: absolute; left: 10px; bottom: 12px; opacity: 0.45; transition: opacity 0.15s; }
+.track-sleeve__check:focus-visible { opacity: 1; }
 .track-sleeve:hover .track-sleeve__check, .track-sleeve__check:checked, .sleeve--selected .track-sleeve__check { opacity: 1; }
 .sleeve--selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .track-sleeve__top { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
@@ -208,9 +223,10 @@
 }
 .find__x:hover { color: var(--text); background: var(--surface-3); }
 .find__top .toolchk { margin-left: auto; }
+.find__view { display: flex; gap: 8px; }
 .find__n { color: var(--text-faint); font-family: var(--font-mono); font-size: 11.5px; margin-left: 4px; }
 .seg__opt--on .find__n { color: var(--text-dim); }
-.find__pick { width: auto; min-width: 128px; height: 30px; padding-top: 0; padding-bottom: 0; font-size: 12.5px; }
+.find__pick { width: auto; min-width: 108px; height: 30px; padding-top: 0; padding-bottom: 0; font-size: 12.5px; }
 .find__pick--on { border-color: var(--accent); color: var(--text); }
 .find__count { margin-left: auto; font-size: 12.5px; color: var(--text-dim); white-space: nowrap; }
 .find__count b { color: var(--text); font-weight: 600; }
@@ -256,7 +272,7 @@
 .mng-edit__hint { margin-right: auto; font-size: 12px; }
 .tagbox {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 38px; padding: 5px 8px;
-  border: 1px solid var(--border-strong); border-radius: var(--radius); background: #111316; cursor: text;
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--input-bg); cursor: text;
 }
 .tagbox:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .tagbox input[type="text"] { flex: 1; min-width: 120px; height: 26px; border: 0; background: transparent; padding: 0 2px; box-shadow: none; }
@@ -269,3 +285,35 @@
 .mng-cover .field, .mng-matched .field { margin: 0; }
 .art-thumb.cover { border-radius: 10px; }
 .table--crate > .row.hist-day:nth-child(n), .table--crate > .row.mix-split--row:nth-child(n) { background: var(--surface-2); }
+
+/* ---- the top of a track's page (TrackHero): waveform with listeners' comments,
+   and the numbers. Crate reads like a deck's screen; Sleeve prints it big. ---- */
+.trackhero { display: grid; gap: 12px; margin: 0 0 18px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.trackhero__wave { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: center; padding-top: 6px; }
+.trackhero--crate .trackhero__wave { grid-template-columns: minmax(0, 1fr); }
+.trackhero .deckread {
+  display: inline-grid; grid-auto-flow: column; justify-self: start;
+  background: #070A0D; border: 1px solid var(--border); border-radius: 0; box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.6);
+}
+.trackhero .deckread__cell { display: grid; gap: 1px; padding: 6px 14px 7px; border-left: 1px solid var(--border); min-width: 72px; }
+.trackhero .deckread__cell:first-child { border-left: 0; }
+.trackhero .deckread__cell small { font: 600 11px var(--font); text-transform: uppercase; letter-spacing: .08em; color: var(--text-faint); }
+.trackhero .deckread__cell b { font: 600 19px/1.1 var(--font); letter-spacing: -0.01em; color: var(--text); font-variant-numeric: tabular-nums; }
+.trackhero__said { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12.5px; }
+.trackhero__said li { display: grid; grid-template-columns: 44px auto minmax(0, 1fr); gap: 8px; align-items: baseline; color: var(--text-dim); }
+.trackhero__said .mono { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.trackhero__said b { font-weight: 600; color: var(--text); }
+.trackhero__top { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 22px; align-items: end; }
+.trackhero__art { border-radius: 4px; box-shadow: 0 14px 34px rgb(var(--shade-rgb) / calc(0.45 * var(--shade-k))); }
+.trackhero .proj-spec { display: flex; flex-wrap: wrap; gap: 10px 0; margin: 0; }
+.trackhero .proj-spec > div { padding: 0 18px; border-left: 1px solid var(--border); }
+.trackhero .proj-spec > div:first-child { padding-left: 0; border-left: 0; }
+.trackhero .proj-spec dt { font-size: 12px; color: var(--text-dim); }
+.trackhero .proj-spec dd { margin: 0; font: 600 36px/1.05 var(--font); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.trackhero--sleeve .playbtn--big { background: var(--text); border-color: var(--text); color: var(--bg); }
+.trackhero--sleeve .playbtn--big.playbtn--on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.trackhero .marks-labelled, .trackhero .wave-wrap--marked { margin-top: 0; }
+/* the drawer is narrow: Sleeve stacks its big numbers beside the cover */
+.trackhero--sleeve .proj-spec { flex-direction: column; gap: 8px; }
+.trackhero--sleeve .proj-spec > div { padding: 0; border-left: 0; }
+.trackhero--sleeve .proj-spec dd { font-size: 30px; }

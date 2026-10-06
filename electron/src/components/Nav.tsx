@@ -1,5 +1,8 @@
 import { LcBrand } from "./LcBrand";
 import { Icon, type IconName } from "./Icon";
+import { openPalette } from "./Palette";
+import { IS_MAC } from "../desktop";
+import { COMPANION_KEYS, openCompanion } from "../companion";
 
 export type Tab = "home" | "upload" | "manage" | "history" | "settings";
 
@@ -19,6 +22,9 @@ export function Nav({ tab, busy, onNavigate, account, tier, beta = false }: {
   return (
     <nav className="nav">
       <LcBrand app="Uploader" tag={`Lazy Creatives · ${plan}`} busy={busy} />
+      <button type="button" className="nav__find" onClick={openPalette} title="Find a page, project or action">
+        <Icon name="search" size={14} /><span>Find anything</span><kbd>{IS_MAC ? "⌘K" : "Ctrl K"}</kbd>
+      </button>
       {ITEMS.map((it) => (
         <button key={it.key}
           className={`nav__item${tab === it.key ? " nav__item--active" : ""}`}
@@ -30,6 +36,7 @@ export function Nav({ tab, busy, onNavigate, account, tier, beta = false }: {
         </button>
       ))}
       <div className="nav__spacer" />
+      <NarrowWindowButton />
       <div className="nav__foot">
         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span className={`dot${account ? " dot--ok" : ""}`} />
@@ -38,5 +45,17 @@ export function Nav({ tab, busy, onNavigate, account, tier, beta = false }: {
         {account && <span className="faint">as {account}</span>}
       </div>
     </nav>
+  );
+}
+
+// Opens the narrow window that sits beside your music program (see companion.js).
+// Same in Backups and Uploader.
+export function NarrowWindowButton() {
+  return (
+    <button type="button" className="nav__item nav__narrow" onClick={openCompanion}
+      title={`A narrow window to keep beside your music program (${COMPANION_KEYS})`}>
+      <Icon name="narrow" className="nav__icon" />
+      <span className="nav__label">Narrow window</span>
+    </button>
   );
 }

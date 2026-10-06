@@ -1,5 +1,5 @@
 import type {
-  Account, BulkResult, Config, Entitlement, JobStatus, Mix, Overview, Track, TrackUpdate,
+  Account, BulkResult, Config, Entitlement, JobStatus, Mix, Overview, Track, TrackComment, TrackUpdate,
   UploadItemInput, UploadRow,
 } from "./types";
 
@@ -64,6 +64,14 @@ export function makeApi() {
     },
     async peaks(path: string): Promise<{ peaks: number[] | null }> {
       return req("GET", `/api/peaks?path=${encodeURIComponent(path)}`);
+    },
+    // how loud a mix is (peak and average, dB below full scale); null for MP3 and the like
+    async levels(path: string): Promise<{ levels: { peak_db: number; rms_db: number } | null }> {
+      return req("GET", `/api/levels?path=${encodeURIComponent(path)}`);
+    },
+    // the comments on one of your tracks; t is where it sits in the song (seconds)
+    async trackComments(id: number): Promise<{ comments: TrackComment[] }> {
+      return req("GET", `/api/tracks/${id}/comments`);
     },
     async scPeaks(url: string): Promise<{ peaks: number[] | null }> {
       return req("GET", `/api/sc-peaks?url=${encodeURIComponent(url)}`);

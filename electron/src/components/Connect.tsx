@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { makeApi, openExternal } from "../api";
 import type { Account } from "../types";
 import { Button, ProBadge } from "./ui";
+import { askConfirm } from "./Desktop";
 
 const api = makeApi();
 
@@ -44,7 +45,12 @@ export function ConnectPanel({ account, onChange }: {
   }
 
   async function switchTo(id: string) { onChange(await api.activateAccount(id)); }
-  async function disconnect(id: string) { onChange(await api.disconnect(id)); }
+  async function disconnect(id: string, name: string) {
+    if (!(await askConfirm({ title: `Disconnect ${name}?`, body: "You’ll need to sign in again to post.",
+      confirm: "Disconnect", danger: true }))) return;
+    try { onChange(await api.disconnect(id)); }
+    catch (e) { setError(String((e as Error).message)); }
+  }
 
   const accounts = account.accounts || [];
 
@@ -61,7 +67,7 @@ export function ConnectPanel({ account, onChange }: {
               </div>
               {!a.active && account.multi &&
                 <Button sm onClick={() => switchTo(a.id)}>Switch to</Button>}
-              <Button kind="danger" sm onClick={() => disconnect(a.id)}>Disconnect</Button>
+              <Button kind="danger" sm onClick={() => void disconnect(a.id, a.username)}>Disconnect</Button>
             </div>
           ))}
         </div>

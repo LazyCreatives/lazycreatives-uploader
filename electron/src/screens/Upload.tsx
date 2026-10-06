@@ -1,27 +1,82 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { rowKey, useDialogFocus } from "../components/a11y";
 import { makeApi, openExternal, pickImage, readImage, revealPath } from "../api";
-import { openMenu, toast, type MenuItem } from "../components/Desktop";
+import { Exit, openMenu, toast, type MenuItem, toastWarn } from "../components/Desktop";
 import { GenreChip, pickGenre } from "../components/GenrePick";
 import { copyText } from "../desktop";
 import type { Config, Entitlement, Mix, Sharing, UploadItemInput } from "../types";
-import { Button, fmtBytes, fmtDuration, PageHeader, ProBadge, ProgressBar } from "../components/ui";
+import { Button, fmtBytes, fmtCount, fmtDuration, PageHeader, ProBadge, ProgressBar } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Cover } from "../components/Cover";
-import { PlayButton, SongWave, type SongMeta } from "../components/Player";
+import { AuditionDiv, AuditionLabel, PlayButton, SongWave, type SongMeta } from "../components/Player";
+import { AuditionToggle } from "../components/Audition";
+import { levelCheck, needsLook, preflight, titleOf, type Check } from "../checklist";
 import { genreColor, useLook } from "../look";
 import { EmptyState } from "../components/SlothSpot";
 import type { ItemState, UploadState, ScanState } from "../useProgress";
+import { preselect as pickDropped } from "../companionQueue";
 
 const api = makeApi();
 
-export function Upload({ cfg, ent, scan, upload, resetUpload }: {
-  cfg: Config; ent: Entitlement; scan: ScanState; upload: UploadState;
+function dedupeTags(tags: string[]): string[] {
+  const seen = new Set<string>();
+  return tags.filter((t) => { const k = t.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
+// The tags one mix goes up with: the template's tags if it has some, else the
+// Settings default tags, with the mix's tempo added as a tag (never replacing them).
+export function mixTags(base: string[], bpm?: number | null): string[] {
+  return dedupeTags([...base, ...(bpm ? [`${bpm} BPM`] : [])]);
+}
+
+// "Go public later" starts at this time tomorrow, on the hour, as a datetime-local value.
+export function tomorrowSameHour(now: Date = new Date()): string {
+  const d = new Date(now); d.setDate(d.getDate() + 1); d.setMinutes(0, 0, 0);
+  return localInput(d);
+}
+// A date as the "YYYY-MM-DDTHH:MM" a datetime-local box takes, in the computer's time.
+export function localInput(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// Why the "Go public later" time can't be used yet, or null when it's fine.
+export function releaseProblem(on: boolean, value: string, now: Date = new Date()): string | null {
+  if (!on) return null;
+  const d = new Date(value);
+  if (!value || isNaN(d.getTime())) return "Pick when they go public";
+  if (d.getTime() <= now.getTime()) return "Pick a time that hasn’t passed";
+  return null;
+}
+
+// "Tue 7 Oct, 14:00", in the computer's own date style.
+export function fmtRelease(value: string): string {
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return value;
+  return d.toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+}
+
+// The heading of the last look before posting: how many, as what, on which account.
+export function lastLookTitle(n: number, sharings: Sharing[], account: string | null, goesPublic: string | null): string {
+  const what = `${n} ${n === 1 ? "mix" : "mixes"}`;
+  const on = account ? ` on ${account}` : "";
+  if (goesPublic) return `Post ${what} to SoundCloud${on}, going public ${goesPublic}`;
+  const all = sharings.every((x) => x === sharings[0]) ? sharings[0] : null;
+  return `Post ${what} to SoundCloud${all ? ` as ${all === "public" ? "Public" : "Private"}` : ""}${on}`;
+}
+
+export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, preselect = null, onPreselected }: {
+  cfg: Config; ent: Entitlement; scan: ScanState; upload: UploadState; account?: string | null;
   resetUpload: (queue?: string[], keepOthers?: boolean) => void;
+  preselect?: string[] | null;     // mixes dropped on the narrow window: tick just these
+  onPreselected?: () => void;
 }) {
   const [look] = useLook();
   const [mixes, setMixes] = useState<Mix[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [sharing, setSharing] = useState<Sharing>("public");
+  // "Post as" starts from the Default release in Settings.
+  const [sharing, setSharing] = useState<Sharing>(cfg.default_sharing || "public");
+  useEffect(() => { setSharing(cfg.default_sharing || "public"); }, [cfg.default_sharing]);
   const [templateName, setTemplateName] = useState("");
   const [scheduleOn, setScheduleOn] = useState(false);
   const [releaseAtValue, setReleaseAtValue] = useState("");
@@ -32,6 +87,10 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
   const [coverArt, setCoverArt] = useState<string | null>(null);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
+  const jobRef = useRef<string | null>(null);
+  const [stopping, setStopping] = useState(false);
+  // The last look before posting: the mixes about to go up, or null while it's closed.
+  const [review, setReview] = useState<{ items: UploadItemInput[]; releaseAt?: string } | null>(null);
 
   useEffect(() => { void rescan(); /* on mount */ }, []);
 
@@ -49,7 +108,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
   }
   // When an upload finishes, refresh the list so published mixes flip to "uploaded".
   // Whatever was ticked and didn't go up (a failed mix) stays ticked for the next post.
-  useEffect(() => { if (upload.done) { void rescan(selected); setRunning(false); } }, [upload.done]);
+  useEffect(() => { if (upload.done) { void rescan(selected); setRunning(false); setStopping(false); } }, [upload.done]);
 
   async function rescan(keep?: Set<string>) {
     setError(null);
@@ -59,7 +118,21 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
       // default-select everything not yet uploaded, skipping lower-quality format
       // duplicates (highest quality wins). Single-only on Free.
       const fresh = m.filter((x) => !x.uploaded && !x.superseded_by).map((x) => x.path);
-      const pick = keep ? fresh.filter((p) => keep.has(p)) : fresh;
+      let pick = keep ? fresh.filter((p) => keep.has(p)) : fresh;
+      if (!keep && preselect?.length) {
+        const dropped = pickDropped(m, preselect);
+        pick = dropped.pick;
+        onPreselected?.();
+        if (dropped.already.length && !dropped.pick.length) {
+          toast(dropped.already.length === 1 ? `${dropped.already[0].name} is already on SoundCloud.` : "Those mixes are already on SoundCloud.");
+        } else if (dropped.pick.length) {
+          const shown = ent.features.batch ? dropped.pick.length : 1;
+          toast(shown === 1 ? `${m.find((x) => x.path === dropped.pick[0])?.name ?? "Your mix"} is ticked and ready. Check the details, then post it.`
+            : `${shown} mixes are ticked and ready. Check the details, then post them.`);
+        } else if (dropped.notFound.length) {
+          toastWarn("Couldn’t find that mix in your folders. Try Look again.");
+        }
+      }
       setSelected(new Set(ent.features.batch ? pick : pick.slice(0, 1)));
     } catch (e) {
       setError(String((e as Error).message));
@@ -94,12 +167,12 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
       title: m.name, cover: m.project_match || m.name,
       current: m.genre || null, setByYou: !!m.genre_by_you,
       guess: m.genre_mix ? m.genre_project ?? null : undefined,
-      resetLabel: "Use the project's genre",
+      resetLabel: "Use the project’s genre",
       yours: (mixes || []).filter((x) => x.genre_by_you && x.genre).map((x) => x.genre!),
-      why: m.bpm ? `from its project's tempo (${m.bpm} BPM) and name` : "from its project's name",
+      why: m.bpm ? `from its project’s tempo (${m.bpm} BPM) and name` : "from its project’s name",
       note: m.project_match
         ? `This sets the genre for this mix only. To change it for the whole of ${m.project_match}, change it in Backups.`
-        : "This mix isn't linked to a Backups project, so the genre is kept here for this mix.",
+        : "This mix isn’t linked to a Backups project, so the genre is kept here for this mix.",
     });
     if (pick === undefined) return;
     const prev = m.genre_mix ? m.genre || null : null;
@@ -110,30 +183,27 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
     try {
       await api.setMixGenre([m.path], pick);
       show(pick);
-      toast(pick ? `${m.name} is now ${pick}.` : `${m.name} is back to its project's genre.`, {
+      toast(pick ? `${m.name} is now ${pick}.` : `${m.name} is back to its project’s genre.`, {
         label: "Undo",
         onClick: async () => { await api.setMixGenre([m.path], prev).catch(() => {}); show(prev); },
       });
     } catch {
-      toast("Couldn't change the genre. Try again.");
+      toastWarn("Couldn’t change the genre. Try again.");
     }
   }
 
-  // Post the ticked mixes, or just `only` (Try again on one mix that failed).
-  async function start(only?: string) {
+  // What the ticked mixes (or just `only`) will go up as.
+  function plan(only?: string): UploadItemInput[] {
     const paths = only ? [only] : (mixes || []).filter((m) => selected.has(m.path)).map((m) => m.path);
-    if (paths.length === 0) return;
-    setError(null); resetUpload(paths, !!only); setRunning(true);
     const tmpl = cfg.templates.find((t) => t.name === templateName);
-    const items: UploadItemInput[] = (mixes || [])
+    const baseTags = tmpl && tmpl.tags.length ? tmpl.tags : (cfg.default_tags || []);
+    return (mixes || [])
       .filter((m) => paths.includes(m.path))
       .map((m) => {
-        // Pre-fill from the Backups match: genre -> SoundCloud genre, BPM -> a tag.
-        const tags = [
-          ...(tmpl && tmpl.tags.length ? tmpl.tags : []),
-          ...(m.bpm ? [`${m.bpm} BPM`] : []),
-        ];
-        // WIP tracks publish privately and carry a [WIP] marker in the title.
+        // Pre-fill from the Backups match: genre -> SoundCloud genre, BPM -> a tag
+        // added to the template's or the Settings tags.
+        const tags = mixTags(baseTags, m.bpm);
+        // Drafts publish privately and carry a [WIP] marker in the title on SoundCloud.
         const baseTitle = tmpl ? tmpl.title_template.replace("{name}", m.name) : m.name;
         const title = m.wip ? `${baseTitle} [WIP]` : (tmpl ? baseTitle : undefined);
         const itemSharing: Sharing = m.wip ? "private" : (tmpl ? tmpl.sharing : sharing);
@@ -150,10 +220,31 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
           artwork_path: coverArt || undefined,
         };
       });
-    const releaseAt = scheduleOn && releaseAtValue
-      ? new Date(releaseAtValue).toISOString() : undefined;
+  }
+
+  const extOf = (path: string) => (mixes || []).find((m) => m.path === path)?.ext ?? "";
+
+  // Post the ticked mixes, or just `only` (Try again on one mix that failed). More
+  // than one mix, or anything going public, gets a last look first.
+  function start(only?: string) {
+    // a "Go public later" without a usable time never posts (and never posts public now)
+    if (scheduleOn && releaseProblem(true, releaseAtValue)) return;
+    const items = plan(only);
+    if (items.length === 0) return;
+    const releaseAt = scheduleOn ? new Date(releaseAtValue).toISOString() : undefined;
+    const goesPublic = !!releaseAt || items.some((i) => i.sharing === "public");
+    // anything on the checklist worth a look also gets the last look, even one private mix
+    const worth = items.some((i) => needsLook(preflight(i, cfg, extOf(i.path))) > 0);
+    if (!only && (items.length > 1 || goesPublic || worth)) { setReview({ items, releaseAt }); return; }
+    void post(items, releaseAt, !!only);
+  }
+
+  async function post(items: UploadItemInput[], releaseAt: string | undefined, keepOthers: boolean) {
+    setReview(null);
+    setError(null); resetUpload(items.map((i) => i.path), keepOthers); setRunning(true); setStopping(false);
     try {
       const { job_id } = await api.upload(items, false, releaseAt);
+      jobRef.current = job_id;
       // The live WS stream drives the UI; poll the job only to surface a hard error.
       const tick = async () => {
         const job = await api.jobStatus(job_id);
@@ -164,6 +255,14 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
     } catch (e) {
       setError(String((e as Error).message)); setRunning(false);
     }
+  }
+
+  // Finish the mix going up now, then post no more.
+  async function stopAfterThis() {
+    if (!jobRef.current || stopping) return;
+    setStopping(true);
+    try { await api.cancelJob(jobRef.current); }
+    catch { setStopping(false); toastWarn("Couldn’t stop the post. It may have just finished."); }
   }
 
   // The whole post: finished mixes plus how far the current one has got.
@@ -196,9 +295,11 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
     });
   }
 
+  const whenProblem = releaseProblem(scheduleOn, releaseAtValue);
+
   const summary = mixes === null ? "Looking through your watched folders…"
-    : `${mixes.length} ${mixes.length === 1 ? "mix" : "mixes"} found · ${newCount} new`
-      + `${matched ? ` · ${matched} tagged from Backups` : ""}${wipCount ? ` · ${wipCount} work in progress` : ""}`
+    : `${fmtCount(mixes.length)} ${mixes.length === 1 ? "mix" : "mixes"} found · ${fmtCount(newCount)} new`
+      + `${matched ? ` · ${fmtCount(matched)} tagged from Backups` : ""}${wipCount ? ` · ${wipCount} ${wipCount === 1 ? "draft" : "drafts"}` : ""}`
       + `${dupeCount && !showDupes ? ` · ${dupeCount} extra ${dupeCount === 1 ? "format" : "formats"} hidden` : ""}`;
 
   const mixMeta = (m: Mix): SongMeta => ({
@@ -230,7 +331,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
       case "uploading": return (
         <span className="mixstate mixstate--up">
           <span className="mixstate__label">Uploading <span className="num">{pct}%</span></span>
-          <span className="mixstate__bar"><span style={{ width: `${it.size > 0 ? pct : 8}%` }}
+          <span className="mixstate__bar"><span style={{ "--pct": it.size > 0 ? pct : 0 } as CSSProperties}
             className={it.size > 0 ? "" : "mixstate__bar--wait"} /></span>
         </span>);
       case "posted": return (
@@ -255,10 +356,10 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
       : <span className="pill" style={{ ["--dot" as any]: "var(--accent)" }}>New</span>);
   const draftButton = (m: Mix) => m.wip
     ? <button type="button" className="chip chip--on" style={{ height: 24 }}
-        title="Draft: kept private and replaced on each new bounce. Click to mark as final."
+        title="Draft: posted privately with [WIP] after its title, and replaced on each new bounce. Click to mark as final."
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleWip(m); }}>Draft</button>
-    : <button type="button" className="linkbtn faint" style={{ fontSize: 12.5, color: "var(--text-faint)" }}
-        title="Mark as a draft: kept private and replaced on each new bounce"
+    : <button type="button" className="linkbtn faint draftbtn" style={{ fontSize: 12.5, color: "var(--text-faint)" }}
+        title="Mark as a draft: posted privately with [WIP] after its title, and replaced on each new bounce"
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleWip(m); }}>Mark draft</button>;
 
   // One mix as a sleeve (Sleeve look) or a row (Crate look).
@@ -269,10 +370,10 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
     const note = liveNote(m);
     const it = itemOf(m);
     return (
-      <div key={m.path} className={`sleeve${picked ? " sleeve--selected" : ""}${m.uploaded || m.superseded_by ? " sleeve--done" : ""}${it?.phase === "failed" ? " sleeve--failed" : ""}`}
+      <AuditionDiv key={m.path} song={m.path} meta={meta} className={`sleeve${picked ? " sleeve--selected" : ""}${m.uploaded || m.superseded_by ? " sleeve--done" : ""}${it?.phase === "failed" ? " sleeve--failed" : ""}`}
         role="button" tabIndex={0} aria-pressed={picked} onContextMenu={(e) => openMenu(e, mixMenu(m))}
         onClick={() => { if (!locked) toggle(m.path); }}
-        onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !locked) { e.preventDefault(); toggle(m.path); } }}>
+        onKeyDown={rowKey(() => { if (!locked) toggle(m.path); })}>
         <div className="sleeve__art">
           <Cover name={m.project_match || m.name} genre={m.genre} />
           <span className="sleeve__badge">{statusBadge(m)}</span>
@@ -280,7 +381,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
             onClick={(e) => e.stopPropagation()} onChange={() => toggle(m.path)} aria-label={`Pick ${m.name}`} />
           <PlayButton path={m.path} meta={meta} size={34} className="sleeve__play" />
           {it?.phase === "uploading" && (
-            <span className="mix-sleeve__bar"><span style={{ width: `${it.size > 0 ? (it.sent / it.size) * 100 : 0}%` }} /></span>
+            <span className="mix-sleeve__bar"><span style={{ "--pct": it.size > 0 ? (it.sent / it.size) * 100 : 0 } as CSSProperties} /></span>
           )}
         </div>
         <div className="sleeve__meta">
@@ -300,7 +401,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
                 {draftButton(m)}
               </div>}
         </div>
-      </div>
+      </AuditionDiv>
     );
   };
   const crateRow = (m: Mix, i: number) => {
@@ -308,23 +409,24 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
     const note = liveNote(m);
     const it = itemOf(m);
     return (
-    <label key={m.path} className={`row cols mix-cols scanrow--enter${selected.has(m.path) ? " row--selected" : ""}`}
+    <AuditionLabel key={m.path} song={m.path} meta={meta} className={`row cols mix-cols scanrow--enter${selected.has(m.path) ? " row--selected" : ""}`}
       onContextMenu={(e) => openMenu(e, mixMenu(m))}
       style={{ ["--i" as any]: i, cursor: m.uploaded || busy ? "default" : "pointer" }}>
       <span className="stripe" style={{ background: genreColor(m.genre) }} />
       <input type="checkbox" className="mixrow__check" disabled={m.uploaded || busy}
         checked={selected.has(m.path)} onChange={() => toggle(m.path)} aria-label={`Pick ${m.name}`} />
       <PlayButton path={m.path} meta={meta} size={28} />
-      <span className="fmt-badge">{m.ext.replace(".", "")}</span>
+      <Cover name={m.project_match || m.name} genre={m.genre} size={36} label={false} />
       <div className="row__main" style={{ opacity: m.uploaded || m.superseded_by ? 0.6 : 1 }}>
-        <div className="row__title">{m.name}</div>
+        <div className="row__title mix-title"><span className="col-trunc">{m.name}</span>
+          <span className="fmt-badge fmt-badge--tag">{m.ext.replace(".", "")}</span></div>
         {note
           ? <div className="row__sub">{note}</div>
           : <div className="row__sub">
               <button type="button" className={`linkbtn mix-genre${m.genre_by_you || !m.genre ? "" : " genre-guess"}`}
                 title={m.genre ? (m.genre_by_you ? "Genre set by you. Click to change" : "Genre guessed from the project. Click to correct it") : "Set a genre"}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); changeGenre(m); }}>{m.genre || "Set genre"}</button>
-              {[m.bpm ? `${m.bpm} BPM` : "", m.dupe_formats && m.dupe_formats.length ? `also ${m.dupe_formats.join(", ")}` : ""]
+              {[m.bpm ? `${Math.round(m.bpm)} BPM` : "", m.dupe_formats && m.dupe_formats.length ? `also ${m.dupe_formats.join(", ")}` : ""]
                 .filter(Boolean).map((t) => ` · ${t}`).join("")}
             </div>}
       </div>
@@ -334,7 +436,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
       <span className="col-num">{fmtBytes(m.size)}</span>
       <span>{!m.superseded_by && !m.uploaded && draftButton(m)}</span>
       <span className="mixstate__cell">{statusBadge(m)}{it?.phase === "failed" && retry(m)}</span>
-    </label>
+    </AuditionLabel>
     );
   };
 
@@ -344,7 +446,12 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
         <Button kind="quiet" onClick={() => rescan()} disabled={scan.active || busy}>
           <Icon name="refresh" />{scan.active ? "Looking…" : "Look again"}
         </Button>
-        <Button kind="primary" disabled={selected.size === 0 || busy} onClick={() => start()}>
+        {scheduleOn && selected.size > 0 && !busy && (
+          <span className={`up-when${whenProblem ? " up-when--bad" : ""}`} role="status">
+            {whenProblem ?? `Goes public ${fmtRelease(releaseAtValue)}`}</span>
+        )}
+        <Button kind="primary" disabled={selected.size === 0 || busy || !!whenProblem} onClick={() => start()}
+          title={whenProblem ?? undefined}>
           {running ? "Posting…" : selected.size ? `Post ${selected.size} to SoundCloud` : "Post to SoundCloud"}
         </Button>
       </>} />
@@ -354,7 +461,9 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
       {(running || upload.active || upload.done) && (
         <section className="card section up-overall">
           <div className="row-spread">
-            <b style={{ fontWeight: 600 }}>{upload.done ? (upload.cancelled ? "Stopped" : "Done")
+            <b style={{ fontWeight: 600 }}>{upload.done
+              ? (upload.cancelled ? `Stopped. ${upload.completed} posted, the rest weren’t posted.` : "Done")
+              : stopping ? `Stopping after ${upload.current ?? "this mix"}…`
               : upload.current ? `Posting ${Math.min(finished + 1, upload.total)} of ${upload.total}` : "Getting ready…"}</b>
             <span className="muted up-overall__counts">
               {upload.completed} posted · {upload.skipped} skipped · {upload.errors} failed
@@ -363,7 +472,14 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
               )}
             </span>
           </div>
-          <ProgressBar pct={upload.done ? 100 : overallPct} active={!upload.done} />
+          <div className="up-overall__bar">
+            <ProgressBar pct={upload.done ? 100 : overallPct} active={!upload.done} />
+            {!upload.done && jobRef.current && upload.total - finished > 1 && (
+              <Button kind="quiet" sm onClick={() => void stopAfterThis()} disabled={stopping}
+                title="Finish the mix going up now, then post no more">
+                {stopping ? "Stopping…" : "Stop after this mix"}</Button>
+            )}
+          </div>
         </section>
       )}
 
@@ -413,9 +529,14 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
         </div>
         {ent.features.schedule_release && (
           <label className="toolchk">
-            <input type="checkbox" checked={scheduleOn} onChange={(e) => setScheduleOn(e.target.checked)} />
+            <input type="checkbox" checked={scheduleOn} onChange={(e) => {
+              const on = e.target.checked;
+              setScheduleOn(on);
+              if (on && releaseProblem(true, releaseAtValue)) setReleaseAtValue(tomorrowSameHour());
+            }} />
             Go public later
-            {scheduleOn && <input type="datetime-local" value={releaseAtValue}
+            {scheduleOn && <input type="datetime-local" value={releaseAtValue} aria-label="When they go public"
+              min={localInput(new Date())}
               onChange={(e) => setReleaseAtValue(e.target.value)} />}
           </label>
         )}
@@ -425,6 +546,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
             Show every format
           </label>
         )}
+        <span style={{ marginLeft: dupeCount > 0 ? 0 : "auto" }}><AuditionToggle /></span>
       </div>
       {(coverArt || scheduleOn) && (
         <p className="faint" style={{ margin: "-6px 0 12px", fontSize: 12 }}>
@@ -442,7 +564,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
       {visible.length > 0 && look === "sleeve" && (<>
         {fresh.length > 0 && <div className="sleeves mix-sleeves">{fresh.map(sleeveCard)}</div>}
         {posted.length > 0 && <>
-          <h2 className="mix-split"><Icon name="check" size={15} />Already on SoundCloud<span>{posted.length}</span></h2>
+          <h2 className="mix-split"><Icon name="check" size={15} />Already on SoundCloud<span>{fmtCount(posted.length)}</span></h2>
           <div className="sleeves mix-sleeves">{posted.map(sleeveCard)}</div>
         </>}
       </>)}
@@ -454,12 +576,12 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
             <input type="checkbox" className="mixrow__check" ref={(el) => { if (el) el.indeterminate = somePicked && !allPicked; }}
               checked={allPicked} disabled={pickable.length === 0 || busy} onChange={toggleAll}
               aria-label={allPicked ? "Untick every mix" : "Tick every new mix"} title={allPicked ? "Untick every mix" : "Tick every new mix"} />
-            <span /><span>Type</span><span>Mix</span><span>Waveform</span><span>From project</span>
+            <span /><span /><span>Mix</span><span>Waveform</span><span>From project</span>
             <span className="col-num">Length</span><span className="col-num">Size</span><span>Draft</span><span>Status</span>
           </div>
           {fresh.map(crateRow)}
           {posted.length > 0 && (
-            <div className="row mix-split mix-split--row"><Icon name="check" size={14} />Already on SoundCloud<span>{posted.length}</span></div>
+            <div className="row mix-split mix-split--row"><Icon name="check" size={14} />Already on SoundCloud<span>{fmtCount(posted.length)}</span></div>
           )}
           {posted.map((m, i) => crateRow(m, fresh.length + i))}
         </div>
@@ -469,6 +591,79 @@ export function Upload({ cfg, ent, scan, upload, resetUpload }: {
           Try fewer letters, or clear the search box.
         </EmptyState></div>
       )}
+      <Exit>{review && (
+        <LastLook items={review.items} account={account} cfg={cfg} extOf={extOf}
+          goesPublic={review.releaseAt ? fmtRelease(releaseAtValue) : null}
+          onBack={() => setReview(null)} onPost={() => void post(review.items, review.releaseAt, false)} />
+      )}</Exit>
+    </div>
+  );
+}
+
+// A last look before posting: how many, as what, on which account, and a checklist
+// for each mix (title, cover, genre, tags, file, level) with anything worth fixing.
+function LastLook({ items, account, goesPublic, cfg, extOf, onBack, onPost }: {
+  items: UploadItemInput[]; account: string | null; goesPublic: string | null;
+  cfg: Config; extOf: (path: string) => string;
+  onBack: () => void; onPost: () => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useDialogFocus(ref);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onBack(); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onBack]);
+  // levels are measured by the upload service (WAV, AIFF); others just skip that line
+  const [levels, setLevels] = useState<Record<string, Check | null>>({});
+  useEffect(() => {
+    let alive = true;
+    for (const i of items) {
+      api.levels(i.path).then((r) => { if (alive) setLevels((l) => ({ ...l, [i.path]: levelCheck(r.levels) })); })
+        .catch(() => { if (alive) setLevels((l) => ({ ...l, [i.path]: null })); });
+    }
+    return () => { alive = false; };
+  }, [items]);
+  const mixed = !goesPublic && items.some((i) => i.sharing !== items[0].sharing);
+  const n = items.length;
+  const lists = items.map((i) => {
+    const lv = levels[i.path];
+    return { item: i, checks: [...preflight(i, cfg, extOf(i.path)), ...(lv ? [lv] : [])] };
+  });
+  const toLook = lists.filter((l) => needsLook(l.checks) > 0).length;
+  return (
+    <div className="wnew__scrim" onClick={onBack}>
+      <div ref={ref} className="wnew confirm lastlook" role="dialog" aria-modal="true"
+        aria-labelledby="lastlook-title" onClick={(e) => e.stopPropagation()}>
+        <div className="confirm__body">
+          <h2 id="lastlook-title">{lastLookTitle(n, items.map((i) => i.sharing ?? "public"), account, goesPublic)}</h2>
+          {goesPublic && <p>They go up private now and turn public then.</p>}
+          <p className="lastlook__sum">{toLook === 0
+            ? (n === 1 ? "Ready to go: everything on the checklist is in place." : `All ${n} are ready: everything on the checklist is in place.`)
+            : `${toLook === n && n > 1 ? "Each one has" : `${toLook} of ${n} ${toLook === 1 ? "has" : "have"}`} something worth a look first. You can still post as they are.`}</p>
+          <ol className="lastlook__list lastlook__checks">
+            {lists.map(({ item, checks }) => {
+              const loud = checks.filter((c) => c.state !== "ok");
+              const fine = checks.filter((c) => c.state === "ok");
+              return (
+                <li key={item.path} className={loud.some((c) => c.state === "warn") ? "lastlook__mix lastlook__mix--look" : "lastlook__mix"}>
+                  <div className="lastlook__name">
+                    <Icon name={loud.some((c) => c.state === "warn") ? "alert" : "check"} size={14} />
+                    <span className="col-trunc">{titleOf(item)}</span>
+                    {mixed && <span className="faint">{item.sharing === "private" ? "Private" : "Public"}</span>}
+                  </div>
+                  {loud.map((c) => <div key={c.key} className={`lastlook__check lastlook__check--${c.state}`}>{c.say}</div>)}
+                  <div className="lastlook__fine">{fine.map((c) => c.say).join(" · ")}</div>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+        <div className="confirm__foot">
+          <button type="button" className="btn btn--ghost confirm__cancel" onClick={onBack}>{toLook ? "Back to fix" : "Back"}</button>
+          <button type="button" className="btn btn--primary" onClick={onPost}>{toLook ? `Post ${n} anyway` : `Post ${n}`}</button>
+        </div>
+      </div>
     </div>
   );
 }

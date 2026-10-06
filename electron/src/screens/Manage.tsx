@@ -1,17 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { makeApi, openExternal, pickImage, readImage, revealPath } from "../api";
-import { askConfirm, CopyButton, openMenu, type MenuItem } from "../components/Desktop";
+import { askConfirm, CopyButton, Exit, openMenu, type MenuItem } from "../components/Desktop";
+import { Rating, RowSize, ratingMenu } from "../components/Marks";
+import { ratingOf, useDensity, useRatings } from "../marks";
+import { pickCrateColor } from "../components/GenrePick";
 import { copyText, keep, recall } from "../desktop";
-import type { BulkResult, Config, Entitlement, SeoScore, Sharing, Track, TrackUpdate } from "../types";
-import { Button, PageHeader, SubLine, ProBadge, fmtDuration } from "../components/ui";
+import type { BulkResult, Config, Entitlement, SeoScore, Sharing, Track, TrackComment, TrackUpdate } from "../types";
+import { Button, PageHeader, SubLine, ProBadge, fmtDuration, fmtCount, parseTags } from "../components/ui";
 import { Icon } from "../components/Icon";
-import { Art, PlayButton, SongWave, type SongMeta } from "../components/Player";
+import { Art, PlayButton, SongWave, useAudition, useSongLength, type SongMeta } from "../components/Player";
+import type { WaveMark } from "../components/Wave";
+import { AuditionToggle } from "../components/Audition";
 import { GENRES, genreColor, useLook } from "../look";
 import { EmptyState } from "../components/SlothSpot";
 import {
-  BPM_BANDS, FIRST_DESC, LOW_SCORE, NO_FILTERS, applyFilters, dawName, isFiltered, isPrivate, pickerOptions,
+  BPM_BANDS, FIRST_DESC, LOW_SCORE, NO_FILTERS, applyFilters, dawName, describeFilters, yearOf, isFiltered, isPrivate, pickerOptions,
   privacyCounts, sortTracks, type PrivacyFilter, type SortKey, type TrackFilters,
 } from "../trackFilter";
+import { rowKey, useDialogFocus } from "../components/a11y";
+import { SmartBar } from "../components/SmartBar";
+import { ColumnBrowse, FacetChips, NO_GENRE, facets } from "../components/Browse";
 import "../manage.css";
 
 const api = makeApi();
@@ -56,6 +64,8 @@ function backupStale(t: Track): boolean {
 }
 
 function isMatched(t: Track): boolean { return !!t.project_match; }
+// what a track's rating is kept under (marks.ts)
+const rateKey = (t: Track) => `sc:${t.id}`;
 
 // A re-enriched track returned by an edit/bulk op lacks the dupe_* fields (those are set
 // only in the backend's list pass), so carry them over from the row being replaced —
@@ -89,6 +99,14 @@ for (const k of Object.keys(START) as (keyof typeof START)[]) {
 }
 if (!(kept.sortKey in FIRST_DESC)) kept.sortKey = "date";
 
+// Open Your tracks on a ready-made set of filters (a smart crate or genre picked in
+// Cmd/Ctrl+K). Works whether or not the page is showing.
+let applyView: ((f: TrackFilters) => void) | null = null;
+export function showTracks(f: TrackFilters) {
+  Object.assign(kept, f, { page: 0 });
+  applyView?.(f);
+}
+
 // openTrack: the track whose edit panel is open (its id), or null. Opening and closing
 // go through the app's back/forward history, so the mouse's back button closes it.
 export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
@@ -96,6 +114,8 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   openTrack: string | null; onOpenTrack: (id: string) => void; onCloseTrack: () => void;
 }) {
   const [look] = useLook();
+  const [rows, setRows] = useDensity("tracks");
+  useRatings();  // redraw (and re-sort) when a rating changes
   const canBulk = ent.features.batch;
 
   const [tracks, setTracks] = useState<Track[] | null>(null);
@@ -110,6 +130,10 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   });
   const setFilters = (patch: Partial<TrackFilters> | null) =>
     setFiltersState((f) => (patch ? { ...f, ...patch } : { ...NO_FILTERS }));
+  useEffect(() => {
+    applyView = (f) => { setFiltersState(f); setSearch(f.q.trim()); };
+    return () => { applyView = null; };
+  }, []);
   const [search, setSearch] = useState(() => kept.q.trim());
   const [sortKey, setSortKey] = useState<SortKey>(kept.sortKey);
   const [sortDesc, setSortDesc] = useState(kept.sortDesc);
@@ -170,12 +194,25 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   // ---- filter + sort (client-side) ----
   // The search box waits for a pause in typing; everything else applies at once.
   const active = useMemo(() => ({ ...filters, q: search }), [filters, search]);
+  const rated = (tracks || []).map((t) => ratingOf(rateKey(t))).join();
   const filtered = useMemo(
     () => sortTracks(applyFilters(tracks || [], active), sortKey, sortDesc),
-    [tracks, active, sortKey, sortDesc]);
+    [tracks, active, sortKey, sortDesc, rated]);
   const counts = useMemo(() => privacyCounts(tracks || [], active), [tracks, active]);
   const options = useMemo(() => pickerOptions(tracks || []), [tracks]);
   const anyFilter = isFiltered(filters);
+  const years = useMemo(() => [...new Set((tracks || []).map(yearOf).filter(Boolean))].sort().reverse(), [tracks]);
+  const anyRated = rated.replace(/[0,]/g, "") !== "";
+  // Crate: the usual list, or Genre > Year > Track columns
+  const [view, setViewState] = useState<"list" | "columns">(() => recall("lc-tracks-layout", "list", (v) => v === "list" || v === "columns"));
+  const setView = (v: "list" | "columns") => { keep("lc-tracks-layout", v); setViewState(v); };
+  const columns = look === "crate" && view === "columns";
+  // Genre and Year to browse by, counted over what the other filters leave
+  const browse = useMemo(() => {
+    const pool = applyFilters(tracks || [], { ...active, genre: "", year: "" });
+    const inGenre = active.genre ? applyFilters(pool, { ...NO_FILTERS, genre: active.genre }).length : pool.length;
+    return { ...facets(pool, (t) => t.genre, yearOf, active.genre), total: pool.length, inGenre };
+  }, [tracks, active, rated]);
 
   // Lower-quality duplicate copies (e.g. the MP3 when a FLAC of the same title exists).
   const lossyDupes = useMemo(
@@ -249,7 +286,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   }
   async function deleteOne(t: Track) {
     if (!(await askConfirm({ title: `Delete “${t.title}” from SoundCloud?`,
-      body: "It goes from SoundCloud with its plays, likes and comments. This can't be undone.",
+      body: "It goes from SoundCloud with its plays, likes and comments. This can’t be undone.",
       confirm: "Delete", cancel: "Keep it", danger: true }))) return;
     try {
       await api.deleteTrack(t.id);
@@ -261,6 +298,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   // Right-click on a track (both looks): the everyday actions in one place.
   function trackMenu(t: Track): MenuItem[] {
     const priv = isPrivate(t);
+    const many = selected.has(t.id) ? (tracks || []).filter((x) => selected.has(x.id)) : [t];
     return [
       ...(t.permalink_url ? [
         { label: "Open on SoundCloud", onClick: () => openExternal(t.permalink_url!) },
@@ -268,6 +306,9 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
         "-" as const] : []),
       { label: "Edit details", onClick: () => setEditing(t) },
       { label: priv ? "Make public" : "Make private", onClick: () => void quickPrivacy(t, priv ? "public" : "private") },
+      "-",
+      ...ratingMenu(many.map(rateKey), ratingOf(rateKey(t))),
+      ...(t.genre ? [{ label: `Crate colour for ${t.genre}…`, onClick: () => pickCrateColor(t.genre, t.title) }] : []),
       ...(t.local_path ? [
         "-" as const,
         { label: "Show the file", onClick: () => revealPath(t.local_path!) },
@@ -287,7 +328,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
     const secs = Math.ceil(n * 0.25);
     const mins = secs >= 90 ? ` (~${Math.ceil(secs / 60)} min)` : ` (~${secs}s)`;
     return askConfirm({ title: `${verb} ${n} tracks?`,
-      body: `This runs as ${n} separate SoundCloud updates${mins} and can't be stopped once it starts.`,
+      body: `This runs as ${n} separate SoundCloud updates${mins} and can’t be stopped once it starts.`,
       confirm: `${verb} ${n}` });
   }
   function summarize(res: BulkResult, noun: string, pastTense: string, failNote = ""): void {
@@ -357,8 +398,8 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
     <div>
       <PageHeader title="Your tracks"
         sub={loading ? "Loading your SoundCloud…" : <>
-          {`${(tracks || []).length} on SoundCloud`}
-          {matchedCount ? ` · ${matchedCount} linked to projects` : ""}
+          {`${fmtCount((tracks || []).length)} on SoundCloud`}
+          {matchedCount ? ` · ${fmtCount(matchedCount)} linked to projects` : ""}
           {" · change details, privacy or covers"}{canBulk ? " for many at once" : ""}
         </>}
         actions={<Button kind="quiet" onClick={load}><Icon name="refresh" />Refresh</Button>} />
@@ -382,7 +423,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
               {([["all", "All"], ["public", "Public"], ["private", "Private"]] as [PrivacyFilter, string][]).map(([k, label]) => (
                 <button key={k} type="button" className={`seg__opt${filters.privacy === k ? " seg__opt--on" : ""}`}
                   aria-pressed={filters.privacy === k} onClick={() => setFilters({ privacy: k })}>
-                  {label} <span className="find__n">{counts[k]}</span>
+                  {label} <span className="find__n">{fmtCount(counts[k])}</span>
                 </button>
               ))}
             </div>
@@ -396,12 +437,24 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
                 <option value="duration">Length</option>
                 <option value="bpm">BPM</option>
                 <option value="seo">Search score</option>
+                <option value="rating">Rating</option>
               </select>
             </label>
             <button type="button" className="iconbtn" onClick={() => setSortDesc((d) => !d)}
               aria-label={sortDesc ? "Sorted high to low" : "Sorted low to high"} title={sortDesc ? "High to low" : "Low to high"}>
               <Icon name={sortDesc ? "arrowDown" : "arrowUp"} />
             </button>
+            {look === "crate" && (
+              <div className="find__view">
+                {!columns && <RowSize value={rows} onChange={setRows} />}
+                <div className="seg seg--icons" role="radiogroup" aria-label="Show as">
+                  {([["list", "library", "List"], ["columns", "columns", "Genre, year, track columns"]] as const).map(([k, icon, label]) => (
+                    <button key={k} type="button" role="radio" aria-checked={view === k} title={label} aria-label={label}
+                      className={`seg__opt${view === k ? " seg__opt--on" : ""}`} onClick={() => setView(k)}><Icon name={icon} size={14} /></button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <div className="find__row">
             {options.daws.length > 1 && (
@@ -416,6 +469,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
                 aria-label="Genre" onChange={(e) => setFilters({ genre: e.target.value })}>
                 <option value="">Any genre</option>
                 {options.genres.map((g) => <option key={g} value={g}>{g}</option>)}
+                {(tracks || []).some((t) => !(t.genre || "").trim()) && <option value={NO_GENRE}>No genre</option>}
               </select>
             )}
             <select className={filters.bpm ? "find__pick find__pick--on" : "find__pick"} value={filters.bpm}
@@ -437,6 +491,22 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
               <option value="low">Hard to find (under {LOW_SCORE})</option>
               <option value="good">Easy to find ({LOW_SCORE} and up)</option>
             </select>
+            {years.length > 1 && (
+              <select className={filters.year ? "find__pick find__pick--on" : "find__pick"} value={filters.year}
+                aria-label="Year posted" onChange={(e) => setFilters({ year: e.target.value })}>
+                <option value="">Any year</option>
+                {years.map((y) => <option key={y} value={y}>Posted in {y}</option>)}
+              </select>
+            )}
+            {(anyRated || filters.rated > 0) && (
+              <select className={filters.rated ? "find__pick find__pick--on" : "find__pick"} value={filters.rated}
+                aria-label="Rating" onChange={(e) => setFilters({ rated: Number(e.target.value) })}>
+                <option value={0}>Any rating</option>
+                <option value={3}>Rated 3 and up</option>
+                <option value={4}>Rated 4 and up</option>
+                <option value={5}>Rated 5</option>
+              </select>
+            )}
             {lossyDupes.length > 0 && (
               <button type="button" className={`chip${filters.dupes ? " chip--on" : ""}`}
                 aria-pressed={filters.dupes} onClick={() => setFilters({ dupes: !filters.dupes })}
@@ -444,15 +514,23 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
             )}
             <span className="find__count">
               {anyFilter
-                ? <>Showing <b>{filtered.length}</b> of {(tracks || []).length} track{(tracks || []).length === 1 ? "" : "s"}</>
-                : <>{(tracks || []).length} track{(tracks || []).length === 1 ? "" : "s"}</>}
+                ? <>Showing <b>{fmtCount(filtered.length)}</b> of {fmtCount((tracks || []).length)} track{(tracks || []).length === 1 ? "" : "s"}</>
+                : <>{fmtCount((tracks || []).length)} track{(tracks || []).length === 1 ? "" : "s"}</>}
             </span>
             {anyFilter && (
               <button type="button" className="find__clear" onClick={clearFilters}>
                 <Icon name="close" size={12} />Clear all
               </button>
             )}
+            <AuditionToggle />
           </div>
+          <SmartBar scope="tracks" filters={filters} blank={NO_FILTERS} canSave={anyFilter}
+            suggest={describeFilters} count={(f) => applyFilters(tracks || [], f).length}
+            onPick={(f) => { if (f) { setFilters(f); setSearch(f.q.trim()); } else clearFilters(); }} />
+          {look === "sleeve" && (
+            <FacetChips genres={browse.genres} years={browse.years} genre={filters.genre} year={filters.year}
+              onGenre={(g) => setFilters({ genre: g })} onYear={(y) => setFilters({ year: y })} yearTitle="Posted in" />
+          )}
           {canBulk && lossyDupes.length > 0 && (
             <div className="mng-dupehint">
               {lossyDupes.length} lower-quality {lossyDupes.length === 1 ? "copy" : "copies"} of tracks you posted twice ·{" "}
@@ -513,10 +591,34 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
             onContextMenu={(e) => openMenu(e, trackMenu(t))} />
         ))}
       </div>}
-      {pageItems.length > 0 && look === "crate" && <div className="table table--crate">
+      {columns && (tracks || []).length > 0 && (
+        <ColumnBrowse genres={browse.genres} years={browse.years} total={browse.total} inGenre={browse.inGenre}
+          genre={filters.genre} year={filters.year} yearTitle="Year posted" noun={`Tracks (${fmtCount(filtered.length)})`}
+          onGenre={(g) => setFilters({ genre: g, year: "" })} onYear={(y) => setFilters({ year: y })}>
+          {filtered.length === 0 ? <p className="browse__empty">No tracks here. Pick another genre or year.</p>
+            : filtered.map((t) => {
+              const meta = songMeta(t, artFor(t, defaultArt).src);
+              return (
+                <button key={t.id} type="button" className="browse__item" data-nav-key={String(t.id)}
+                  onClick={() => setEditing(t)} onContextMenu={(e) => openMenu(e, trackMenu(t))}>
+                  <span className="stripe" style={{ background: genreColor(t.genre) }} />
+                  <Art meta={meta} size={28} />
+                  <span className="browse__itemtext">
+                    <span className="lib-name" title={t.title}>{t.title}</span>
+                    <span className="lib-sub">{[t.duration ? fmtDuration(t.duration) : "", t.playback_count != null ? `${t.playback_count.toLocaleString()} plays` : "", yearOf(t)].filter(Boolean).join(" · ")}</span>
+                  </span>
+                  <Rating id={rateKey(t)} name={t.title} size={11} readOnly />
+                  <span className={`dot ${isPrivate(t) ? "" : "dot--ok"}`} title={isPrivate(t) ? "Private" : "Public"} />
+                </button>
+              );
+            })}
+        </ColumnBrowse>
+      )}
+      {pageItems.length > 0 && look === "crate" && !columns && <div className={`table table--crate rows--${rows}`}>
         <div className="row cols cols-head track-cols">
           <span /><span /><span /><span />
           <SortHead k="title" label="Track" sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
+          <SortHead k="rating" label="Rating" sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
           <span>Waveform</span>
           <SortHead k="project" label="From project" sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
           <SortHead k="plays" label="Plays" num sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
@@ -535,10 +637,10 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
       </div>}
 
       {/* ---- pagination: item range, page size, and (when needed) page nav ---- */}
-      {!loading && filtered.length > 0 && (
+      {!loading && filtered.length > 0 && !columns && (
         <div className="mng-pager">
           <span className="mng-pager__label">
-            {pageStart + 1}–{Math.min(pageStart + pageSize, filtered.length)} of {filtered.length}
+            {fmtCount(pageStart + 1)}–{fmtCount(Math.min(pageStart + pageSize, filtered.length))} of {fmtCount(filtered.length)}
           </span>
           <label className="sub" style={{ margin: 0, display: "flex", gap: 6, alignItems: "center" }}>
             Per page
@@ -557,23 +659,23 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
       )}
 
       {/* ---- edit drawer ---- */}
-      {editing && (
+      <Exit>{editing && (
         <EditPanel track={editing} defaultArt={defaultArt} onClose={() => setEditing(null)}
           onSaved={(t) => { applyUpdate(t); setEditing(null); }} />
-      )}
+      )}</Exit>
 
       {/* ---- bulk metadata editor ---- */}
-      {bulkEdit && (
+      <Exit>{bulkEdit && (
         <BulkEditPanel count={selected.size} busy={bulkBusy}
           onClose={() => setBulkEdit(false)} onApply={(patch) => void runBulkUpdate(patch)} />
-      )}
+      )}</Exit>
 
       {/* ---- typed-confirmation bulk delete ---- */}
-      {confirmDelete && (
+      <Exit>{confirmDelete && (
         <DeleteConfirm count={selected.size} busy={bulkBusy}
           onClose={() => setConfirmDelete(false)}
           onConfirm={async () => { const res = await runBulkDelete(); if (res) setConfirmDelete(false); }} />
-      )}
+      )}</Exit>
     </div>
   );
 }
@@ -585,7 +687,8 @@ function SortHead({ k, label, num, sortKey, desc, onSort }: {
   const on = sortKey === k;
   return (
     <button type="button" className={`find__sort${num ? " col-num" : ""}${on ? " find__sort--on" : ""}`}
-      onClick={() => onSort(k)} aria-sort={on ? (desc ? "descending" : "ascending") : "none"}
+      onClick={() => onSort(k)}
+      aria-label={on ? `${label}, sorted ${desc ? "high to low" : "low to high"}. Press to flip` : `${label}. Press to sort by it`}
       title={`Sort by ${label.toLowerCase()}`}>
       {label}{on && <Icon name={desc ? "arrowDown" : "arrowUp"} size={11} />}
     </button>
@@ -599,11 +702,11 @@ function ProjectCell({ track }: { track: Track }) {
   const hasBackup = !!t.backups && (t.backups.count ?? 0) > 0;
   const notes: { text: string; tone?: "warn" | "faint"; title?: string }[] = [];
   if (t.daw) notes.push({ text: dawLabel(t.daw) });
-  if (t.bpm != null) notes.push({ text: `${t.bpm} BPM` });
+  if (t.bpm != null) notes.push({ text: `${Math.round(t.bpm)} BPM` });
   if (hasBackup) notes.push(stale
     ? { text: `backup older than track`, tone: "faint", title: `Last backup ${fmtDate(t.backups!.last_backup)}, before this track was posted` }
     : { text: `${t.backups!.count} backup${t.backups!.count === 1 ? "" : "s"}${t.backups!.verified ? ", checked" : ""}` });
-  if ((t.missing_count ?? 0) > 0) notes.push({ text: `${t.missing_count} samples missing`, tone: "warn" });
+  if ((t.missing_count ?? 0) > 0) notes.push({ text: `${fmtCount(t.missing_count)} sample${t.missing_count === 1 ? "" : "s"} missing`, tone: "warn" });
   if ((t.dupe_count ?? 0) > 1) notes.push({
     text: `${(t.original_format || "?").toUpperCase()} ${t.dupe_keeper ? "copy to keep" : "duplicate"}`,
     tone: t.dupe_keeper ? undefined : "warn",
@@ -682,8 +785,9 @@ function TrackRow({ track, index, defaultArt, selected, onCheck, onQuickPrivacy,
   const next: Sharing = priv ? "public" : "private";
   const art = artFor(t, defaultArt);
   const meta = songMeta(t, art.src);
+  const preview = useAudition(t.local_path, meta);
   return (
-    <label data-nav-key={String(t.id)} className={`row cols track-cols scanrow--enter${selected ? " row--selected" : ""}`}
+    <label {...preview} data-nav-key={String(t.id)} className={`row cols track-cols scanrow--enter${selected ? " row--selected" : ""}`}
       onContextMenu={onContextMenu}
       style={{ ["--i" as string]: index } as React.CSSProperties}>
       <span className="stripe" style={{ background: genreColor(t.genre) }} />
@@ -693,9 +797,10 @@ function TrackRow({ track, index, defaultArt, selected, onCheck, onQuickPrivacy,
       {t.local_path ? <PlayButton path={t.local_path} meta={meta} size={28} /> : <span />}
       <Art meta={meta} size={36} />
       <div className="row__main">
-        <div className="row__title">{t.title}</div>
+        <div className="row__title" title={t.title}>{t.title}</div>
         <SubLine parts={[t.genre, t.duration ? fmtDuration(t.duration) : "", t.created_at ? `posted ${fmtDate(t.created_at)}` : ""]} />
       </div>
+      <Rating id={rateKey(t)} name={t.title} />
       <SongWave path={t.local_path} scUrl={t.local_path ? null : t.waveform_url} meta={meta} height={24} />
       <ProjectCell track={t} />
       <span className="col-num">{t.playback_count != null ? t.playback_count.toLocaleString() : "—"}</span>
@@ -728,9 +833,10 @@ function TrackCard({ track, defaultArt, selected, onCheck, onEdit, onContextMenu
   const t = track;
   const art = artFor(t, defaultArt);
   const meta = songMeta(t, art.src);
+  const preview = useAudition(t.local_path, meta);
   return (
-    <div data-nav-key={String(t.id)} className={`sleeve track-sleeve${selected ? " sleeve--selected" : ""}`} role="button" tabIndex={0}
-      onClick={onEdit} onKeyDown={(e) => { if (e.key === "Enter") onEdit(); }} onContextMenu={onContextMenu}>
+    <div {...preview} data-nav-key={String(t.id)} className={`sleeve track-sleeve${selected ? " sleeve--selected" : ""}`} role="button" tabIndex={0}
+      onClick={onEdit} onKeyDown={rowKey(onEdit)} onContextMenu={onContextMenu}>
       <div className="sleeve__art">
         <Art meta={meta} />
         <span className="sleeve__badge">
@@ -751,9 +857,10 @@ function TrackCard({ track, defaultArt, selected, onCheck, onEdit, onContextMenu
         </div>
         <div className="track-sleeve__sub">
           <span className="col-wrap2" title={t.project_match ?? undefined}>{t.project_match ? `From ${t.project_match}` : t.genre || "No genre"}</span>
-          <span className="mono">{t.playback_count != null ? `${t.playback_count.toLocaleString()} plays` : ""}</span>
+          <span className="mono">{t.playback_count != null ? `${t.playback_count.toLocaleString()} play${t.playback_count === 1 ? "" : "s"}` : ""}</span>
         </div>
         <SongWave path={t.local_path} scUrl={t.local_path ? null : t.waveform_url} meta={meta} height={18} />
+        <Rating id={rateKey(t)} name={t.title} size={12} />
       </div>
     </div>
   );
@@ -761,9 +868,12 @@ function TrackCard({ track, defaultArt, selected, onCheck, onEdit, onContextMenu
 
 // Shared overlay shell: side-drawer on wide windows, centered modal on narrow ones.
 // `forceModal` always centers (used by the delete confirmation).
-function Overlay({ children, onClose, forceModal }: {
-  children: React.ReactNode; onClose: () => void; forceModal?: boolean;
+function Overlay({ children, onClose, forceModal, label }: {
+  children: React.ReactNode; onClose: () => void; forceModal?: boolean; label: string;
 }) {
+  // Tab stays inside the panel while it's open; focus goes back to the row after.
+  const box = useRef<HTMLDivElement | null>(null);
+  useDialogFocus(box);
   const [narrow, setNarrow] = useState(() => matchMedia("(max-width: 880px)").matches);
   useEffect(() => {
     const mq = matchMedia("(max-width: 880px)");
@@ -780,7 +890,8 @@ function Overlay({ children, onClose, forceModal }: {
   return (
     <div className={`mng-scrim${centered ? " mng-scrim--center" : ""}`}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className={`glass elev-1 ${centered ? "mng-modal" : "mng-drawer"}`} role="dialog" aria-modal="true">
+      <div ref={box} className={`glass elev-1 ${centered ? "mng-modal" : "mng-drawer"}`} role="dialog" aria-modal="true"
+        aria-label={label} tabIndex={-1}>
         {children}
       </div>
     </div>
@@ -826,8 +937,8 @@ function EditPanel({ track, defaultArt, onClose, onSaved }: {
     if (asking.current) return;
     if (dirty && !busy) {
       asking.current = true;
-      const ok = await askConfirm({ title: "Close without saving?", body: "Your changes to this track will be lost.",
-        confirm: "Close without saving", cancel: "Keep editing" });
+      const ok = await askConfirm({ title: "Discard your changes?", body: "Your changes to this track won’t be saved.",
+        confirm: "Discard", cancel: "Keep editing" });
       setTimeout(() => { asking.current = false; }, 0);
       if (!ok) return;
     }
@@ -875,7 +986,7 @@ function EditPanel({ track, defaultArt, onClose, onSaved }: {
   const matched = isMatched(track);
   const meta = songMeta(track, artFor(track, defaultArt).src);
   return (
-    <Overlay onClose={() => void close()}>
+    <Overlay onClose={() => void close()} label={`Edit ${track.title}`}>
       <div className="mng-panel__head mng-edit__head">
         <Art meta={meta} size={48} />
         <div className="mng-edit__who">
@@ -887,6 +998,7 @@ function EditPanel({ track, defaultArt, onClose, onSaved }: {
         <button type="button" className="mng-panel__close" onClick={() => void close()} aria-label="Close"><Icon name="close" /></button>
       </div>
       <div className="mng-panel__body">
+        <TrackHero track={track} meta={meta} />
         {track.permalink_url && (
           <div className="field"><span>SoundCloud link</span>
             <div className="pathline">
@@ -946,7 +1058,7 @@ function EditPanel({ track, defaultArt, onClose, onSaved }: {
               {artBusy ? "Working…" : "Change cover…"}
             </Button>
             <Button kind="ghost" sm onClick={() => void genWaveCover()} disabled={artBusy || busy}
-              title="Make a cover from this track's waveform and your name">
+              title="Make a cover from this track’s waveform and your name">
               Make one from the waveform
             </Button>
           </div>
@@ -971,6 +1083,64 @@ function EditPanel({ track, defaultArt, onClose, onSaved }: {
   );
 }
 
+// The top of a track's page: its waveform with listeners' comments pinned where they
+// left them, and the numbers that matter. Sleeve prints it big, cover first.
+function TrackHero({ track, meta }: { track: Track; meta: SongMeta }) {
+  const [look] = useLook();
+  const [comments, setComments] = useState<TrackComment[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setComments(null);
+    api.trackComments(track.id).then((r) => { if (alive) setComments(r.comments); }).catch(() => { if (alive) setComments([]); });
+    return () => { alive = false; };
+  }, [track.id]);
+  const fileLength = useSongLength(track.local_path);
+  const length = track.duration || fileLength;
+  const pinned = (comments ?? []).filter((c) => c.t != null && length > 0 && c.t <= length);
+  const marks: WaveMark[] = pinned.map((c) => ({ at: c.t! / length, label: c.body, who: c.user, time: c.t!, kind: "comment" }));
+  const n = comments?.length ?? 0;
+  const latest = [...pinned].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? "")).slice(0, 3);
+  const wave = <SongWave path={track.local_path} scUrl={track.local_path ? null : track.waveform_url} meta={meta} height={look === "sleeve" ? 56 : 44} marks={marks} />;
+  const figures: [string, string][] = [
+    ["Plays", track.playback_count != null ? fmtCount(track.playback_count) : "–"],
+    ["Length", length ? fmtDuration(length) : "–"],
+    [n === 1 ? "Comment" : "Comments", comments ? fmtCount(n) : "…"],
+  ];
+  const said = latest.length > 0 && (
+    <ol className="trackhero__said" aria-label="Latest comments">
+      {latest.map((c, i) => (
+        <li key={i}><span className="mono">{fmtDuration(c.t!) || "0:00"}</span><b>{c.user}</b><span className="col-trunc" title={c.body}>{c.body}</span></li>
+      ))}
+    </ol>
+  );
+  if (look === "sleeve") {
+    return (
+      <section className="trackhero trackhero--sleeve">
+        <div className="trackhero__top">
+          <Art meta={meta} size={168} className="trackhero__art" />
+          <dl className="proj-spec">
+            {figures.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
+          </dl>
+        </div>
+        <div className="trackhero__wave">
+          {track.local_path && <PlayButton path={track.local_path} meta={meta} size={44} className="playbtn--big" />}
+          <div style={{ minWidth: 0 }}>{wave}</div>
+        </div>
+        {said}
+      </section>
+    );
+  }
+  return (
+    <section className="trackhero trackhero--crate">
+      <div className="deckread">
+        {figures.map(([k, v]) => <span key={k} className="deckread__cell"><small>{k}</small><b>{v}</b></span>)}
+      </div>
+      <div className="trackhero__wave">{wave}</div>
+      {said}
+    </section>
+  );
+}
+
 function BulkEditPanel({ count, busy, onClose, onApply }: {
   count: number; busy: boolean; onClose: () => void;
   onApply: (patch: TrackUpdate) => void;
@@ -982,24 +1152,40 @@ function BulkEditPanel({ count, busy, onClose, onApply }: {
   function apply() {
     const patch: TrackUpdate = {};
     if (genre.trim()) patch.genre = genre.trim();
-    if (tags.trim()) patch.tags = tags.split(",").map((t) => t.trim()).filter(Boolean);
+    if (tags.trim()) patch.tags = parseTags(tags);
     if (sharing) patch.sharing = sharing;
     onApply(patch);
   }
   const empty = !genre.trim() && !tags.trim() && !sharing;
+  // Closing with something filled in asks first (Escape, a click outside, Cancel).
+  const asking = useRef(false);
+  async function close() {
+    if (asking.current) return;
+    if (!empty && !busy) {
+      asking.current = true;
+      const ok = await askConfirm({ title: "Discard your changes?", body: "Nothing has been changed on your tracks yet.",
+        confirm: "Discard", cancel: "Keep editing" });
+      setTimeout(() => { asking.current = false; }, 0);
+      if (!ok) return;
+    }
+    onClose();
+  }
 
   return (
-    <Overlay onClose={onClose}>
+    <Overlay onClose={() => void close()} label={`Edit ${count} tracks`}>
       <div className="mng-panel__head">
         <h2>Edit {count} tracks</h2>
-        <button type="button" className="mng-panel__close" onClick={onClose} aria-label="Close"><Icon name="close" /></button>
+        <button type="button" className="mng-panel__close" onClick={() => void close()} aria-label="Close"><Icon name="close" /></button>
       </div>
       <div className="mng-panel__body">
         <p className="sub" style={{ marginTop: 0 }}>Only the fields you fill in are applied to all selected tracks.</p>
         <label className="field"><span>Genre</span>
-          <input type="text" value={genre} onChange={(e) => setGenre(e.target.value)} placeholder="Leave blank to keep" /></label>
+          <input type="text" value={genre} onChange={(e) => setGenre(e.target.value)} list="lc-genres-bulk"
+            placeholder="e.g. House. Leave blank to keep each track’s" />
+          <datalist id="lc-genres-bulk">{GENRES.map((g) => <option key={g} value={g} />)}</datalist></label>
         <label className="field"><span>Tags (comma-separated)</span>
-          <input type="text" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Leave blank to keep" /></label>
+          <input type="text" value={tags} onChange={(e) => setTags(e.target.value)}
+            placeholder="e.g. lo-fi, chill. Leave blank to keep each track’s" /></label>
         <label className="field" style={{ marginBottom: 0 }}><span>Privacy</span>
           <select value={sharing} onChange={(e) => setSharing(e.target.value as "" | Sharing)}>
             <option value="">Keep current</option>
@@ -1008,7 +1194,7 @@ function BulkEditPanel({ count, busy, onClose, onApply }: {
           </select></label>
       </div>
       <div className="mng-panel__foot">
-        <Button sm onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button sm onClick={() => void close()} disabled={busy}>Cancel</Button>
         <Button kind="primary" sm onClick={apply} disabled={busy || empty}>{busy ? "Applying…" : `Apply to ${count}`}</Button>
       </div>
     </Overlay>
@@ -1021,7 +1207,7 @@ function DeleteConfirm({ count, busy, onClose, onConfirm }: {
   const [text, setText] = useState("");
   const ok = text.trim() === String(count) || text.trim().toUpperCase() === "DELETE";
   return (
-    <Overlay onClose={onClose} forceModal>
+    <Overlay onClose={onClose} forceModal label={count === 1 ? "Delete this track" : `Delete ${count} tracks`}>
       <div className="mng-panel__head">
         <h2>Delete {count === 1 ? "this track" : `${count} tracks`}</h2>
         <button type="button" className="mng-panel__close" onClick={onClose} aria-label="Close"><Icon name="close" /></button>

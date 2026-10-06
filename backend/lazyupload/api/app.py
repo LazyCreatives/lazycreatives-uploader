@@ -330,6 +330,14 @@ def create_app(token: str, db_path: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="not a known mix")
         return {"peaks": waveform.peaks(path)}
 
+    @app.get("/api/levels", dependencies=[Depends(require_token)])
+    def levels(path: str):
+        """How loud a mix is (peak and average, dB), for the checklist before posting;
+        null for formats the app measures itself (MP3 and the like)."""
+        if not _playable(path):
+            raise HTTPException(status_code=404, detail="not a known mix")
+        return {"levels": waveform.levels(path)}
+
     _sc_peaks: dict[str, list[float] | None] = {}
 
     @app.get("/api/sc-peaks", dependencies=[Depends(require_token)])
@@ -381,6 +389,17 @@ def create_app(token: str, db_path: Path) -> FastAPI:
             return await asyncio.to_thread(service.update_track, catalog, track_id, fields)
         except Exception as e:
             raise _track_http_error(e, "Couldn't update that track.")
+
+    @app.get("/api/tracks/{track_id}/comments", dependencies=[Depends(require_token)])
+    async def track_comments(track_id: int):
+        """The comments on one of your tracks, with where each sits in the song."""
+        if not service.connected(catalog):
+            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+        try:
+            comments = await asyncio.to_thread(service.list_comments, catalog, track_id)
+        except Exception as e:
+            raise _track_http_error(e, "Couldn't load the comments.")
+        return {"comments": comments}
 
     @app.delete("/api/tracks/{track_id}", dependencies=[Depends(require_token)])
     async def delete_track(track_id: int):

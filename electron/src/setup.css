@@ -33,6 +33,6 @@
 
 /* Sleeve: rounder, with a big poster heading */
 [data-look="sleeve"] .welcome { border-radius: 14px; }
-[data-look="sleeve"] .welcome__body > h1 { font: 400 42px/1 var(--display); letter-spacing: 0.02em; margin-bottom: 10px; }
+[data-look="sleeve"] .welcome__body > h1 { font: 700 34px/1.1 var(--font); letter-spacing: -0.02em; margin-bottom: 10px; }
 [data-look="sleeve"] .welcome__seg { height: 4px; border-radius: 999px; }
 [data-look="sleeve"] .welcome .lookpick__opt { border-radius: 10px; }

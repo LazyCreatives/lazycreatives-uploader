@@ -61,5 +61,6 @@ SoundCloud directly (fine for local dev, not for distribution).
 - `BROKER_APP_KEY` isn't a true secret (it ships in the desktop); it just stops the
   public URL being trivially abused. Combined with the need for a valid SoundCloud
   code/refresh-token, the endpoint is uninteresting to attackers.
-- For production, add per-IP rate limiting and request logging at the broker.
+- Rate limits: 20 token requests a minute per caller address and 300 a minute for everyone together (override with BROKER_PER_IP_PER_MIN and BROKER_TOTAL_PER_MIN); over the limit the broker answers 429 with Retry-After, which the app already waits on.
+- Request log: one line per request (path, status, time taken, a short hash of the caller address); codes, tokens and the secret are never logged.
 - This is the natural home for the planned LazyCreatives dashboard's auth layer.

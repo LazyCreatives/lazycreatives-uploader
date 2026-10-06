@@ -51,3 +51,15 @@ def test_sc_peaks_only_asks_soundcloud(client):
 def test_history_rows_carry_their_project(client):
     rows = client.get("/api/history").json()["uploads"]
     assert all("project_match" in r and "project_genre" in r for r in rows)
+
+
+def test_levels_measure_a_known_mix_only(client, tmp_path):
+    from tests.helpers import make_wav
+    loud = make_wav(client.mixes_dir / "loud.wav", seconds=0.5, value=32767)
+    client.put("/api/settings", json={"sources": [str(client.mixes_dir)]})
+    r = client.get("/api/levels", params={"path": str(loud)})
+    assert r.status_code == 200
+    lv = r.json()["levels"]
+    assert lv["peak_db"] == 0.0 and lv["rms_db"] > -0.1
+    outside = make_wav(tmp_path / "elsewhere" / "x.wav")
+    assert client.get("/api/levels", params={"path": str(outside)}).status_code == 404

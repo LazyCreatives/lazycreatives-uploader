@@ -1,7 +1,7 @@
 {
   "name": "lazycreatives-uploader",
   "productName": "LazyCreatives Uploader",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "LazyCreatives Uploader — automatically publish your finished mixes to SoundCloud",
   "main": "electron/main.js",
   "scripts": {
@@ -11,7 +11,9 @@
     "build": "vite build",
     "build:py": "node scripts/build-sidecar.js",
     "dist": "npm run build && npm run build:py && electron-builder",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:screens": "playwright test -c e2e/playwright.config.ts",
+    "test:screens:update": "playwright test -c e2e/playwright.config.ts --update-snapshots"
   },
   "build": {
     "appId": "com.lazycreatives.uploader",
@@ -80,6 +82,7 @@
     ]
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/react": "^18.3.4",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^6.0.2",
@@ -87,6 +90,7 @@
     "cross-env": "^7.0.3",
     "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
+    "electron-playwright-helpers": "^3.1.2",
     "jsdom": "^25.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -98,6 +102,7 @@
   "dependencies": {
     "@fontsource/bebas-neue": "^5.3.0",
     "@fontsource/schibsted-grotesk": "^5.3.0",
+    "@number-flow/react": "^0.6.2",
     "electron-updater": "^6.8.9"
   }
 }
