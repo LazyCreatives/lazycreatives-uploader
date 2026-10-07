@@ -159,3 +159,50 @@ def test_adding_stops_when_soundcloud_sends_part_of_the_playlist(catalog, monkey
     with pytest.raises(service.PlaylistIncomplete):
         service.add_to_playlist(catalog, 7, [99])
     assert fake.saved is None  # nothing was overwritten
+
+
+def test_edit_playlist_details_over_api(client, tmp_path):
+    client.post("/api/connect")
+    pl = client.get("/api/playlists").json()["playlists"][0]
+    tracks_before = [t["id"] for t in pl["tracks"]]
+    got = client.put(f"/api/playlists/{pl['id']}", json={
+        "title": "Late night drives", "description": "For the M25.", "genre": " Dubstep ",
+        "tags": ["140", "bass music", "140", " "], "sharing": "private"}).json()
+    assert (got["title"], got["description"], got["genre"], got["sharing"]) == \
+        ("Late night drives", "For the M25.", "Dubstep", "private")
+    assert got["tags"] == ["140", "bass music"]
+    assert [t["id"] for t in got["tracks"]] == tracks_before  # details only: tracks untouched
+    again = client.get("/api/playlists").json()["playlists"][0]
+    assert again["genre"] == "Dubstep" and again["tags"] == ["140", "bass music"]
+
+    pic = tmp_path / "cover.png"
+    pic.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+    before = pic.read_bytes()
+    cov = client.post(f"/api/playlists/{pl['id']}/artwork", json={"artwork_path": str(pic)}).json()
+    assert cov["artwork_url"].startswith("data:image/png")
+    assert pic.read_bytes() == before  # the picture is only read
+    assert client.post(f"/api/playlists/{pl['id']}/artwork",
+                       json={"artwork_path": str(tmp_path / "gone.png")}).status_code == 400
+
+
+def test_real_client_sends_playlist_details(monkeypatch):
+    sent = {}
+
+    class Resp:
+        headers: dict = {}
+        status_code = 200
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return {"id": 5, "title": "X", "genre": "Dubstep", "tag_list": 'grime "bass music"', "tracks": []}
+
+    def fake_put(url, headers=None, json=None, timeout=None):
+        sent["json"] = json
+        return Resp()
+
+    monkeypatch.setattr(soundcloud.requests, "put", fake_put)
+    c = soundcloud.SoundCloudClient({"access_token": "a", "expires_at": 9e12})
+    pl = c.update_playlist(5, description="d", genre="Dubstep", tags=["grime", "bass music"])
+    # details only: no "tracks" key, so SoundCloud keeps the playlist's songs as they are
+    assert sent["json"] == {"playlist": {"description": "d", "genre": "Dubstep", "tag_list": 'grime "bass music"'}}
+    assert pl["genre"] == "Dubstep" and pl["tags"] == ["grime", "bass music"]

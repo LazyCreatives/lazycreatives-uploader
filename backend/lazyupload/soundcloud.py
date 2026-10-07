@@ -382,6 +382,9 @@ def normalize_playlist(raw: dict) -> dict:
         "id": _num_id(raw),
         "title": raw.get("title") or "",
         "description": raw.get("description") or "",
+        "genre": raw.get("genre") or "",
+        "tags": list(raw["tags"]) if isinstance(raw.get("tags"), list)
+                else _parse_tag_list(raw.get("tag_list") or ""),
         "sharing": raw.get("sharing") or "public",
         "permalink_url": raw.get("permalink_url"),
         "artwork_url": _hires_artwork(raw.get("artwork_url")),
@@ -395,7 +398,8 @@ def normalize_playlist(raw: dict) -> dict:
     }
 
 
-def _playlist_body(title=None, sharing=None, track_ids=None, description=None) -> dict:
+def _playlist_body(title=None, sharing=None, track_ids=None, description=None,
+                   genre=None, tags=None) -> dict:
     """The JSON body SoundCloud's /playlists endpoints take. `track_ids` is the whole,
     ordered list (SoundCloud replaces the set's tracks with it)."""
     body: dict = {}
@@ -405,6 +409,10 @@ def _playlist_body(title=None, sharing=None, track_ids=None, description=None) -
         body["sharing"] = sharing
     if description is not None:
         body["description"] = description
+    if genre is not None:
+        body["genre"] = genre
+    if tags is not None:
+        body["tag_list"] = _tag_list(tags)
     if track_ids is not None:
         body["tracks"] = [{"urn": _urn("tracks", i)} for i in track_ids]
     return {"playlist": body}
@@ -617,11 +625,25 @@ class SoundCloudClient:
         _raise_for_status(r)
         return normalize_playlist(r.json())
 
-    def update_playlist(self, playlist_id: int, title=None, sharing=None, track_ids=None) -> dict:
+    def update_playlist(self, playlist_id: int, title=None, sharing=None, track_ids=None,
+                        description=None, genre=None, tags=None) -> dict:
         r = requests.put(f"{API_BASE}/playlists/{_urn('playlists', playlist_id)}", headers=self._headers(),
-                         json=_playlist_body(title, sharing, track_ids), timeout=30)
+                         json=_playlist_body(title, sharing, track_ids, description, genre, tags), timeout=30)
         _raise_for_status(r)
         return normalize_playlist(r.json())
+
+    def set_playlist_artwork(self, playlist_id: int, image_path: str) -> dict:
+        """Replace a playlist's cover (PUT playlist[artwork_data]); its tracks are left alone."""
+        ap = Path(image_path)
+        if not ap.is_file():
+            raise RuntimeError("Image file not found.")
+        ctype = mimetypes.guess_type(ap.name)[0] or "image/jpeg"
+        with open(ap, "rb") as fh:
+            files = {"playlist[artwork_data]": (ap.name, fh, ctype)}
+            r = requests.put(f"{API_BASE}/playlists/{_urn('playlists', playlist_id)}", headers=self._headers(),
+                             files=files, timeout=_UPLOAD_TIMEOUT)
+        _raise_for_status(r)
+        return self.get_playlist(playlist_id)
 
     def delete_playlist(self, playlist_id: int) -> None:
         r = requests.delete(f"{API_BASE}/playlists/{_urn('playlists', playlist_id)}", headers=self._headers(), timeout=30)
@@ -848,17 +870,27 @@ class MockSoundCloudClient:
         self._save_pl(pls)
         return self._render_pl(p)
 
-    def update_playlist(self, playlist_id: int, title=None, sharing=None, track_ids=None) -> dict:
+    def update_playlist(self, playlist_id: int, title=None, sharing=None, track_ids=None,
+                        description=None, genre=None, tags=None) -> dict:
         pls = self._load_pl()
         for p in pls:
             if p.get("id") == playlist_id:
-                if title is not None:
-                    p["title"] = title
-                if sharing is not None:
-                    p["sharing"] = sharing
+                for k, v in (("title", title), ("sharing", sharing), ("description", description),
+                             ("genre", genre), ("tags", tags)):
+                    if v is not None:
+                        p[k] = list(v) if k == "tags" else v
                 if track_ids is not None:
                     p["track_ids"] = [int(i) for i in track_ids]
                 p["last_modified"] = datetime.now(timezone.utc).strftime("%Y/%m/%d %H:%M:%S +0000")
+                self._save_pl(pls)
+                return self._render_pl(p)
+        raise RuntimeError("Playlist not found.")
+
+    def set_playlist_artwork(self, playlist_id: int, image_path: str) -> dict:
+        pls = self._load_pl()
+        for p in pls:
+            if p.get("id") == playlist_id:
+                p["artwork_url"] = _img_data_url(image_path) or p.get("artwork_url")
                 self._save_pl(pls)
                 return self._render_pl(p)
         raise RuntimeError("Playlist not found.")

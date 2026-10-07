@@ -1,5 +1,5 @@
 import type {
-  Account, BulkResult, Config, Entitlement, JobStatus, Mix, Overview, Playlist, Sharing, Track, TrackComment, TrackUpdate,
+  Account, BulkResult, Config, Entitlement, JobStatus, Mix, Overview, Playlist, PlaylistChange, Sharing, Track, TrackComment, TrackUpdate,
   UploadItemInput, UploadRow,
 } from "./types";
 import type { CoverSource } from "./coverArt";
@@ -107,8 +107,11 @@ export function makeApi() {
     async createPlaylist(title: string, sharing: Sharing, trackIds: number[] = []): Promise<Playlist> {
       return req("POST", "/api/playlists", { title, sharing, track_ids: trackIds });
     },
-    async updatePlaylist(id: number, p: { title?: string; sharing?: Sharing; track_ids?: number[] }): Promise<Playlist> {
+    async updatePlaylist(id: number, p: PlaylistChange): Promise<Playlist> {
       return req("PUT", `/api/playlists/${id}`, p);
+    },
+    async setPlaylistArtwork(id: number, artworkPath: string): Promise<Playlist> {
+      return req("POST", `/api/playlists/${id}/artwork`, { artwork_path: artworkPath });
     },
     async addToPlaylist(id: number, trackIds: number[]): Promise<Playlist> {
       return req("POST", `/api/playlists/${id}/add`, { track_ids: trackIds });

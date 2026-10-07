@@ -243,10 +243,18 @@ export interface PlaylistTrack extends Pick<Track, "id" | "title" | "sharing" | 
   user?: string;
   waveform_url?: string | null;
 }
+// What can change on a playlist. Anything left out stays as it is.
+export interface PlaylistChange {
+  title?: string; description?: string; genre?: string; tags?: string[];
+  sharing?: Sharing; track_ids?: number[];
+}
+
 export interface Playlist {
   id: number;
   title: string;
   description: string;
+  genre?: string;
+  tags?: string[];
   sharing: Sharing;
   permalink_url: string | null;
   artwork_url: string | null;

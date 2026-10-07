@@ -511,15 +511,26 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     @app.put("/api/playlists/{playlist_id}", dependencies=[Depends(require_token)])
     async def update_playlist(playlist_id: int, req: PlaylistUpdate):
         _need_connected()
-        if req.title is None and req.sharing is None and req.track_ids is None:
+        if all(v is None for v in (req.title, req.sharing, req.track_ids, req.description, req.genre, req.tags)):
             raise HTTPException(status_code=400, detail="Nothing to update.")
         if req.title is not None and not req.title.strip():
             raise HTTPException(status_code=400, detail="Give the playlist a name.")
         try:
             return await asyncio.to_thread(service.update_playlist, catalog, playlist_id,
-                                           req.title, req.sharing, req.track_ids)
+                                           req.title, req.sharing, req.track_ids,
+                                           req.description, req.genre, req.tags)
         except Exception as e:
             raise _track_http_error(e, "Couldn't save that playlist.")
+
+    @app.post("/api/playlists/{playlist_id}/artwork", dependencies=[Depends(require_token)])
+    async def set_playlist_artwork(playlist_id: int, req: ArtworkRequest):
+        _need_connected()
+        if not Path(req.artwork_path).is_file():
+            raise HTTPException(status_code=400, detail="That picture couldn't be found.")
+        try:
+            return await asyncio.to_thread(service.set_playlist_artwork, catalog, playlist_id, req.artwork_path)
+        except Exception as e:
+            raise _track_http_error(e, "Couldn't change the playlist's cover.")
 
     @app.post("/api/playlists/{playlist_id}/add", dependencies=[Depends(require_token)])
     async def add_to_playlist(playlist_id: int, req: PlaylistAdd):

@@ -391,14 +391,26 @@ def create_playlist(catalog: Catalog, title: str, sharing: str = "public",
 
 
 def update_playlist(catalog: Catalog, playlist_id: int, title: str | None = None,
-                    sharing: str | None = None, track_ids: list[int] | None = None) -> dict:
-    """Rename, change privacy, or set the whole ordered track list (reorder / remove)."""
+                    sharing: str | None = None, track_ids: list[int] | None = None,
+                    description: str | None = None, genre: str | None = None,
+                    tags: list[str] | None = None) -> dict:
+    """Change a playlist's details (name, description, genre, tags, privacy) or set the
+    whole ordered track list (reorder / remove). None leaves a thing as it is."""
     _need_connection(catalog)
     if track_ids is not None:
         track_ids = list(dict.fromkeys(int(i) for i in track_ids))
+    if tags is not None:
+        tags = list(dict.fromkeys(t.strip() for t in tags if t.strip()))
     return client_for(catalog).update_playlist(
         playlist_id, title=title.strip() if title is not None else None,
-        sharing=sharing, track_ids=track_ids)
+        sharing=sharing, track_ids=track_ids,
+        description=description, genre=genre.strip() if genre is not None else None, tags=tags)
+
+
+def set_playlist_artwork(catalog: Catalog, playlist_id: int, image_path: str) -> dict:
+    """Give a playlist its own cover from a picture on this computer (only read, never changed)."""
+    _need_connection(catalog)
+    return client_for(catalog).set_playlist_artwork(playlist_id, image_path)
 
 
 class PlaylistIncomplete(RuntimeError):

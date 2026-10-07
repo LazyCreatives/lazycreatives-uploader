@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { makeApi, openExternal } from "../api";
-import { askConfirm, openMenu, toast, toastWarn, type MenuItem } from "../components/Desktop";
+import { makeApi, openExternal, pickImage } from "../api";
+import { askConfirm, Exit, openMenu, toast, toastWarn, type MenuItem } from "../components/Desktop";
 import { copyText } from "../desktop";
 import { Button, PageHeader, fmtDuration } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Art, PlayButton } from "../components/Player";
 import { EmptyState } from "../components/SlothSpot";
+import { NoteOpened } from "../components/Recents";
+import { EditPanel, Overlay } from "./Manage";
 import { PlaylistArt, playlistLine } from "../components/PlaylistPick";
 import { rowKey } from "../components/a11y";
-import { genreColor, useLook } from "../look";
+import { GENRES, genreColor, useLook } from "../look";
 import { fuzzyScore } from "../fuzzy";
 import {
-  createPlaylist, deletePlaylist, fmtLength, joinTrack, mainGenre, moveItem, savePlaylist, showOrder, sideLabel, usePlaylists,
+  createPlaylist, deletePlaylist, detailChanges, fmtLength, joinTrack, mainGenre, moveItem, savePlaylist, setPlaylistCover,
+  showOrder, sideLabel, usePlaylists,
 } from "../playlists";
 import type { Playlist, PlaylistTrack, Sharing, Track } from "../types";
 import "../playlists.css";
@@ -35,23 +38,35 @@ export function shortDay(iso: string | null | undefined, now: Date = new Date())
 }
 
 // Your tracks, for covers, projects and the "Add tracks" list. Loaded once per visit.
-function useYourTracks(): Track[] | null {
+function useYourTracks(): [Track[] | null, (t: Track) => void] {
   const [t, setT] = useState<Track[] | null>(null);
   useEffect(() => { api.listTracks().then(setT).catch(() => setT([])); }, []);
-  return t;
+  const keepOne = (u: Track) => setT((all) => (all ?? []).map((x) => (x.id === u.id ? u : x)));
+  return [t, keepOne];
 }
 
-export function Playlists({ open, onOpen, onClose, onOpenTrack }: {
-  open: string | null; onOpen: (id: number | "new") => void; onClose: () => void; onOpenTrack: (id: string) => void;
+// song: one of your tracks open in its panel over the playlist (its id), or null.
+export function Playlists({ open, song, onOpen, onClose, onOpenTrack, onCloseTrack }: {
+  open: string | null; song: string | null; onOpen: (id: number | "new") => void; onClose: () => void;
+  onOpenTrack: (id: string) => void; onCloseTrack: () => void;
 }) {
   const { list, error, reload } = usePlaylists();
-  const yours = useYourTracks();
+  const [yours, keepTrack] = useYourTracks();
   const byId = useMemo(() => new Map((yours ?? []).map((t) => [t.id, t])), [yours]);
   const openId = open && open !== "new" ? Number(open) : null;
   const current = openId != null ? (list ?? []).find((p) => p.id === openId) ?? null : null;
 
   if (openId != null && current) {
-    return <PlaylistPage key={current.id} p={current} yours={yours} byId={byId} onBack={onClose} onOpenTrack={onOpenTrack} />;
+    const editing = song ? byId.get(Number(song)) ?? null : null;
+    return (<>
+      <PlaylistPage key={current.id} p={current} yours={yours} byId={byId} onBack={onClose} onOpenTrack={onOpenTrack} />
+      {editing && <NoteOpened id={String(editing.id)} name={editing.title} cover={editing.project_match || editing.title}
+        genre={editing.project_match ? editing.project_genre : editing.genre} />}
+      <Exit>{editing && (
+        <EditPanel track={editing} defaultArt={null} onClose={onCloseTrack}
+          onSaved={(t) => { keepTrack(t); onCloseTrack(); void reload(); }} />
+      )}</Exit>
+    </>);
   }
   return <PlaylistList list={list} error={error} reload={reload} composing={open === "new"}
     onOpen={onOpen} onCompose={() => onOpen("new")} onComposed={onClose} />;
@@ -199,6 +214,7 @@ function PlaylistPage({ p, yours, byId, onBack, onOpenTrack }: {
   const [look] = useLook();
   const [saving, setSaving] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(p.tracks.length === 0);
   const rows: Row[] = p.tracks.map((t) => joinTrack(t, byId));
   const ids = p.tracks.map((t) => t.id);
@@ -223,6 +239,7 @@ function PlaylistPage({ p, yours, byId, onBack, onOpenTrack }: {
   const add = (more: number[]) => save({ track_ids: [...ids, ...more.filter((x) => !ids.includes(x))] });
 
   const pageMenu: MenuItem[] = [
+    { label: "Edit details…", onClick: () => setEditing(true) },
     { label: "Rename", onClick: () => setRenaming(true) },
     ...(p.permalink_url ? [{ label: "Copy SoundCloud link", onClick: () => { copyText(p.permalink_url!); } }] : []),
     "-",
@@ -243,10 +260,18 @@ function PlaylistPage({ p, yours, byId, onBack, onOpenTrack }: {
             {playlistLine(p, false) || "Empty so far"}
             <span className="plpage__saved faint" aria-live="polite">{saving ? "Saving to SoundCloud…" : ""}</span>
           </div>
+          {(p.genre || (p.tags ?? []).length > 0) && (
+            <div className="plpage__tags">
+              {p.genre && <span className="plpage__genre"><span className="pl-dot" style={{ background: genreColor(p.genre) }} />{p.genre}</span>}
+              {(p.tags ?? []).map((t) => <span key={t} className="plpage__tag">{t}</span>)}
+            </div>
+          )}
+          {p.description && <p className="plpage__desc" title={p.description}>{p.description}</p>}
           <div className="plpage__actions">
             <Button kind={adding ? "ghost" : "primary"} sm onClick={() => setAdding((a) => !a)}>
               <Icon name={adding ? "close" : "plus"} size={14} />{adding ? "Done adding" : "Add tracks"}
             </Button>
+            <Button sm onClick={() => setEditing(true)}><Icon name="edit" size={14} />Edit details</Button>
             <Button sm onClick={() => void save({ sharing: p.sharing === "private" ? "public" : "private" })} disabled={saving}>
               {p.sharing === "private" ? "Make public" : "Make private"}
             </Button>
@@ -267,7 +292,126 @@ function PlaylistPage({ p, yours, byId, onBack, onOpenTrack }: {
           </EmptyState></div>}
 
       {adding && <AddTracks yours={yours} inIt={new Set(ids)} onAdd={add} />}
+      <Exit>{editing && <PlaylistDetails p={p} onClose={() => setEditing(false)} />}</Exit>
     </div>
+  );
+}
+
+// Edit what SoundCloud keeps about a playlist: name, description, genre, tags, who can
+// see it, and its cover. Only what changed is sent, so the songs in it stay as they are.
+function PlaylistDetails({ p, onClose }: { p: Playlist; onClose: () => void }) {
+  const [title, setTitle] = useState(p.title);
+  const [description, setDescription] = useState(p.description || "");
+  const [genre, setGenre] = useState(p.genre || "");
+  const [sharing, setSharing] = useState<Sharing>(p.sharing);
+  const [tags, setTags] = useState<string[]>(p.tags ?? []);
+  const [tagDraft, setTagDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [artBusy, setArtBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const allTags = () => [...tags, ...tagDraft.split(",").map((t) => t.trim()).filter(Boolean)];
+  const change = detailChanges(p, { title, description, genre, tags: allTags(), sharing });
+  const dirty = Object.keys(change).length > 0;
+
+  async function save() {
+    if (busy || !title.trim()) return;
+    if (!dirty) { onClose(); return; }
+    setBusy(true); setErr(null);
+    try { await savePlaylist(p.id, change); toast(`Saved ${title.trim()}.`); onClose(); }
+    catch (e) { setErr(String((e as Error).message)); setBusy(false); }
+  }
+  const asking = useRef(false);
+  async function close() {
+    if (asking.current) return;
+    if (dirty && !busy) {
+      asking.current = true;
+      const ok = await askConfirm({ title: "Discard your changes?", body: "Your changes to this playlist won’t be saved.",
+        confirm: "Discard", cancel: "Keep editing" });
+      setTimeout(() => { asking.current = false; }, 0);
+      if (!ok) return;
+    }
+    onClose();
+  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") { e.preventDefault(); void save(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+  async function changeCover() {
+    const path = await pickImage();
+    if (!path) return;
+    setArtBusy(true); setErr(null);
+    try { await setPlaylistCover(p.id, path); toast("Cover changed on SoundCloud."); }
+    catch (e) { setErr(String((e as Error).message)); }
+    finally { setArtBusy(false); }
+  }
+  function addTag(tag: string) {
+    const t = tag.trim().replace(/,$/, "").trim();
+    if (!t) return;
+    setTags((prev) => prev.some((x) => x.toLowerCase() === t.toLowerCase()) ? prev : [...prev, t]);
+  }
+  function onTagKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(tagDraft); setTagDraft(""); }
+    else if (e.key === "Backspace" && !tagDraft && tags.length) setTags((prev) => prev.slice(0, -1));
+  }
+
+  return (
+    <Overlay onClose={() => void close()} label={`Edit ${p.title}`}>
+      <div className="mng-panel__head mng-edit__head">
+        <PlaylistArt p={p} size={48} />
+        <div className="mng-edit__who">
+          <h2 className="col-trunc" title={p.title}>{p.title}</h2>
+          <span className="faint">Playlist · {playlistLine(p, false) || "Empty so far"}</span>
+        </div>
+        <button type="button" className="mng-panel__close" onClick={() => void close()} aria-label="Close"><Icon name="close" /></button>
+      </div>
+      <div className="mng-panel__body">
+        <label className="field"><span>Name</span>
+          <input type="text" value={title} maxLength={100} autoFocus aria-label="Playlist name" onChange={(e) => setTitle(e.target.value)} /></label>
+        <label className="field"><span>Description</span>
+          <textarea value={description} maxLength={4000} placeholder="What it is, when to play it, who made the cover…"
+            onChange={(e) => setDescription(e.target.value)} /></label>
+        <div className="mng-edit__pair">
+          <label className="field"><span>Genre</span>
+            <input type="text" value={genre} onChange={(e) => setGenre(e.target.value)} list="lc-pl-genres" placeholder="Pick or type a genre" />
+            <datalist id="lc-pl-genres">{GENRES.map((g) => <option key={g} value={g} />)}</datalist></label>
+          <label className="field"><span>Privacy</span>
+            <select value={sharing} onChange={(e) => setSharing(e.target.value as Sharing)}>
+              <option value="public">Public</option>
+              <option value="private">Private</option>
+            </select></label>
+        </div>
+        <div className="field"><span>Tags</span>
+          <div className="tagbox" onClick={(e) => (e.currentTarget.querySelector("input") as HTMLInputElement | null)?.focus()}>
+            {tags.map((t) => (
+              <span key={t} className="tagbox__tag">{t}
+                <button type="button" aria-label={`Remove ${t}`} onClick={() => setTags((prev) => prev.filter((x) => x !== t))}><Icon name="close" size={11} /></button>
+              </span>
+            ))}
+            <input type="text" value={tagDraft} onChange={(e) => setTagDraft(e.target.value)} onKeyDown={onTagKey}
+              onBlur={() => { addTag(tagDraft); setTagDraft(""); }}
+              placeholder={tags.length ? "Add a tag" : "Type a tag and press Enter"} aria-label="Add a tag" />
+          </div>
+        </div>
+        <div className="mng-cover">
+          <div className="field"><span>Cover</span></div>
+          <div className="art-row">
+            <PlaylistArt p={p} size={56} />
+            <Button sm onClick={() => void changeCover()} disabled={artBusy || busy}>{artBusy ? "Working…" : "Change cover…"}</Button>
+            <span className="faint pl-cover-note">{p.artwork_url ? "" : "Until you pick one, SoundCloud shows the first song’s cover."}</span>
+          </div>
+        </div>
+        {err && <div className="mng-err"><Icon name="alert" />{err}</div>}
+      </div>
+      <div className="mng-panel__foot">
+        <span className="mng-edit__hint faint">{dirty ? "Unsaved changes" : ""}</span>
+        <Button sm onClick={() => void close()} disabled={busy}>Cancel</Button>
+        <Button kind="primary" sm onClick={() => void save()} disabled={busy || !dirty || !title.trim()}
+          title={`Save (${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}S)`}>{busy ? "Saving…" : "Save"}</Button>
+      </div>
+    </Overlay>
   );
 }
 

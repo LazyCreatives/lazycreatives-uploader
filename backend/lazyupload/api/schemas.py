@@ -144,10 +144,14 @@ class PlaylistCreate(BaseModel):
 
 
 class PlaylistUpdate(BaseModel):
-    """Rename, change privacy, or replace the ordered track list. None = unchanged."""
+    """Change details (name, description, genre, tags, privacy), or replace the ordered
+    track list. None = unchanged."""
     title: str | None = Field(None, min_length=1, max_length=100)
     sharing: Sharing | None = None
     track_ids: list[int] | None = Field(None, max_length=500)
+    description: str | None = Field(None, max_length=4000)
+    genre: str | None = Field(None, max_length=100)
+    tags: list[str] | None = Field(None, max_length=50)
 
 
 class PlaylistAdd(BaseModel):

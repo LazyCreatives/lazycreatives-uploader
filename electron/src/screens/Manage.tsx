@@ -886,7 +886,7 @@ function TrackCard({ track, defaultArt, selected, onCheck, onEdit, onContextMenu
 
 // Shared overlay shell: side-drawer on wide windows, centered modal on narrow ones.
 // `forceModal` always centers (used by the delete confirmation).
-function Overlay({ children, onClose, forceModal, label }: {
+export function Overlay({ children, onClose, forceModal, label }: {
   children: React.ReactNode; onClose: () => void; forceModal?: boolean; label: string;
 }) {
   // Tab stays inside the panel while it's open; focus goes back to the row after.
@@ -916,7 +916,8 @@ function Overlay({ children, onClose, forceModal, label }: {
   );
 }
 
-function EditPanel({ track, defaultArt, onClose, onSaved }: {
+// A track's page: the panel that edits it. Also opens over a playlist.
+export function EditPanel({ track, defaultArt, onClose, onSaved }: {
   track: Track; defaultArt: string | null; onClose: () => void; onSaved: (t: Track) => void;
 }) {
   const [title, setTitle] = useState(track.title);

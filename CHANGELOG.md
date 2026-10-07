@@ -14,6 +14,14 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## 0.2.5 (7 October 2026)
+
+### New
+- **Edit a playlist's details.** An Edit details button on each playlist page changes its name, description, genre, tags, privacy and cover on SoundCloud. The songs in it stay as they are.
+
+### Better
+- **A song opened from a playlist stays on the playlist.** Its panel opens over the playlist page, and closing it leaves you on the playlist instead of Your tracks.
+
 ## 0.2.4 (7 October 2026)
 
 ### Better

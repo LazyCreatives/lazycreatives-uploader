@@ -17,7 +17,7 @@ import { Upload } from "./screens/Upload";
 import { History } from "./screens/History";
 import { Playlists } from "./screens/Playlists";
 import { PlaylistPickHost } from "./components/PlaylistPick";
-import { loadPlaylists, playlistsNow } from "./playlists";
+import { loadPlaylists, playlistPlace, playlistsNow, songOnPlaylist } from "./playlists";
 import { Settings } from "./screens/Settings";
 import { WhatsNewHost, openWhatsNew } from "./components/WhatsNew";
 import { ConfirmHost, ContextMenuHost, DropZone, ShortcutsPanel, ToastHost, toast, toastWarn } from "./components/Desktop";
@@ -68,6 +68,16 @@ export default function App() {
   // a track opens in a panel over its list, so the list stays where it was underneath
   const openTrack = (id: string) => nav.go({ tab: "manage", sub: id }, { overlay: true });
   const openPlaylist = (id: number | "new") => setTab("playlists", String(id));
+  // A song clicked on a playlist opens in the same panel, over the playlist; closing
+  // it steps back to the playlist.
+  const onPlaylist = playlistPlace(tab === "playlists" ? sub : null);
+  const openPlaylistSong = (id: string) => {
+    if (onPlaylist.open) nav.go({ tab: "playlists", sub: songOnPlaylist(onPlaylist.open, id) }, { overlay: true });
+  };
+  const closePlaylistSong = () => {
+    const p = nav.prev;
+    if (p && p.tab === "playlists" && (p.sub ?? null) === onPlaylist.open) nav.back(); else setTab("playlists", onPlaylist.open);
+  };
   // Close an open track: step back if that's where we came from (its list, or the
   // playlist it was opened from), else stay on the list.
   const closeSub = () => {
@@ -274,7 +284,8 @@ export default function App() {
               <Manage ent={ent} cfg={cfg} openTrack={sub}
                 onOpenTrack={openTrack} onCloseTrack={closeSub} />
             ) : tab === "playlists" ? (
-              <Playlists open={sub} onOpen={openPlaylist} onClose={() => setTab("playlists")} onOpenTrack={openTrack} />
+              <Playlists open={onPlaylist.open} song={onPlaylist.track} onOpen={openPlaylist} onClose={() => setTab("playlists")}
+                onOpenTrack={openPlaylistSong} onCloseTrack={closePlaylistSong} />
             ) : tab === "history" ? (
               <History />
             ) : (
