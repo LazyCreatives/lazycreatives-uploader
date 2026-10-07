@@ -324,11 +324,26 @@ def normalize_comment(raw: dict) -> dict:
             "created_at": _iso_created_at(raw.get("created_at"))}
 
 
+def _num_id(raw: dict):
+    """The number SoundCloud knows an item by. Newer replies may carry only the
+    "urn" label ("soundcloud:tracks:123"), so fall back to the number at its end."""
+    if raw.get("id") is not None:
+        return raw.get("id")
+    m = re.search(r":(\d+)$", str(raw.get("urn") or ""))
+    return int(m.group(1)) if m else None
+
+
+def _urn(kind: str, item_id) -> str:
+    """SoundCloud's label for an item, e.g. soundcloud:tracks:123. Playlist changes
+    must name their tracks this way; the old {"id": 123} form is refused."""
+    return f"soundcloud:{kind}:{int(item_id)}"
+
+
 def normalize_track(raw: dict) -> dict:
     """Flatten a SoundCloud (or mock) track into the shape the UI manages."""
     dur_ms = raw.get("duration") or 0
     return {
-        "id": raw.get("id"),
+        "id": _num_id(raw),
         "title": raw.get("title") or "",
         "description": raw.get("description") or "",
         "sharing": raw.get("sharing") or "public",
@@ -355,7 +370,7 @@ def normalize_playlist(raw: dict) -> dict:
     a set can hold anyone's tracks."""
     tracks = []
     for t in raw.get("tracks") or []:
-        if not isinstance(t, dict) or t.get("id") is None:
+        if not isinstance(t, dict) or _num_id(t) is None:
             continue
         nt = normalize_track(t)
         nt["user"] = (t.get("user") or {}).get("username") or ""
@@ -364,7 +379,7 @@ def normalize_playlist(raw: dict) -> dict:
     if dur_ms is None:
         dur_ms = sum(int(t.get("duration") or 0) for t in raw.get("tracks") or [] if isinstance(t, dict))
     return {
-        "id": raw.get("id"),
+        "id": _num_id(raw),
         "title": raw.get("title") or "",
         "description": raw.get("description") or "",
         "sharing": raw.get("sharing") or "public",
@@ -389,7 +404,7 @@ def _playlist_body(title=None, sharing=None, track_ids=None, description=None) -
     if description is not None:
         body["description"] = description
     if track_ids is not None:
-        body["tracks"] = [{"id": int(i)} for i in track_ids]
+        body["tracks"] = [{"urn": _urn("tracks", i)} for i in track_ids]
     return {"playlist": body}
 
 
@@ -589,7 +604,7 @@ class SoundCloudClient:
         return out[:max_total]
 
     def get_playlist(self, playlist_id: int) -> dict:
-        r = requests.get(f"{API_BASE}/playlists/{playlist_id}", headers=self._headers(),
+        r = requests.get(f"{API_BASE}/playlists/{_urn('playlists', playlist_id)}", headers=self._headers(),
                          params={"show_tracks": "true"}, timeout=30)
         _raise_for_status(r)
         return normalize_playlist(r.json())
@@ -601,13 +616,13 @@ class SoundCloudClient:
         return normalize_playlist(r.json())
 
     def update_playlist(self, playlist_id: int, title=None, sharing=None, track_ids=None) -> dict:
-        r = requests.put(f"{API_BASE}/playlists/{playlist_id}", headers=self._headers(),
+        r = requests.put(f"{API_BASE}/playlists/{_urn('playlists', playlist_id)}", headers=self._headers(),
                          json=_playlist_body(title, sharing, track_ids), timeout=30)
         _raise_for_status(r)
         return normalize_playlist(r.json())
 
     def delete_playlist(self, playlist_id: int) -> None:
-        r = requests.delete(f"{API_BASE}/playlists/{playlist_id}", headers=self._headers(), timeout=30)
+        r = requests.delete(f"{API_BASE}/playlists/{_urn('playlists', playlist_id)}", headers=self._headers(), timeout=30)
         _raise_for_status(r)
 
 

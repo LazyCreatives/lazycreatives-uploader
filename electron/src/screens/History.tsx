@@ -1,15 +1,15 @@
 import { Fragment, useEffect, useState } from "react";
-import { makeApi, openExternal, revealPath } from "../api";
-import { openMenu } from "../components/Desktop";
+import { makeApi, openExternal, revealPath, saveRenderedCover } from "../api";
+import { coverPng } from "../coverRender";
+import { openMenu, toast, toastWarn } from "../components/Desktop";
 import { copyText } from "../desktop";
-import type { UploadRow } from "../types";
+import type { Sharing, UploadRow } from "../types";
 import { Button, fmtBytes, fmtCount, fmtWhen, PageHeader } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Cover } from "../components/Cover";
 import { PlayButton, SongWave } from "../components/Player";
 import { EmptyState } from "../components/SlothSpot";
 import { genreColor, useLook } from "../look";
-import { RowSize } from "../components/Marks";
 import { useDensity, type Density } from "../marks";
 import { rowKey } from "../components/a11y";
 
@@ -40,7 +40,10 @@ export function dayLabel(s: string, now: Date = new Date()): string {
 // One fixed-column table of uploads; Home shows the latest few with the same columns.
 // Each row carries the mix's cover, a play button and its waveform.
 // With `byDay`, rows sit under a heading per day and the When column shows just the time.
-export function UploadTable({ rows, byDay, density = "comfortable" }: { rows: UploadRow[]; byDay?: boolean; density?: Density }) {
+export function UploadTable({ rows, byDay, density = "comfortable", onRetry, retrying }: {
+  rows: UploadRow[]; byDay?: boolean; density?: Density;
+  onRetry?: (r: UploadRow) => void; retrying?: Set<number>;
+}) {
   let lastDay = "";
   return (
     <div className={`table table--crate rows--${density}`}>
@@ -59,10 +62,11 @@ export function UploadTable({ rows, byDay, density = "comfortable" }: { rows: Up
           cover: r.project_match || r.title, genre: r.project_genre };
         return (<Fragment key={r.id}>
           {heading}
-          <div className="row cols history-cols" onContextMenu={(e) => openMenu(e, [
+          <div className={`row cols history-cols${r.status === "error" ? " row--failed" : ""}`} onContextMenu={(e) => openMenu(e, [
             ...(r.permalink_url ? [
               { label: "Open on SoundCloud", onClick: () => openExternal(r.permalink_url!) },
               { label: "Copy SoundCloud link", onClick: () => { copyText(r.permalink_url!); } }, "-" as const] : []),
+            ...(onRetry && canRetry(r, rows) ? [{ label: "Try again", onClick: () => onRetry(r), disabled: retrying?.has(r.id) }, "-" as const] : []),
             { label: "Show the file", onClick: () => revealPath(r.file_path) },
             { label: "Copy file path", onClick: () => { copyText(r.file_path); } },
           ])}>
@@ -71,7 +75,13 @@ export function UploadTable({ rows, byDay, density = "comfortable" }: { rows: Up
             <Cover name={meta.cover} genre={meta.genre} size={36} label={false} />
             <div className="row__main">
               <div className="row__title" title={r.title}>{r.title}</div>
-              {r.error && <div className="row__sub" style={{ color: "var(--danger)" }} title={r.error}>{r.error}</div>}
+              {r.error && <div className="row__sub hist-err">
+                {onRetry && canRetry(r, rows) && (
+                  <button type="button" className="btn btn--ghost btn--sm mixstate__retry" disabled={retrying?.has(r.id)}
+                    onClick={() => onRetry(r)}>{retrying?.has(r.id) ? "Posting…" : "Try again"}</button>
+                )}
+                <span className="col-trunc" title={r.error}>{r.error}</span>
+              </div>}
             </div>
             <SongWave path={r.file_path} meta={meta} height={22} />
             <span className={`pill ${st.pill}`}>{st.label}</span>
@@ -90,6 +100,15 @@ export function UploadTable({ rows, byDay, density = "comfortable" }: { rows: Up
       })}
     </div>
   );
+}
+
+// A failed post can be tried again unless the same file has gone up since.
+// Rows are newest first, so anything before this one in the list is later.
+export function canRetry(r: UploadRow, rows: UploadRow[]): boolean {
+  if (r.status !== "error") return false;
+  const i = rows.indexOf(r);
+  return !rows.slice(0, i < 0 ? 0 : i).some((x) => x.status === "uploaded"
+    && (x.file_path === r.file_path || (!!r.file_hash && x.file_hash === r.file_hash)));
 }
 
 // "October 2026": the month a post went up, for the Sleeve look's back catalogue.
@@ -155,12 +174,42 @@ const PAGE = 100;
 
 export function History() {
   const [look] = useLook();
-  const [density, setDensity] = useDensity("history");
+  const [density] = useDensity("history");   // set in Settings > Lists
   const [rows, setRows] = useState<UploadRow[] | null>(null);
   const [limit, setLimit] = useState(PAGE);
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<ResultFilter>("all");
-  useEffect(() => { api.history(limit).then(setRows).catch(() => setRows((r) => r ?? [])); }, [limit]);
+  const load = () => api.history(limit).then(setRows).catch(() => setRows((r) => r ?? []));
+  useEffect(() => { void load(); }, [limit]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const [retrying, setRetrying] = useState<Set<number>>(new Set());
+
+  // Post a failed mix again, as it was meant to go up: same title, same privacy,
+  // with the cover it shows. The service still checks it isn't on SoundCloud already.
+  async function retry(r: UploadRow) {
+    setRetrying((s) => new Set(s).add(r.id));
+    const done = () => setRetrying((s) => { const n = new Set(s); n.delete(r.id); return n; });
+    try {
+      const name = r.project_match || r.title;
+      const art = await coverPng(name, r.project_genre).then((png) => saveRenderedCover(name, png)).catch(() => undefined);
+      const { job_id } = await api.upload([{
+        path: r.file_path, name: r.title, title: r.title, sharing: r.sharing as Sharing,
+        genre: r.project_genre || undefined, file_hash: r.file_hash, size: r.size, artwork_path: art,
+      }]);
+      const tick = async () => {
+        const job = await api.jobStatus(job_id).catch(() => null);
+        if (job && (job.state === "running" || job.state === "cancelling")) { window.setTimeout(tick, 1000); return; }
+        done(); void load();
+        const res = job?.result;
+        if (job?.state === "done" && res?.ok_count) toast(`${r.title} is on SoundCloud now.`);
+        else if (job?.state === "done" && res?.skipped_count) toast(`${r.title} was already on SoundCloud, so it wasn’t posted again.`);
+        else toastWarn(`${r.title} didn’t go up this time. ${job?.error ?? "Its reason is on the new row."}`);
+      };
+      window.setTimeout(tick, 1000);
+    } catch (e) {
+      done();
+      toastWarn(`Couldn’t post ${r.title} again: ${String((e as Error).message)}`);
+    }
+  }
 
   const q = query.trim().toLowerCase();
   const matching = (rows ?? []).filter((r) => !q || [r.title, r.project_match, r.project_genre, r.sharing]
@@ -168,6 +217,9 @@ export function History() {
   const count = (k: ResultFilter) => k === "all" ? matching.length : matching.filter((r) => r.status === k).length;
   const shown = result === "all" ? matching : matching.filter((r) => r.status === result);
   const more = rows !== null && rows.length >= limit;
+  // Only the results that happened get a button; with nothing but posts there's no choice to make.
+  const kinds = ([["all", "All"], ["uploaded", "Posted"], ["error", "Failed"], ["skipped", "Skipped"]] as [ResultFilter, string][])
+    .filter(([k]) => k === "all" || k === result || (rows ?? []).some((r) => r.status === k));
 
   return (
     <div>
@@ -187,18 +239,17 @@ export function History() {
             {query && <button type="button" className="find__x" aria-label="Clear search"
               onClick={() => setQuery("")}><Icon name="close" size={13} /></button>}
           </label>
-          <div className="seg" role="group" aria-label="Result">
-            {([["all", "All"], ["uploaded", "Posted"], ["error", "Failed"], ["skipped", "Skipped"]] as [ResultFilter, string][]).map(([k, label]) => (
+          {kinds.length > 2 && <div className="seg" role="group" aria-label="Result">
+            {kinds.map(([k, label]) => (
               <button key={k} type="button" className={`seg__opt${result === k ? " seg__opt--on" : ""}`}
                 aria-pressed={result === k} onClick={() => setResult(k)}>
                 {label} <span className="find__n">{fmtCount(count(k))}</span>
               </button>
             ))}
-          </div>
-          {look === "crate" && <RowSize value={density} onChange={setDensity} />}
+          </div>}
         </div>
         {shown.length > 0
-          ? look === "sleeve" ? <BackCatalogue rows={shown} /> : <UploadTable rows={shown} byDay density={density} />
+          ? look === "sleeve" ? <BackCatalogue rows={shown} /> : <UploadTable rows={shown} byDay density={density} onRetry={(r) => void retry(r)} retrying={retrying} />
           : <div className="table"><EmptyState pose="searching" title="Nothing matches" say="Looked everywhere. Nothing.">
               Try fewer letters, or pick All.
             </EmptyState></div>}

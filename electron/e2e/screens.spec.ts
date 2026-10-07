@@ -1,9 +1,10 @@
 // Picture tests for LazyCreatives Uploader: start the real app, then take a picture
-// of each main screen in both looks and compare it with the saved one.
+// of each main screen and compare it with the saved one. (Uploader has one look,
+// Crate; Your tracks also has a Covers view.)
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { MIXES_DIR, closeApp, launchApp, type RunningApp } from "./app";
 
-const LOOKS = ["crate", "sleeve"] as const;
+const LOOKS = ["crate"] as const;
 type Look = (typeof LOOKS)[number];
 const SCREENS = ["home", "upload", "manage", "history", "settings"] as const;
 
@@ -104,4 +105,10 @@ test("main screens", async () => {
       });
     }
   }
+  await test.step("manage, Covers view", async () => {
+    const page = await open("crate", "manage");
+    await page.locator('[aria-label="Covers"]').first().click();
+    await snap(page, "manage-covers");
+    await page.locator('[aria-label="Rows"]').first().click();
+  });
 });

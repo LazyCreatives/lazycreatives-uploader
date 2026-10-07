@@ -6,8 +6,10 @@ import { CoverShelf } from "../components/CoverShelf";
 import { toast } from "../components/Desktop";
 import { Folders } from "../components/Folders";
 import { ConnectPanel } from "../components/Connect";
-import { LookPicker, ThemePicker } from "../components/LookPicker";
+import { ThemePicker } from "../components/LookPicker";
 import { GlyphPicker } from "../components/Marks";
+import { DENSITIES, useDensity } from "../marks";
+import { useAuditionMode } from "../audition";
 import { UpdateCheck } from "../components/UpdateCheck";
 
 const api = makeApi();
@@ -33,6 +35,10 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
   const [licenseKey, setLicenseKey] = useState("");
   const [licenseError, setLicenseError] = useState<string | null>(null);
   const [atLogin, setAtLogin] = useState(false);
+  // Row spacing for the Crate lists (Your tracks and History share it) and hover previews.
+  const [rows, setTrackRows] = useDensity("tracks");
+  const [, setHistoryRows] = useDensity("history");
+  const [preview, setPreview] = useAuditionMode();
 
   useEffect(() => { getOpenAtLogin().then(setAtLogin).catch(() => {}); }, []);
 
@@ -97,15 +103,30 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
       {saveError && <div className="banner banner--warn">{saveError}</div>}
 
       <div className="card">
-        <h2>Look</h2>
-        <p className="sub" style={{ margin: "0 0 12px" }}>How the app is laid out. Switch any time; nothing else changes.</p>
-        <LookPicker />
-        <h3 style={{ margin: "18px 0 4px" }}>Light or dark</h3>
-        <p className="sub" style={{ margin: "0 0 10px" }}>Ink or paper, in either look. Match my computer follows your computer's own setting.</p>
+        <h2>Appearance</h2>
+        <h3 style={{ margin: "0 0 4px" }}>Light or dark</h3>
+        <p className="sub" style={{ margin: "0 0 10px" }}>Ink or paper. Match my computer follows your computer's own setting.</p>
         <ThemePicker />
         <h3 style={{ margin: "18px 0 4px" }}>Rating mark</h3>
         <p className="sub" style={{ margin: "0 0 10px" }}>What ratings are drawn with. Rate a track from its row in Your tracks, or right-click it.</p>
         <GlyphPicker />
+      </div>
+
+      <div className="card">
+        <h2>Lists</h2>
+        <h3 style={{ margin: "0 0 4px" }}>Row spacing</h3>
+        <p className="sub" style={{ margin: "0 0 10px" }}>How tall the rows are in Your tracks and History.</p>
+        <div className="seg" role="radiogroup" aria-label="Row spacing">
+          {DENSITIES.map((d) => (
+            <button key={d.key} type="button" role="radio" aria-checked={rows === d.key}
+              className={`seg__opt${rows === d.key ? " seg__opt--on" : ""}`}
+              onClick={() => { setTrackRows(d.key); setHistoryRows(d.key); }}>{d.label}</button>
+          ))}
+        </div>
+        <label className="toolchk" style={{ marginTop: 18 }}>
+          <input type="checkbox" checked={preview} onChange={(e) => setPreview(e.target.checked)} />
+          Preview on hover: point at a song in a list to hear a few seconds of it
+        </label>
       </div>
 
       <div className="card">

@@ -164,11 +164,11 @@
 /* the title column keeps room for a name at the default window size; the waveform
    and project columns give way first */
 /* stripe · tick · play · cover · track · rating · waveform · from project · plays · score · privacy · actions */
-.track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) 78px minmax(48px, 1fr) minmax(104px, 1fr) 56px 44px 72px 92px; }
+.track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) 78px minmax(48px, 1fr) minmax(104px, 1fr) 56px 72px 92px; }
 .table--crate .track-cols .mixrow__check { margin: 0; }
 /* narrower windows: rating, waveform and project step out (the project shows in the edit panel) */
 @media (max-width: 1099px) {
-  .track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) 56px 44px 72px 92px; }
+  .track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) 56px 72px 92px; }
   .track-cols > :nth-child(6), .track-cols > :nth-child(7), .track-cols > :nth-child(8) { display: none; }
 }
 
@@ -317,3 +317,14 @@
 .trackhero--sleeve .proj-spec { flex-direction: column; gap: 8px; }
 .trackhero--sleeve .proj-spec > div { padding: 0; border-left: 0; }
 .trackhero--sleeve .proj-spec dd { font-size: 30px; }
+
+/* ---- Calmer Your tracks: filters fold under one button, row buttons show on hover ---- */
+.find__filters { display: inline-flex; align-items: center; gap: 6px; }
+.find__filters--on .up-tools__chev { transform: rotate(180deg); }
+.find__filters .find__n { color: var(--accent); }
+.track-cols .col-act { opacity: 0; transition: opacity .12s; }
+.track-cols:hover .col-act, .track-cols:focus-within .col-act { opacity: 1; }
+@media (hover: none) { .track-cols .col-act { opacity: 1; } }
+/* Public is the usual, so it's plain; Private keeps its dot */
+.pill.pill--quiet { background: none; color: var(--text-faint); }
+.pill.pill--quiet::before { display: none; }

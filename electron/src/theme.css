@@ -34,13 +34,14 @@
 .info::before { content: ""; position: absolute; inset: -6px; border-radius: 50%; }
 .draftbtn { min-height: 24px; padding: 0 2px; }
 /* same first five columns as Your tracks: stripe, tick, play, cover, name */
-.mix-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) minmax(56px, 1fr) minmax(90px, 1fr) 52px 64px 84px 128px; }
+.mix-cols { --cols: 4px 16px 28px 36px minmax(160px, 2fr) minmax(120px, 1.6fr) 52px 120px 32px; }
 .mix-cols .cover { border-radius: 4px; }
 /* a long genre is cut short inside the line under the name, not chopped mid-letter */
 .row__sub .mix-genre { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 /* WAV / MP3 as a small tag after the name */
 .mix-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .mix-title .col-trunc { min-width: 0; }
+.mix-title__edit { flex: 1; min-width: 0; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--accent-2); border-radius: 4px; padding: 0 6px; margin: 0; outline: none; }
 .fmt-badge.fmt-badge--tag { height: 16px; padding: 0 4px; font-size: 10.5px; border-radius: 3px; color: var(--text-faint); }
 /* long lists: rows and cards off screen aren't drawn until they scroll into view */
 .table > .row.mix-cols:not(.cols-head) { content-visibility: auto; contain-intrinsic-size: auto 52px; }
@@ -105,8 +106,8 @@
 @media (max-width: 1099px) {
   .history-cols { --cols: 4px 28px 36px minmax(130px, 2fr) 84px 72px 110px 32px; }
   .history-cols > :nth-child(5), .history-cols > :nth-child(8) { display: none; }
-  .mix-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) minmax(90px, 1fr) 84px 128px; }
-  .mix-cols > :nth-child(6), .mix-cols > :nth-child(8), .mix-cols > :nth-child(9) { display: none; }
+  .mix-cols { --cols: 4px 16px 28px 36px minmax(160px, 2fr) 52px 120px 32px; }
+  .mix-cols > :nth-child(6) { display: none; }
 }
 
 /* Settings: each section is a row — its name on the left, its controls on the right */
@@ -166,7 +167,44 @@
 .lastlook__name svg { flex: none; color: var(--accent-2); }
 .lastlook__mix--look .lastlook__name svg { color: var(--warn); }
 .lastlook__name .faint { margin-left: auto; font-weight: 400; font-size: 12px; }
+.lastlook__title { flex: 1; min-width: 0; font: inherit; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 1px 6px; margin: -2px 0 -2px -6px; text-overflow: ellipsis; }
+.lastlook__title:hover { border-color: var(--border-strong); }
+.lastlook__title:focus { border-color: var(--accent-2); background: var(--bg); outline: none; }
 .lastlook__check { padding-left: 22px; font-size: 12.5px; line-height: 1.45; }
 .lastlook__check--warn { color: var(--warn); }
 .lastlook__check--tip { color: var(--text-dim); }
 .lastlook__fine { padding-left: 22px; font-size: 12px; color: var(--text-faint); }
+
+/* ---- Calmer Uploader (Impeccable pass, Oct 2026): fewer things on screen at once ---- */
+/* Upload: one search box, a few words saying how the post goes up, and one button
+   that unfolds the post settings */
+.up-tools { gap: 12px; }
+.up-tools .upload-search { width: 320px; }
+.up-tools__plan { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--text-faint); }
+.up-tools__opts { display: inline-flex; align-items: center; gap: 7px; flex: none; }
+.up-tools__chev { transition: transform .18s var(--ease-glide, ease); }
+.up-tools__opts--on .up-tools__chev { transform: rotate(180deg); }
+.up-opts {
+  display: flex; flex-wrap: wrap; align-items: start; gap: 14px 28px; margin: -4px 0 16px; padding: 14px 16px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius, 8px); background: var(--surface);
+}
+.up-opt { display: grid; gap: 6px; }
+.up-opt__lbl { font-size: 12px; color: var(--text-faint); }
+.up-opt__row { display: flex; align-items: center; gap: 8px; min-height: 36px; }
+.up-opt--end { margin-left: auto; display: flex; align-self: end; min-height: 36px; }
+.up-opts__note { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--text-faint); }
+/* the more button at the end of a row shows on hover, like a record sleeve's spine */
+.mix-more { width: 28px; height: 28px; opacity: 0; transition: opacity .12s; }
+.row:hover .mix-more, .row:focus-within .mix-more, .mix-more:focus-visible { opacity: 1; }
+@media (hover: none) { .mix-more { opacity: 1; } }
+.pill.pill--draft { --dot: var(--warn); color: var(--text-dim); }
+/* "Already on SoundCloud": folded away until asked for */
+.mix-split--btn { background: none; border: 0; cursor: pointer; text-align: left; font: inherit; }
+button.mix-split--btn:not(.row) { padding: 0; font-size: 15px; font-weight: 600; }
+.mix-split--btn em { margin-left: auto; font-style: normal; font-size: 12px; color: var(--text-faint); }
+.mix-split--btn:hover em, .mix-split--btn:hover { color: var(--text); }
+.table--crate > .row.mix-split--btn { width: 100%; display: flex; }
+.settings .seg[aria-label="Row spacing"] { width: fit-content; }
+.table--crate > .row.row--failed { background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.hist-err { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--danger); }
+.hist-err .btn { flex: none; padding-block: 0; }

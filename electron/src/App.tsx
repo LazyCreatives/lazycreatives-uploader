@@ -3,7 +3,7 @@ import { makeApi, makeCoverSource, readImage } from "./api";
 import { Nav, type Tab } from "./components/Nav";
 import { LcBrand } from "./components/LcBrand";
 import { PlayerBar, togglePlaying } from "./components/Player";
-import { currentTheme, genreColor, getLook, setLook, toggleTheme, useGenreColors } from "./look";
+import { currentTheme, genreColor, toggleTheme, useGenreColors } from "./look";
 import { PaletteHost, openPalette, type PaletteItem } from "./components/Palette";
 import { smartCrates } from "./smart";
 import { IS_MAC } from "./desktop";
@@ -92,7 +92,6 @@ export default function App() {
     const pages: [Tab, string, PaletteItem["icon"]][] = [["home", "Home", "home"], ["upload", "Upload", "upload"], ["manage", "Your tracks", "library"], ["playlists", "Playlists", "disc"], ["history", "History", "history"], ["settings", "Settings", "settings"]];
     const list = paletteTracks.current;
     const genres = [...new Set(list.map((t) => (t.genre || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-    const other = getLook() === "crate" ? "sleeve" : "crate";
     return [
       // the last few opened, ready before anything is typed
       ...getRecents().slice(0, 4).map((r) => ({ id: `recent-${r.id}`, group: "Recently opened", label: r.name, cover: { name: r.cover, genre: r.genre },
@@ -101,7 +100,6 @@ export default function App() {
       ...pages.map(([t, label, icon], i) => ({ id: `go-${t}`, group: "Go to", label, icon, keys: `${mod} + ${i + 1}`, run: () => setTab(t) })),
       { id: "upload", group: "Actions", label: "Post a mix", icon: "upload", words: ["upload", "soundcloud", "post"], run: () => setTab("upload") },
       { id: "new-playlist", group: "Actions", label: "New playlist", icon: "plus", words: ["playlist", "set", "make", "create"], run: () => openPlaylist("new") },
-      { id: "look", group: "Actions", label: `Switch to the ${other === "sleeve" ? "Sleeve" : "Crate"} look`, icon: "palette", words: ["look", "theme", "crate", "sleeve"], run: () => setLook(other) },
       { id: "theme", group: "Actions", label: `Switch to ${currentTheme() === "light" ? "dark" : "light"}`, icon: "palette", words: ["theme", "light", "dark", "mode"], run: toggleTheme },
       { id: "companion", group: "Actions", label: "Open the narrow window", icon: "narrow", keys: COMPANION_KEYS,
         words: ["companion", "small", "side", "beside", "float", "on top", "mini", "drop"], run: openCompanion },

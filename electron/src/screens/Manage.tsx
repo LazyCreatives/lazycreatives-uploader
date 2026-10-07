@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { makeApi, openExternal, pickImage, readImage, revealPath } from "../api";
 import { askConfirm, CopyButton, Exit, openMenu, type MenuItem } from "../components/Desktop";
-import { Rating, RowSize, ratingMenu } from "../components/Marks";
+import { Rating, ratingMenu } from "../components/Marks";
 import { ratingOf, useDensity, useRatings } from "../marks";
 import { pickCrateColor } from "../components/GenrePick";
 import { copyText, keep, recall } from "../desktop";
@@ -10,11 +10,10 @@ import { Button, PageHeader, SubLine, ProBadge, fmtDuration, fmtCount, parseTags
 import { Icon } from "../components/Icon";
 import { Art, PlayButton, SongWave, useAudition, useSongLength, type SongMeta } from "../components/Player";
 import type { WaveMark } from "../components/Wave";
-import { AuditionToggle } from "../components/Audition";
 import { GENRES, genreColor, useLook } from "../look";
 import { EmptyState } from "../components/SlothSpot";
 import {
-  BPM_BANDS, FIRST_DESC, LOW_SCORE, NO_FILTERS, applyFilters, dawName, describeFilters, yearOf, isFiltered, isPrivate, pickerOptions,
+  BPM_BANDS, FIRST_DESC, LOW_SCORE, NO_FILTERS, applyFilters, dawName, describeFilters, extraFilterCount, yearOf, isFiltered, isPrivate, pickerOptions,
   privacyCounts, sortTracks, type PrivacyFilter, type SortKey, type TrackFilters,
 } from "../trackFilter";
 import { rowKey, useDialogFocus } from "../components/a11y";
@@ -23,6 +22,8 @@ import { ColumnBrowse, FacetChips, NO_GENRE, facets } from "../components/Browse
 import { TrackPlaylists, pickPlaylist } from "../components/PlaylistPick";
 import { NoteOpened } from "../components/Recents";
 import "../manage.css";
+import { Collection } from "../components/Collection";
+import { collectionOf } from "./Home";
 
 const api = makeApi();
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
@@ -116,7 +117,9 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   openTrack: string | null; onOpenTrack: (id: string) => void; onCloseTrack: () => void;
 }) {
   const [look] = useLook();
-  const [rows, setRows] = useDensity("tracks");
+  const [rows] = useDensity("tracks");   // set in Settings > Lists
+  // The filter pickers stay folded under one button until asked for (or in use).
+  const [filtersOpen, setFiltersOpen] = useState(false);
   useRatings();  // redraw (and re-sort) when a rating changes
   const canBulk = ent.features.batch;
 
@@ -203,12 +206,17 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   const counts = useMemo(() => privacyCounts(tracks || [], active), [tracks, active]);
   const options = useMemo(() => pickerOptions(tracks || []), [tracks]);
   const anyFilter = isFiltered(filters);
+  const extraOn = extraFilterCount(filters);
+  const showFilters = filtersOpen || extraOn > 0;
   const years = useMemo(() => [...new Set((tracks || []).map(yearOf).filter(Boolean))].sort().reverse(), [tracks]);
   const anyRated = rated.replace(/[0,]/g, "") !== "";
   // Crate: the usual list, or Genre > Year > Track columns
-  const [view, setViewState] = useState<"list" | "columns">(() => recall("lc-tracks-layout", "list", (v) => v === "list" || v === "columns"));
-  const setView = (v: "list" | "columns") => { keep("lc-tracks-layout", v); setViewState(v); };
+  // Rows, covers, or Genre > Year > Track columns
+  type View = "list" | "covers" | "columns";
+  const [view, setViewState] = useState<View>(() => recall<View>("lc-tracks-layout", "list", (v) => v === "list" || v === "covers" || v === "columns"));
+  const setView = (v: View) => { keep("lc-tracks-layout", v); setViewState(v); };
   const columns = look === "crate" && view === "columns";
+  const coverView = look === "sleeve" || view === "covers";
   // Genre and Year to browse by, counted over what the other filters leave
   const browse = useMemo(() => {
     const pool = applyFilters(tracks || [], { ...active, genre: "", year: "" });
@@ -403,7 +411,6 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
         sub={loading ? "Loading your SoundCloud…" : <>
           {`${fmtCount((tracks || []).length)} on SoundCloud`}
           {matchedCount ? ` · ${fmtCount(matchedCount)} linked to projects` : ""}
-          {" · change details, privacy or covers"}{canBulk ? " for many at once" : ""}
         </>}
         actions={<Button kind="quiet" onClick={load}><Icon name="refresh" />Refresh</Button>} />
 
@@ -447,11 +454,16 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
               aria-label={sortDesc ? "Sorted high to low" : "Sorted low to high"} title={sortDesc ? "High to low" : "Low to high"}>
               <Icon name={sortDesc ? "arrowDown" : "arrowUp"} />
             </button>
+            <button type="button" className={`btn btn--sm find__filters${showFilters ? " find__filters--on" : ""}`}
+              aria-expanded={showFilters} onClick={() => setFiltersOpen((o) => !(o || extraOn > 0))}
+              title={extraOn > 0 ? "Clear the filters to fold them away" : undefined}>
+              Filters{extraOn > 0 && <span className="find__n">{extraOn}</span>}
+              <Icon name="chevronDown" size={13} className="up-tools__chev" />
+            </button>
             {look === "crate" && (
               <div className="find__view">
-                {!columns && <RowSize value={rows} onChange={setRows} />}
                 <div className="seg seg--icons" role="radiogroup" aria-label="Show as">
-                  {([["list", "library", "List"], ["columns", "columns", "Genre, year, track columns"]] as const).map(([k, icon, label]) => (
+                  {([["list", "library", "Rows"], ["covers", "image", "Covers"], ["columns", "columns", "Genre, year, track columns"]] as const).map(([k, icon, label]) => (
                     <button key={k} type="button" role="radio" aria-checked={view === k} title={label} aria-label={label}
                       className={`seg__opt${view === k ? " seg__opt--on" : ""}`} onClick={() => setView(k)}><Icon name={icon} size={14} /></button>
                   ))}
@@ -459,7 +471,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
               </div>
             )}
           </div>
-          <div className="find__row">
+          {showFilters && <div className="find__row">
             {options.daws.length > 1 && (
               <select className={filters.daw ? "find__pick find__pick--on" : "find__pick"} value={filters.daw}
                 aria-label="DAW" onChange={(e) => setFilters({ daw: e.target.value })}>
@@ -515,22 +527,21 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
                 aria-pressed={filters.dupes} onClick={() => setFilters({ dupes: !filters.dupes })}
                 title="Same title uploaded in more than one format (e.g. FLAC + MP3)">Duplicates</button>
             )}
-            <span className="find__count">
-              {anyFilter
-                ? <>Showing <b>{fmtCount(filtered.length)}</b> of {fmtCount((tracks || []).length)} track{(tracks || []).length === 1 ? "" : "s"}</>
-                : <>{fmtCount((tracks || []).length)} track{(tracks || []).length === 1 ? "" : "s"}</>}
-            </span>
             {anyFilter && (
-              <button type="button" className="find__clear" onClick={clearFilters}>
+              <span className="find__count">
+                Showing <b>{fmtCount(filtered.length)}</b> of {fmtCount((tracks || []).length)} track{(tracks || []).length === 1 ? "" : "s"}
+              </span>
+            )}
+            {anyFilter && (
+              <button type="button" className="find__clear" onClick={() => { clearFilters(); setFiltersOpen(false); }}>
                 <Icon name="close" size={12} />Clear all
               </button>
             )}
-            <AuditionToggle />
-          </div>
+          </div>}
           <SmartBar scope="tracks" filters={filters} blank={NO_FILTERS} canSave={anyFilter}
             suggest={describeFilters} count={(f) => applyFilters(tracks || [], f).length}
             onPick={(f) => { if (f) { setFilters(f); setSearch(f.q.trim()); } else clearFilters(); }} />
-          {look === "sleeve" && (
+          {coverView && showFilters && (
             <FacetChips genres={browse.genres} years={browse.years} genre={filters.genre} year={filters.year}
               onGenre={(g) => setFilters({ genre: g })} onYear={(y) => setFilters({ year: y })} yearTitle="Posted in" />
           )}
@@ -586,7 +597,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
       )}
 
       {/* ---- list ---- */}
-      {pageItems.length > 0 && look === "sleeve" && <div className="sleeves track-sleeves">
+      {pageItems.length > 0 && coverView && <div className="sleeves track-sleeves">
         {pageItems.map((t) => (
           <TrackCard key={t.id} track={t} defaultArt={defaultArt}
             selected={selected.has(t.id)}
@@ -618,7 +629,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
             })}
         </ColumnBrowse>
       )}
-      {pageItems.length > 0 && look === "crate" && !columns && <div className={`table table--crate rows--${rows}`}>
+      {pageItems.length > 0 && look === "crate" && !columns && !coverView && <div className={`table table--crate rows--${rows}`}>
         <div className="row cols cols-head track-cols">
           <span /><span /><span /><span />
           <SortHead k="title" label="Track" sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
@@ -626,7 +637,6 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
           <span>Waveform</span>
           <SortHead k="project" label="From project" sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
           <SortHead k="plays" label="Plays" num sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
-          <SortHead k="seo" label="Score" num sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
           <span>Privacy</span><span />
         </div>
         {pageItems.map((t, i) => (
@@ -660,6 +670,11 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
             </span>
           )}
         </div>
+      )}
+
+      {/* ---- the whole catalogue in figures (moved here from Home) ---- */}
+      {!loading && (tracks || []).length > 0 && !anyFilter && (
+        <Collection data={collectionOf(tracks || [], (f) => setFilters({ ...NO_FILTERS, ...f }), (id) => onOpenTrack(id))} />
       )}
 
       {/* ---- edit drawer ---- */}
@@ -810,8 +825,7 @@ function TrackRow({ track, index, defaultArt, selected, onCheck, onQuickPrivacy,
       <SongWave path={t.local_path} scUrl={t.local_path ? null : t.waveform_url} meta={meta} height={24} />
       <ProjectCell track={t} />
       <span className="col-num">{t.playback_count != null ? t.playback_count.toLocaleString() : "—"}</span>
-      <span className="col-num"><SeoBadge seo={t.seo} /></span>
-      <button type="button" className={`pill ${priv ? "pill--private" : "pill--ok"} linkbtn`}
+      <button type="button" className={`pill ${priv ? "pill--private" : "pill--quiet"} linkbtn`}
         style={{ color: "var(--text-dim)" }}
         title={`Click to make ${next}`} aria-label={`${priv ? "Private" : "Public"}. Make ${next}`}
         onClick={(e) => { e.preventDefault(); onQuickPrivacy(next); }}>
@@ -845,9 +859,7 @@ function TrackCard({ track, defaultArt, selected, onCheck, onEdit, onContextMenu
       onClick={onEdit} onKeyDown={rowKey(onEdit)} onContextMenu={onContextMenu}>
       <div className="sleeve__art">
         <Art meta={meta} />
-        <span className="sleeve__badge">
-          <span className={`dot ${isPrivate(t) ? "dot--warn" : "dot--ok"}`} />{isPrivate(t) ? "Private" : "Public"}
-        </span>
+        {isPrivate(t) && <span className="sleeve__badge"><span className="dot dot--warn" />Private</span>}
         <input type="checkbox" className="mixrow__check track-sleeve__check" checked={selected}
           onChange={() => { /* click handler owns toggling */ }}
           onClick={(e) => { e.stopPropagation(); onCheck(e); }} aria-label={`Tick ${t.title}`} />

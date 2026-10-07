@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import os
+import sys
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -416,6 +417,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         if isinstance(exc, soundcloud.RateLimitError):
             return HTTPException(status_code=429,
                                  detail="SoundCloud is rate-limiting requests — try again shortly.")
+        print(f"[soundcloud] {fallback} {type(exc).__name__}: {exc}", file=sys.stderr)  # for diagnosis
         return HTTPException(status_code=502, detail=fallback)
 
     @app.get("/api/tracks", dependencies=[Depends(require_token)])
@@ -524,6 +526,10 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         _need_connected()
         try:
             return await asyncio.to_thread(service.add_to_playlist, catalog, playlist_id, req.track_ids)
+        except service.PlaylistIncomplete as e:
+            print(f"[soundcloud] {e}", file=sys.stderr)
+            raise HTTPException(status_code=409, detail="SoundCloud didn't send the whole playlist, "
+                                "so nothing was changed. Try again in a moment.")
         except Exception as e:
             raise _track_http_error(e, "Couldn't add to that playlist.")
 

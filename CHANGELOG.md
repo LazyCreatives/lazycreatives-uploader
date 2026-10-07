@@ -14,7 +14,17 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
-## Unreleased
+## 0.2.2 (7 October 2026)
+
+### New
+- **Change a title before posting.** Pick Edit title… on a mix's ⋯ button (or double-click its name) on Upload, or click a title on the last look before posting, and type what it should be called on SoundCloud. Your file keeps its name.
+- **Try again from History.** A failed post now has a Try again button (also on right-click) that posts it again with the same title and privacy. It only shows while that file hasn't gone up since.
+
+### Better
+- **A calmer, simpler look.** The Uploader now has one look, rows with waveforms, and the Crate/Sleeve switch is gone; on Your tracks, the new Covers button shows your tracks as album covers. Every screen shows less at once: posting choices sit under Post settings, filters under Filters, and mixes already on SoundCloud fold away. Upload ticks only mixes exported since your last post and shows when each was exported, newest first. Failed posts stand out in History, Home fits on one screen, and your collection figures moved to Your tracks. Row spacing and Preview on hover moved to Settings, under Lists. Change cover is now on each mix's ⋯ button, and "Show short files" is under Post settings.
+
+### Fixed
+- **Adding to a playlist works again.** Add to playlist stopped working after SoundCloud changed how apps must name tracks; it now adds the track and keeps everything already in the playlist, public or private.
 
 ## 0.2.1 (7 October 2026)
 

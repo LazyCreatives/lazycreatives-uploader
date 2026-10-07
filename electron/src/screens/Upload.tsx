@@ -7,12 +7,11 @@ import { Exit, openMenu, toast, type MenuItem, toastWarn } from "../components/D
 import { GenreChip, pickGenre } from "../components/GenrePick";
 import { copyText } from "../desktop";
 import type { Config, Entitlement, Mix, Sharing, UploadItemInput } from "../types";
-import { Button, fmtBytes, fmtCount, fmtDuration, PageHeader, ProBadge, ProgressBar } from "../components/ui";
+import { Button, fmtBytes, fmtCount, fmtDuration, fmtWhen, PageHeader, ProBadge, ProgressBar } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Cover } from "../components/Cover";
 import { AuditionDiv, AuditionLabel, PlayButton, SongWave, type SongMeta } from "../components/Player";
-import { AuditionToggle } from "../components/Audition";
-import { levelCheck, needsLook, preflight, titleOf, type Check } from "../checklist";
+import { levelCheck, needsLook, preflight, type Check } from "../checklist";
 import { genreColor, useLook } from "../look";
 import { EmptyState } from "../components/SlothSpot";
 import type { ItemState, UploadState, ScanState } from "../useProgress";
@@ -85,6 +84,10 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [showDupes, setShowDupes] = useState(false);
+  // The post settings (Post as, cover, go public later) stay folded under one button.
+  const [optsOpen, setOptsOpen] = useState(false);
+  // Mixes already on SoundCloud stay folded away until asked for.
+  const [showPosted, setShowPosted] = useState(false);
   const [showShort, setShowShort] = useState(false);
   const [query, setQuery] = useState("");
   const [coverArt, setCoverArt] = useState<string | null>(null);
@@ -94,6 +97,9 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   const [stopping, setStopping] = useState(false);
   // The last look before posting: the mixes about to go up, or null while it's closed.
   const [review, setReview] = useState<{ items: UploadItemInput[]; releaseAt?: string } | null>(null);
+  // Titles typed for this post, by file path; the mix's own name is used otherwise.
+  const [titles, setTitles] = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState<string | null>(null);
 
   useEffect(() => { void rescan(); /* on mount */ }, []);
 
@@ -116,12 +122,16 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   async function rescan(keep?: Set<string>) {
     setError(null);
     try {
-      const m = await api.scan();
+      const [m, ov] = await Promise.all([api.scan(), api.overview().catch(() => null)]);
       setMixes(m);
-      // default-select everything not yet uploaded, skipping lower-quality format
-      // duplicates (highest quality wins) and short exports. Single-only on Free.
+      // Start with the mixes exported since your last post ticked (all new ones if
+      // you've never posted), skipping lower-quality format duplicates (highest
+      // quality wins), so an old mix you left behind on purpose isn't posted by accident.
+      // Single-only on Free.
+      const since = ov?.last_upload ? new Date(ov.last_upload).getTime() / 1000 : 0;
       const fresh = m.filter((x) => !x.uploaded && !x.superseded_by && !x.short).map((x) => x.path);
-      let pick = keep ? fresh.filter((p) => keep.has(p)) : fresh;
+      const recent = m.filter((x) => !x.uploaded && !x.superseded_by && !x.short && x.mtime > since).map((x) => x.path);
+      let pick = keep ? fresh.filter((p) => keep.has(p)) : recent;
       if (!keep && preselect?.length) {
         const dropped = pickDropped(m, preselect);
         pick = dropped.pick;
@@ -134,7 +144,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
           toast(shown === 1 ? `${m.find((x) => x.path === dropped.pick[0])?.name ?? "Your mix"} is ticked and ready. Check the details, then post it.`
             : `${shown} mixes are ticked and ready. Check the details, then post them.`);
         } else if (dropped.notFound.length) {
-          toastWarn("Couldn’t find that mix in your folders. Try Look again.");
+          toastWarn("Couldn’t find that mix in your folders. Try Check folders.");
         }
       }
       setSelected(new Set(ent.features.batch ? pick : pick.slice(0, 1)));
@@ -231,8 +241,10 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
         // added to the template's or the Settings tags.
         const tags = mixTags(baseTags, m.bpm);
         // Drafts publish privately and carry a [WIP] marker in the title on SoundCloud.
-        const baseTitle = tmpl ? tmpl.title_template.replace("{name}", m.name) : m.name;
-        const title = m.wip ? `${baseTitle} [WIP]` : (tmpl ? baseTitle : undefined);
+        const own = titles[m.path]?.trim();
+        const name = own || m.name;
+        const baseTitle = tmpl ? tmpl.title_template.replace("{name}", name) : name;
+        const title = m.wip ? `${baseTitle} [WIP]` : (tmpl || own ? baseTitle : undefined);
         const itemSharing: Sharing = m.wip ? "private" : (tmpl ? tmpl.sharing : sharing);
         return {
           path: m.path, name: m.name,
@@ -264,6 +276,22 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     const worth = items.some((i) => needsLook(preflight(i, cfg, extOf(i.path))) > 0);
     if (!only && (items.length > 1 || goesPublic || worth)) { setReview({ items, releaseAt }); return; }
     void post(items, releaseAt, !!only);
+  }
+
+  // A title changed on the last look: what goes up, and kept for next time.
+  function retitle(path: string, text: string) {
+    setReview((r) => r && { ...r, items: r.items.map((i) => (i.path === path ? { ...i, title: text } : i)) });
+    if (!templateName) setTitles((t) => ({ ...t, [path]: text.replace(/\s*\[WIP\]$/, "") }));
+  }
+  // Name a mix for SoundCloud without renaming the file. Empty goes back to the file's name.
+  function setTitle(m: Mix, text: string) {
+    const t = text.trim();
+    setTitles((prev) => {
+      const next = { ...prev };
+      if (!t || t === m.name) delete next[m.path]; else next[m.path] = t;
+      return next;
+    });
+    setEditing(null);
   }
 
   async function post(items: UploadItemInput[], releaseAt: string | undefined, keepOthers: boolean) {
@@ -309,7 +337,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     .filter((m) => showShort || !m.short)
     .filter((m) => !q || [m.name, m.project_match, m.genre].some((v) => v && v.toLowerCase().includes(q)));
   // New mixes first; the ones already on SoundCloud go under their own heading.
-  const fresh = visible.filter((m) => !m.uploaded);
+  const fresh = visible.filter((m) => !m.uploaded).sort((a, b) => b.mtime - a.mtime);
   const posted = visible.filter((m) => m.uploaded);
   const pickable = fresh.filter((m) => !m.superseded_by && !m.short).map((m) => m.path);  // a short one is ticked by hand
   const allPicked = pickable.length > 0 && pickable.every((p) => selected.has(p));
@@ -327,10 +355,16 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   const whenProblem = releaseProblem(scheduleOn, releaseAtValue);
 
   const summary = mixes === null ? "Looking through your watched folders…"
-    : `${fmtCount(mixes.length)} ${mixes.length === 1 ? "mix" : "mixes"} found · ${fmtCount(newCount)} new`
+    : `${fmtCount(newCount)} new of ${fmtCount(mixes.length)} in your folders`
       + `${matched ? ` · ${fmtCount(matched)} tagged from Backups` : ""}${wipCount ? ` · ${wipCount} ${wipCount === 1 ? "draft" : "drafts"}` : ""}`
-      + `${dupeCount && !showDupes ? ` · ${dupeCount} extra ${dupeCount === 1 ? "format" : "formats"} hidden` : ""}`
       + `${shortCount && !showShort ? ` · ${fmtCount(shortCount)} short ${shortCount === 1 ? "file" : "files"} hidden` : ""}`;
+  // What the post will do, in a few words beside the Post settings button.
+  const tmplOn = !!templateName;
+  const postsAs = [
+    tmplOn ? `Template ${templateName}` : sharing === "private" ? "Private" : "Public",
+    coverArt ? "one cover for all" : "each mix's own cover",
+    scheduleOn ? (whenProblem ? "pick when they go public" : `public ${fmtRelease(releaseAtValue)}`) : "",
+  ].filter(Boolean).join(" · ");
 
   const mixMeta = (m: Mix): SongMeta => ({
     title: m.name, sub: m.project_match ? `From ${m.project_match}` : m.genre || "", genre: m.genre,
@@ -341,12 +375,14 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     ...(m.permalink_url ? [
       { label: "Open on SoundCloud", onClick: () => openExternal(m.permalink_url!) },
       { label: "Copy SoundCloud link", onClick: () => { copyText(m.permalink_url!); } }, "-" as const] : []),
+    ...(!m.uploaded && !m.superseded_by ? [{ label: "Edit title…", onClick: () => setEditing(m.path), disabled: running }] : []),
     { label: m.genre ? "Change genre…" : "Set genre…", onClick: () => changeGenre(m) },
     { label: "Change cover…", onClick: () => changeCover(m) },
+    "-" as const,
     { label: "Show the file", onClick: () => revealPath(m.path) },
     { label: "Copy file path", onClick: () => { copyText(m.path); } },
     ...(!m.uploaded && !m.superseded_by ? ["-" as const,
-      { label: m.wip ? "Mark as final" : "Mark as a draft", onClick: () => toggleWip(m), disabled: running }] : []),
+      { label: m.wip ? "Post as the final version" : "Post as work in progress (private)", onClick: () => toggleWip(m), disabled: running }] : []),
   ];
   const retry = (m: Mix) => (
     <button type="button" className="btn btn--ghost btn--sm mixstate__retry" disabled={busy}
@@ -386,14 +422,21 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
       ? <span className="pill pill--skipped">Using {m.superseded_by}</span>
       : m.short
       ? <span className="pill pill--skipped" title="Shorter than the minimum length in Settings. Tick it to post it anyway.">Short</span>
-      : <span className="pill" style={{ ["--dot" as any]: "var(--accent)" }}>New</span>);
-  const draftButton = (m: Mix) => m.wip
-    ? <button type="button" className="chip chip--on" style={{ height: 24 }}
-        title="Draft: posted privately with [WIP] after its title, and replaced on each new bounce. Click to mark as final."
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleWip(m); }}>Draft</button>
-    : <button type="button" className="linkbtn faint draftbtn" style={{ fontSize: 12.5, color: "var(--text-faint)" }}
-        title="Mark as a draft: posted privately with [WIP] after its title, and replaced on each new bounce"
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleWip(m); }}>Mark draft</button>;
+      : m.wip
+        ? <button type="button" className="pill pill--draft linkbtn"
+            title="Draft: posted privately with [WIP] after its title, and replaced on each new bounce. Click to mark as final."
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleWip(m); }}>Draft</button>
+        : null);
+  // The "more" button at the end of a mix: the same list as a right-click.
+  const moreButton = (m: Mix, cls = "") => (
+    <button type="button" className={`iconbtn mix-more ${cls}`} title="More" aria-label={`More for ${m.name}`}
+      onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); openMenu({ preventDefault: () => e.preventDefault(), stopPropagation: () => e.stopPropagation(), clientX: r.left, clientY: r.bottom + 4 }, mixMenu(m)); }}>
+      <Icon name="more" size={16} /></button>
+  );
+  // Under the name: genre and tempo, the project when it has a different name, and
+  // any other formats of the same mix. A format other than WAV is named too.
+  const mixFrom = (m: Mix) => !m.project_match ? "not linked to a project"
+    : m.project_match.trim().toLowerCase() === m.name.trim().toLowerCase() ? "" : `from ${m.project_match}`;
 
   // One mix as a sleeve (Sleeve look) or a row (Crate look).
   const sleeveCard = (m: Mix) => {
@@ -409,23 +452,21 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
         onKeyDown={rowKey(() => { if (!locked) toggle(m.path); })}>
         <div className="sleeve__art">
           <Cover name={m.project_match || m.name} genre={m.genre} />
-          <span className="sleeve__badge">{statusBadge(m)}</span>
+          {statusBadge(m) && <span className="sleeve__badge">{statusBadge(m)}</span>}
           <input type="checkbox" className="mixrow__check mix-sleeve__check" disabled={locked} checked={picked}
             onClick={(e) => e.stopPropagation()} onChange={() => toggle(m.path)} aria-label={`Pick ${m.name}`} />
           <PlayButton path={m.path} meta={meta} size={34} className="sleeve__play" />
-          <button type="button" className="iconbtn sleeve__coverbtn" title="Change cover" aria-label={`Change the cover of ${m.name}`}
-            onClick={(e) => { e.stopPropagation(); changeCover(m); }}><Icon name="image" size={15} /></button>
+          {moreButton(m, "sleeve__coverbtn")}
           {it?.phase === "uploading" && (
             <span className="mix-sleeve__bar"><span style={{ "--pct": it.size > 0 ? (it.sent / it.size) * 100 : 0 } as CSSProperties} /></span>
           )}
         </div>
         <div className="sleeve__meta">
           <div className="track-sleeve__top">
-            <div className="sleeve__name" title={m.name}>{m.name}</div>
-            <span className="fmt-badge">{m.ext.replace(".", "")}</span>
+            <div className="sleeve__name" title={m.name}>{titles[m.path] || m.name}</div>
           </div>
           <div className="track-sleeve__sub">
-            <span className="col-wrap2" title={m.project_match ?? undefined}>{m.project_match ? `From ${m.project_match}` : "Not linked to a project"}</span>
+            <span className="col-trunc" title={m.project_match ?? undefined}>{[m.bpm ? `${Math.round(m.bpm)} BPM` : "", m.uploaded ? "" : fmtWhen(new Date(m.mtime * 1000).toISOString()), mixFrom(m), m.ext.toLowerCase() === ".wav" ? "" : m.ext.replace(".", "").toUpperCase()].filter(Boolean).join(" · ")}</span>
             <span className="mono">{m.duration ? fmtDuration(m.duration) : ""}</span>
           </div>
           <SongWave path={m.path} meta={meta} height={18} />
@@ -433,7 +474,6 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
             ? <div className="mix-sleeve__state">{note}{it?.phase === "failed" && retry(m)}</div>
             : !m.superseded_by && !m.uploaded && <div className="mix-sleeve__draft">
                 <GenreChip genre={m.genre ?? null} setByYou={!!m.genre_by_you} onClick={() => changeGenre(m)} />
-                {draftButton(m)}
               </div>}
         </div>
       </AuditionDiv>
@@ -453,27 +493,29 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
       <PlayButton path={m.path} meta={meta} size={28} />
       <Cover name={m.project_match || m.name} genre={m.genre} size={36} label={false} />
       <div className="row__main" style={{ opacity: m.uploaded || m.superseded_by || m.short ? 0.6 : 1 }}>
-        <div className="row__title mix-title"><span className="col-trunc">{m.name}</span>
-          <span className="fmt-badge fmt-badge--tag">{m.ext.replace(".", "")}</span></div>
+        <div className="row__title mix-title">
+          {editing === m.path
+            ? <TitleField name={m.name} value={titles[m.path] || m.name} onDone={(t) => setTitle(m, t)} onCancel={() => setEditing(null)} />
+            : <span className="col-trunc" title={titles[m.path] ? `Posts as “${titles[m.path]}”. The file is ${m.name}.` : undefined}
+                onDoubleClick={(e) => { if (m.uploaded || m.superseded_by || running) return; e.preventDefault(); setEditing(m.path); }}>
+                {titles[m.path] || m.name}</span>}
+          {titles[m.path] && editing !== m.path && <span className="pill pill--quiet" title={`The file is ${m.name}`}>New title</span>}
+        </div>
         {note
           ? <div className="row__sub">{note}</div>
           : <div className="row__sub">
               <button type="button" className={`linkbtn mix-genre${m.genre_by_you || !m.genre ? "" : " genre-guess"}`}
                 title={m.genre ? (m.genre_by_you ? "Genre set by you. Click to change" : "Genre guessed from the project. Click to correct it") : "Set a genre"}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); changeGenre(m); }}>{m.genre || "Set genre"}</button>
-              {" · "}
-              <button type="button" className="linkbtn mix-genre" title="Change this mix's cover"
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); changeCover(m); }}>Cover</button>
-              {[m.bpm ? `${Math.round(m.bpm)} BPM` : "", m.dupe_formats && m.dupe_formats.length ? `also ${m.dupe_formats.join(", ")}` : ""]
+              {[m.bpm ? `${Math.round(m.bpm)} BPM` : "", m.uploaded ? "" : `exported ${fmtWhen(new Date(m.mtime * 1000).toISOString())}`, mixFrom(m), m.ext.toLowerCase() === ".wav" ? "" : m.ext.replace(".", "").toUpperCase(),
+                m.dupe_formats && m.dupe_formats.length ? `also ${m.dupe_formats.join(", ")}` : ""]
                 .filter(Boolean).map((t) => ` · ${t}`).join("")}
             </div>}
       </div>
       <SongWave path={m.path} meta={meta} height={24} />
-      <span className={`col-wrap2${m.project_match ? "" : " faint"}`} title={m.project_match ?? undefined}>{m.project_match || "Not linked"}</span>
-      <span className="col-num">{m.duration ? fmtDuration(m.duration) : "—"}</span>
-      <span className="col-num">{fmtBytes(m.size)}</span>
-      <span>{!m.superseded_by && !m.uploaded && draftButton(m)}</span>
+      <span className="col-num" title={fmtBytes(m.size)}>{m.duration ? fmtDuration(m.duration) : "—"}</span>
       <span className="mixstate__cell">{statusBadge(m)}{it?.phase === "failed" && retry(m)}</span>
+      {moreButton(m)}
     </AuditionLabel>
     );
   };
@@ -482,7 +524,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     <div>
       <PageHeader title="Upload" sub={summary} actions={<>
         <Button kind="quiet" onClick={() => rescan()} disabled={scan.active || busy}>
-          <Icon name="refresh" />{scan.active ? "Looking…" : "Look again"}
+          <Icon name="refresh" />{scan.active ? "Checking…" : "Check folders"}
         </Button>
         {scheduleOn && selected.size > 0 && !busy && (
           <span className={`up-when${whenProblem ? " up-when--bad" : ""}`} role="status">
@@ -528,7 +570,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
         </div>
       )}
 
-      <div className="toolbar">
+      <div className="toolbar up-tools">
         <label className="find__search upload-search">
           <Icon name="search" size={15} />
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search mixes, projects, genres…"
@@ -540,64 +582,77 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
         {look === "sleeve" && pickable.length > 0 && (
           <Button kind="quiet" sm onClick={toggleAll} disabled={busy}>{allPicked ? "Untick all" : `Tick all ${pickable.length} new`}</Button>
         )}
-        <label className="toolchk">
-          Post as
-          <select value={sharing} disabled={!!templateName}
-            onChange={(e) => setSharing(e.target.value as Sharing)}>
-            <option value="public">Public</option>
-            <option value="private">Private</option>
-          </select>
-        </label>
-        {ent.features.metadata_templates && cfg.templates.length > 0 && (
-          <label className="toolchk">
-            Template
-            <select value={templateName} onChange={(e) => setTemplateName(e.target.value)}>
-              <option value="">None</option>
-              {cfg.templates.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
-            </select>
-          </label>
-        )}
-        <div className="toolchk">
-          Cover for this post
-          <span className={`art-thumb art-thumb--sm${coverArt && coverPreview ? "" : " art-thumb--ph"}`} aria-hidden="true">
-            {coverArt && coverPreview ? <img src={coverPreview} alt="" /> : <Icon name="music" />}
-          </span>
-          <Button sm onClick={chooseCover} disabled={running}>{coverArt ? "Change…" : "Choose image…"}</Button>
-          {coverArt && <Button kind="quiet" sm onClick={() => setCoverArt(null)} disabled={running}>Remove</Button>}
-        </div>
-        {ent.features.schedule_release && (
-          <label className="toolchk">
-            <input type="checkbox" checked={scheduleOn} onChange={(e) => {
-              const on = e.target.checked;
-              setScheduleOn(on);
-              if (on && releaseProblem(true, releaseAtValue)) setReleaseAtValue(tomorrowSameHour());
-            }} />
-            Go public later
-            {scheduleOn && <input type="datetime-local" value={releaseAtValue} aria-label="When they go public"
-              min={localInput(new Date())}
-              onChange={(e) => setReleaseAtValue(e.target.value)} />}
-          </label>
-        )}
-        {dupeCount > 0 && (
-          <label className="toolchk" style={{ marginLeft: "auto" }}>
-            <input type="checkbox" checked={showDupes} onChange={(e) => setShowDupes(e.target.checked)} />
-            Show every format
-          </label>
-        )}
-        {shortCount > 0 && (
-          <label className="toolchk" style={dupeCount > 0 ? undefined : { marginLeft: "auto" }}
-            title="Exports shorter than the minimum length in Settings, like clicks and test bounces">
-            <input type="checkbox" checked={showShort} onChange={(e) => setShowShort(e.target.checked)} />
-            Show {fmtCount(shortCount)} short {shortCount === 1 ? "file" : "files"}
-          </label>
-        )}
-        <span style={{ marginLeft: dupeCount > 0 || shortCount > 0 ? 0 : "auto" }}><AuditionToggle /></span>
+        <span className="up-tools__plan" title={postsAs}>{postsAs}</span>
+        <button type="button" className={`btn btn--sm up-tools__opts${optsOpen ? " up-tools__opts--on" : ""}`}
+          aria-expanded={optsOpen} aria-controls="post-settings" onClick={() => setOptsOpen((o) => !o)}>
+          <Icon name="settings" size={14} />Post settings<Icon name="chevronDown" size={13} className="up-tools__chev" />
+        </button>
       </div>
-      {(coverArt || scheduleOn) && (
-        <p className="faint" style={{ margin: "-6px 0 12px", fontSize: 12 }}>
-          {coverArt ? "This cover replaces your default cover for this upload. " : ""}
-          {scheduleOn ? "Mixes go up private now and turn public at the time you pick." : ""}
-        </p>
+      {optsOpen && (
+        <div className="up-opts" id="post-settings">
+          <label className="up-opt">
+            <span className="up-opt__lbl">Post as</span>
+            <span className="up-opt__row"><select value={sharing} disabled={tmplOn}
+              onChange={(e) => setSharing(e.target.value as Sharing)}>
+              <option value="public">Public</option>
+              <option value="private">Private</option>
+            </select></span>
+          </label>
+          {ent.features.metadata_templates && cfg.templates.length > 0 && (
+            <label className="up-opt">
+              <span className="up-opt__lbl">Template</span>
+              <span className="up-opt__row"><select value={templateName} onChange={(e) => setTemplateName(e.target.value)}>
+                <option value="">None</option>
+                {cfg.templates.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+              </select></span>
+            </label>
+          )}
+          <div className="up-opt">
+            <span className="up-opt__lbl">Cover</span>
+            <span className="up-opt__row">
+              {coverArt && coverPreview && <span className="art-thumb art-thumb--sm" aria-hidden="true"><img src={coverPreview} alt="" /></span>}
+              <Button sm onClick={chooseCover} disabled={running}>{coverArt ? "Change…" : "One picture for all…"}</Button>
+              {coverArt && <Button kind="quiet" sm onClick={() => setCoverArt(null)} disabled={running}>Use each mix's own</Button>}
+            </span>
+          </div>
+          {ent.features.schedule_release && (
+            <div className="up-opt">
+              <span className="up-opt__lbl">Goes public</span>
+              <span className="up-opt__row">
+                <label className="toolchk">
+                  <input type="checkbox" checked={scheduleOn} onChange={(e) => {
+                    const on = e.target.checked;
+                    setScheduleOn(on);
+                    if (on && releaseProblem(true, releaseAtValue)) setReleaseAtValue(tomorrowSameHour());
+                  }} />
+                  Later
+                </label>
+                {scheduleOn && <input type="datetime-local" value={releaseAtValue} aria-label="When they go public"
+                  min={localInput(new Date())}
+                  onChange={(e) => setReleaseAtValue(e.target.value)} />}
+              </span>
+            </div>
+          )}
+          {dupeCount > 0 && (
+            <label className="toolchk up-opt up-opt--end">
+              <input type="checkbox" checked={showDupes} onChange={(e) => setShowDupes(e.target.checked)} />
+              Show every format ({fmtCount(dupeCount)} hidden)
+            </label>
+          )}
+          {shortCount > 0 && (
+            <label className={`toolchk up-opt${dupeCount > 0 ? "" : " up-opt--end"}`}
+              title="Exports shorter than the minimum length in Settings, like clicks and test bounces">
+              <input type="checkbox" checked={showShort} onChange={(e) => setShowShort(e.target.checked)} />
+              Show {fmtCount(shortCount)} short {shortCount === 1 ? "file" : "files"}
+            </label>
+          )}
+          {(coverArt || scheduleOn) && (
+            <p className="up-opts__note">
+              {coverArt ? "This picture replaces every mix's own cover for this post. " : ""}
+              {scheduleOn ? "Mixes go up private now and turn public at the time you pick." : ""}
+            </p>
+          )}
+        </div>
       )}
 
       {mixes && mixes.length === 0 && (
@@ -609,8 +664,9 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
       {visible.length > 0 && look === "sleeve" && (<>
         {fresh.length > 0 && <div className="sleeves mix-sleeves">{fresh.map(sleeveCard)}</div>}
         {posted.length > 0 && <>
-          <h2 className="mix-split"><Icon name="check" size={15} />Already on SoundCloud<span>{fmtCount(posted.length)}</span></h2>
-          <div className="sleeves mix-sleeves">{posted.map(sleeveCard)}</div>
+          <button type="button" className="mix-split mix-split--btn" aria-expanded={showPosted || !!q} onClick={() => setShowPosted((v) => !v)}>
+            <Icon name={showPosted || q ? "chevronDown" : "chevronRight"} size={15} />Already on SoundCloud<span>{fmtCount(posted.length)}</span></button>
+          {(showPosted || !!q) && <div className="sleeves mix-sleeves">{posted.map(sleeveCard)}</div>}
         </>}
       </>)}
 
@@ -621,14 +677,16 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
             <input type="checkbox" className="mixrow__check" ref={(el) => { if (el) el.indeterminate = somePicked && !allPicked; }}
               checked={allPicked} disabled={pickable.length === 0 || busy} onChange={toggleAll}
               aria-label={allPicked ? "Untick every mix" : "Tick every new mix"} title={allPicked ? "Untick every mix" : "Tick every new mix"} />
-            <span /><span /><span>Mix</span><span>Waveform</span><span>From project</span>
-            <span className="col-num">Length</span><span className="col-num">Size</span><span>Draft</span><span>Status</span>
+            <span /><span /><span>Mix</span><span>Waveform</span>
+            <span className="col-num">Length</span><span>Status</span><span />
           </div>
           {fresh.map(crateRow)}
           {posted.length > 0 && (
-            <div className="row mix-split mix-split--row"><Icon name="check" size={14} />Already on SoundCloud<span>{fmtCount(posted.length)}</span></div>
+            <button type="button" className="row mix-split mix-split--row mix-split--btn" aria-expanded={showPosted || !!q} onClick={() => setShowPosted((v) => !v)}>
+              <Icon name={showPosted || q ? "chevronDown" : "chevronRight"} size={14} />Already on SoundCloud<span>{fmtCount(posted.length)}</span>
+              <em>{showPosted || q ? "Hide" : "Show"}</em></button>
           )}
-          {posted.map((m, i) => crateRow(m, fresh.length + i))}
+          {(showPosted || !!q) && posted.map((m, i) => crateRow(m, fresh.length + i))}
         </div>
       )}
       {mixes && mixes.length > 0 && visible.length === 0 && (
@@ -639,7 +697,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
       <Exit>{review && (
         <LastLook items={review.items} account={account} cfg={cfg} extOf={extOf}
           goesPublic={review.releaseAt ? fmtRelease(releaseAtValue) : null}
-          onBack={() => setReview(null)} onPost={() => void post(review.items, review.releaseAt, false)} />
+          onBack={() => setReview(null)} onTitle={retitle} onPost={() => void post(review.items, review.releaseAt, false)} />
       )}</Exit>
     </div>
   );
@@ -647,10 +705,10 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
 
 // A last look before posting: how many, as what, on which account, and a checklist
 // for each mix (title, cover, genre, tags, file, level) with anything worth fixing.
-function LastLook({ items, account, goesPublic, cfg, extOf, onBack, onPost }: {
+function LastLook({ items, account, goesPublic, cfg, extOf, onBack, onTitle, onPost }: {
   items: UploadItemInput[]; account: string | null; goesPublic: string | null;
   cfg: Config; extOf: (path: string) => string;
-  onBack: () => void; onPost: () => void;
+  onBack: () => void; onTitle: (path: string, text: string) => void; onPost: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   useDialogFocus(ref);
@@ -694,7 +752,9 @@ function LastLook({ items, account, goesPublic, cfg, extOf, onBack, onPost }: {
                 <li key={item.path} className={loud.some((c) => c.state === "warn") ? "lastlook__mix lastlook__mix--look" : "lastlook__mix"}>
                   <div className="lastlook__name">
                     <Icon name={loud.some((c) => c.state === "warn") ? "alert" : "check"} size={14} />
-                    <span className="col-trunc">{titleOf(item)}</span>
+                    <input className="lastlook__title" value={item.title ?? item.name ?? ""} spellCheck={false}
+                      aria-label={`Title on SoundCloud for ${item.name}`} title="The title it goes up with. Click to change it."
+                      onChange={(e) => onTitle(item.path, e.target.value)} />
                     {mixed && <span className="faint">{item.sharing === "private" ? "Private" : "Public"}</span>}
                   </div>
                   {loud.map((c) => <div key={c.key} className={`lastlook__check lastlook__check--${c.state}`}>{c.say}</div>)}
@@ -710,5 +770,27 @@ function LastLook({ items, account, goesPublic, cfg, extOf, onBack, onPost }: {
         </div>
       </div>
     </div>
+  );
+}
+
+// Type a new title in place: Enter or clicking away keeps it, Escape leaves it as it was.
+function TitleField({ name, value, onDone, onCancel }: {
+  name: string; value: string; onDone: (text: string) => void; onCancel: () => void;
+}) {
+  const [text, setText] = useState(value);
+  const done = useRef(false);
+  const finish = (keep: boolean) => { if (done.current) return; done.current = true; keep ? onDone(text) : onCancel(); };
+  return (
+    <input className="mix-title__edit" autoFocus value={text} spellCheck={false}
+      aria-label={`Title on SoundCloud for ${name}`} placeholder={name}
+      onFocus={(e) => e.currentTarget.select()}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={() => finish(true)}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") { e.preventDefault(); finish(true); }
+        if (e.key === "Escape") { e.preventDefault(); finish(false); }
+      }} />
   );
 }

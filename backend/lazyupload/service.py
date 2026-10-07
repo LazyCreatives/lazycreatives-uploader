@@ -401,12 +401,21 @@ def update_playlist(catalog: Catalog, playlist_id: int, title: str | None = None
         sharing=sharing, track_ids=track_ids)
 
 
+class PlaylistIncomplete(RuntimeError):
+    """SoundCloud sent fewer of a playlist's tracks than it says it holds."""
+
+
 def add_to_playlist(catalog: Catalog, playlist_id: int, track_ids: list[int]) -> dict:
     """Add tracks to the end of a playlist, skipping any already in it. Reads the
     playlist first, because SoundCloud replaces the whole list on every change."""
     _need_connection(catalog)
     client = client_for(catalog)
-    current = [t["id"] for t in client.get_playlist(playlist_id).get("tracks", [])]
+    before = client.get_playlist(playlist_id)
+    current = [t["id"] for t in before.get("tracks", [])]
+    # Saving a partial list would quietly drop the missing tracks, so stop instead.
+    if (before.get("track_count") or 0) > len(current):
+        raise PlaylistIncomplete(
+            f"playlist {playlist_id}: SoundCloud sent {len(current)} of {before.get('track_count')} tracks")
     fresh = [int(i) for i in dict.fromkeys(track_ids) if int(i) not in current]
     pl = client.update_playlist(playlist_id, track_ids=current + fresh) if fresh \
         else client.get_playlist(playlist_id)

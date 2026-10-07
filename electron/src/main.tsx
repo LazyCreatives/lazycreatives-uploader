@@ -13,6 +13,10 @@ import "./lazy-ui.css";  // shared look (same file in Backups)
 import "./theme.css";    // Uploader-only bits
 import "./companion.css"; // the narrow window and its sidebar button; after the shared styles so it wins ties
 import { Companion } from "./screens/Companion";
+import { setLook } from "./look";
+
+// Uploader has one look: rows (Crate). Covers are a view on Your tracks instead.
+setLook("crate");
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

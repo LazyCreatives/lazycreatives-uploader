@@ -105,7 +105,48 @@ def test_real_client_sends_the_whole_ordered_list(monkeypatch):
     monkeypatch.setattr(soundcloud.requests, "put", fake_put)
     c = soundcloud.SoundCloudClient({"access_token": "a", "expires_at": 9e12})
     pl = c.update_playlist(5, track_ids=[2, 1])
-    assert sent["url"].endswith("/playlists/5")
-    assert sent["json"] == {"playlist": {"tracks": [{"id": 2}, {"id": 1}]}}
+    assert sent["url"].endswith("/playlists/soundcloud:playlists:5")
+    # SoundCloud refuses the old {"id": 2} form: tracks are named by their urn.
+    assert sent["json"] == {"playlist": {"tracks": [{"urn": "soundcloud:tracks:2"},
+                                                    {"urn": "soundcloud:tracks:1"}]}}
     assert [t["id"] for t in pl["tracks"]] == [2, 1] and pl["tracks"][0]["user"] == "me"
     assert pl["duration"] == 3 and pl["track_count"] == 2
+
+
+def test_reads_tracks_that_only_carry_a_urn():
+    pl = soundcloud.normalize_playlist({"urn": "soundcloud:playlists:7", "title": "140 BREAKS",
+                                        "sharing": "private", "track_count": 1,
+                                        "tracks": [{"urn": "soundcloud:tracks:42", "duration": 1000}]})
+    assert pl["id"] == 7 and [t["id"] for t in pl["tracks"]] == [42]
+
+
+class _FakeClient:
+    def __init__(self, playlist):
+        self.playlist, self.saved = playlist, None
+
+    def get_playlist(self, playlist_id):
+        return soundcloud.normalize_playlist(self.playlist)
+
+    def update_playlist(self, playlist_id, track_ids=None, **_):
+        self.saved = track_ids
+        return soundcloud.normalize_playlist({**self.playlist, "track_count": None,
+                                              "tracks": [{"id": i} for i in track_ids]})
+
+
+def test_adding_to_a_private_playlist_keeps_what_is_there(catalog, monkeypatch):
+    fake = _FakeClient({"id": 7, "title": "140 BREAKS", "sharing": "private", "track_count": 1,
+                        "tracks": [{"urn": "soundcloud:tracks:42"}]})
+    monkeypatch.setattr(service, "connected", lambda c: True)
+    monkeypatch.setattr(service, "client_for", lambda c: fake)
+    pl = service.add_to_playlist(catalog, 7, [99])
+    assert fake.saved == [42, 99] and pl["added"] == 1
+
+
+def test_adding_stops_when_soundcloud_sends_part_of_the_playlist(catalog, monkeypatch):
+    fake = _FakeClient({"id": 7, "title": "The Works", "track_count": 8,
+                        "tracks": [{"id": 1}, {"id": 2}]})
+    monkeypatch.setattr(service, "connected", lambda c: True)
+    monkeypatch.setattr(service, "client_for", lambda c: fake)
+    with pytest.raises(service.PlaylistIncomplete):
+        service.add_to_playlist(catalog, 7, [99])
+    assert fake.saved is None  # nothing was overwritten
