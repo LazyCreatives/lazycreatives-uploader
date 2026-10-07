@@ -14,6 +14,15 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## 0.2.4 (7 October 2026)
+
+### Better
+- **Clearer words about what Uploader does for you.** The welcome screen, the empty Home page and a new "What it does" box in Settings now say plainly which jobs it takes off your hands.
+- **Open a song from a playlist.** Click a song on a playlist's page (or press Enter on it) to go to that song's page, the same as on Your tracks. Its drag handle, play button and ✕ still do their own jobs.
+
+### Fixed
+- **Playlists count their private songs.** A playlist with private songs in it no longer says it holds fewer tracks than it does (e.g. "5 tracks" for nine).
+
 ## 0.2.3 (7 October 2026)
 
 ### Fixed

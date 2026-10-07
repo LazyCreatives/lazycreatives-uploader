@@ -386,7 +386,9 @@ def normalize_playlist(raw: dict) -> dict:
         "permalink_url": raw.get("permalink_url"),
         "artwork_url": _hires_artwork(raw.get("artwork_url")),
         "duration": round(int(dur_ms or 0) / 1000) or None,
-        "track_count": raw.get("track_count") if raw.get("track_count") is not None else len(tracks),
+        # SoundCloud's own count leaves out private tracks, so a set holding private
+        # tracks says too few; count what it sent when that is more.
+        "track_count": max(raw.get("track_count") or 0, len(tracks)),
         "created_at": _iso_created_at(raw.get("created_at")),
         "last_modified": _iso_created_at(raw.get("last_modified")),
         "tracks": tracks,

@@ -77,7 +77,7 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
   const emptyBox = (
     <div className="table"><EmptyState pose={ready ? "waving" : "napping"} title="Nothing posted yet" say={ready ? "Your mixes are waiting. Go on." : "Wake me when there’s a mix."}
       action={ready ? <Button sm onClick={onUpload}>Post your first mix</Button> : undefined}>
-      {ready ? readyInFolder(waiting.count) : "Your first upload will show up here."}
+      {ready ? readyInFolder(waiting.count) : "Export a mix into your folder and it shows up here, ready to post in one click."}
     </EmptyState></div>
   );
 

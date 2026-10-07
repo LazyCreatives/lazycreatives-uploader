@@ -120,6 +120,15 @@ def test_reads_tracks_that_only_carry_a_urn():
     assert pl["id"] == 7 and [t["id"] for t in pl["tracks"]] == [42]
 
 
+def test_counts_private_tracks_soundcloud_leaves_out():
+    # 140 BREAKS: SoundCloud said 5 (its public tracks) but sent all nine
+    pl = soundcloud.normalize_playlist({"id": 7, "title": "140 BREAKS", "track_count": 5,
+                                        "tracks": [{"id": i} for i in range(1, 10)]})
+    assert pl["track_count"] == 9
+    # a bigger count than it sent still stands, so a short read is still caught
+    assert soundcloud.normalize_playlist({"id": 8, "track_count": 8, "tracks": [{"id": 1}]})["track_count"] == 8
+
+
 class _FakeClient:
     def __init__(self, playlist):
         self.playlist, self.saved = playlist, None

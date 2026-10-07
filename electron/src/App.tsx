@@ -68,10 +68,11 @@ export default function App() {
   // a track opens in a panel over its list, so the list stays where it was underneath
   const openTrack = (id: string) => nav.go({ tab: "manage", sub: id }, { overlay: true });
   const openPlaylist = (id: number | "new") => setTab("playlists", String(id));
-  // Close an open track: step back if that's where we came from, else stay on the list.
+  // Close an open track: step back if that's where we came from (its list, or the
+  // playlist it was opened from), else stay on the list.
   const closeSub = () => {
     const p = nav.prev;
-    if (p && p.tab === tab && !p.sub) nav.back(); else setTab(tab);
+    if (p && (p.tab === tab ? !p.sub : p.tab === "playlists")) nav.back(); else setTab(tab);
   };
   const live = useLiveProgress();
   const [showKeys, setShowKeys] = useState(false);
@@ -273,7 +274,7 @@ export default function App() {
               <Manage ent={ent} cfg={cfg} openTrack={sub}
                 onOpenTrack={openTrack} onCloseTrack={closeSub} />
             ) : tab === "playlists" ? (
-              <Playlists open={sub} onOpen={openPlaylist} onClose={() => setTab("playlists")} />
+              <Playlists open={sub} onOpen={openPlaylist} onClose={() => setTab("playlists")} onOpenTrack={openTrack} />
             ) : tab === "history" ? (
               <History />
             ) : (

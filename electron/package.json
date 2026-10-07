@@ -1,7 +1,7 @@
 {
   "name": "lazycreatives-uploader",
   "productName": "LazyCreatives Uploader",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "LazyCreatives Uploader — automatically publish your finished mixes to SoundCloud",
   "main": "electron/main.js",
   "scripts": {

@@ -4,7 +4,7 @@
 
 <h1 align="center">Lazy Creatives — Uploader</h1>
 
-<p align="center"><b>Post your finished mixes to SoundCloud without ever posting the same one twice.</b></p>
+<p align="center"><b>Stop uploading mixes one by one and checking for doubles.</b><br>Export a mix, post it in one click, and it never goes up twice.</p>
 
 <p align="center">
   <a href="https://lazycreatives.github.io/#download"><b>Download</b></a> ·
@@ -22,6 +22,15 @@ Part of [**Lazy Creatives**](https://lazycreatives.github.io), tools that take t
 behind-the-scenes work of making music off your plate. *Looks lazy. Works obsessively.*
 
 ---
+
+## What you stop doing by hand
+
+| The job | By hand | With Uploader |
+|---|---|---|
+| Posting a mix | Upload, type the title, pick a genre, find a cover, one song at a time | One click; a cover is made from the sound, and with Backups the tempo and genre come from the project |
+| Double posts | Check by eye, and still post the WAV and the MP3 | The same song never goes up twice, even in another format |
+| What's already up | Scroll your profile and try to remember | Every mix shows whether it's on SoundCloud |
+| Tidying your SoundCloud | Open each track's edit page in the browser | Edit, hide, delete and sort into playlists from one list |
 
 ## What it does
 

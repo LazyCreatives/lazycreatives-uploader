@@ -48,6 +48,7 @@
 
 /* dragging: the lifted row fades, a line shows where it will land */
 .pl-drag { position: relative; }
+.pl-drag.pl-open { cursor: pointer; }
 .pl-drag:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .pl-drag--lifted { opacity: .45; }
 .pl-drag--above::before, .pl-drag--below::after {

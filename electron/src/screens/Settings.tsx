@@ -266,6 +266,15 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
       </div>
 
       <div className="card">
+        <h2>What it does</h2>
+        <p className="sub" style={{ marginTop: 0 }}>
+          Uploader posts your mixes to SoundCloud without doubles and lets you manage every track from one place.
+          It only reads your audio files; it never changes them.
+        </p>
+        <p className="faint" style={{ margin: 0, fontSize: 12.5 }}>Lazy Creatives · Looks lazy. Works obsessively.</p>
+      </div>
+
+      <div className="card">
         <h2>Updates</h2>
         <p className="sub" style={{ marginTop: 0 }}>The app checks for a new version on its own. Press the button to check right now.</p>
         <UpdateCheck />

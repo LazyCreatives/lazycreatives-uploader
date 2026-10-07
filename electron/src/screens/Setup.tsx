@@ -32,8 +32,8 @@ export function Setup({ cfg, account, onAccount, onDone }: {
 
   if (step === 1) {
     return (
-      <WelcomeCard app="Uploader" step={1} title="Post your finished mixes to SoundCloud"
-        sub="Export a mix and it's ready to post in one click. Two quick steps after this: pick the folder you export into, then connect your account."
+      <WelcomeCard app="Uploader" step={1} title="Post your mixes without the busywork"
+        sub="Export a mix and it's ready to post in one click, with a cover made for you, and it never goes up twice. Two quick steps after this: pick the folder you export into, then connect your account."
         foot={<>{back}<Button kind="primary" onClick={() => setStep(2)}>Next</Button></>}>
         <WelcomeLook />
       </WelcomeCard>

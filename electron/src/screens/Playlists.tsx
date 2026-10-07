@@ -41,8 +41,8 @@ function useYourTracks(): Track[] | null {
   return t;
 }
 
-export function Playlists({ open, onOpen, onClose }: {
-  open: string | null; onOpen: (id: number | "new") => void; onClose: () => void;
+export function Playlists({ open, onOpen, onClose, onOpenTrack }: {
+  open: string | null; onOpen: (id: number | "new") => void; onClose: () => void; onOpenTrack: (id: string) => void;
 }) {
   const { list, error, reload } = usePlaylists();
   const yours = useYourTracks();
@@ -51,7 +51,7 @@ export function Playlists({ open, onOpen, onClose }: {
   const current = openId != null ? (list ?? []).find((p) => p.id === openId) ?? null : null;
 
   if (openId != null && current) {
-    return <PlaylistPage key={current.id} p={current} yours={yours} byId={byId} onBack={onClose} />;
+    return <PlaylistPage key={current.id} p={current} yours={yours} byId={byId} onBack={onClose} onOpenTrack={onOpenTrack} />;
   }
   return <PlaylistList list={list} error={error} reload={reload} composing={open === "new"}
     onOpen={onOpen} onCompose={() => onOpen("new")} onComposed={onClose} />;
@@ -193,8 +193,8 @@ function Composer({ first, onMade, onCancel }: { first: boolean; onMade: (p: Pla
 
 type Row = PlaylistTrack & Partial<Track>;
 
-function PlaylistPage({ p, yours, byId, onBack }: {
-  p: Playlist; yours: Track[] | null; byId: Map<number, Track>; onBack: () => void;
+function PlaylistPage({ p, yours, byId, onBack, onOpenTrack }: {
+  p: Playlist; yours: Track[] | null; byId: Map<number, Track>; onBack: () => void; onOpenTrack: (id: string) => void;
 }) {
   const [look] = useLook();
   const [saving, setSaving] = useState(false);
@@ -260,7 +260,8 @@ function PlaylistPage({ p, yours, byId, onBack }: {
       </header>
 
       {rows.length > 0
-        ? <TrackList rows={rows} look={look} genre={genre} onOrder={setOrder} onRemove={remove} />
+        ? <TrackList rows={rows} look={look} genre={genre} onOrder={setOrder} onRemove={remove}
+            canOpen={(id) => byId.has(id)} onOpen={(id) => onOpenTrack(String(id))} />
         : !adding && <div className="table"><EmptyState pose="napping" title="Nothing in it yet" say="Plenty of room.">
             Press Add tracks, or tick tracks in Your tracks and choose Add to playlist.
           </EmptyState></div>}
@@ -279,10 +280,21 @@ function RenameBox({ title, onDone }: { title: string; onDone: (t: string | null
   );
 }
 
-// The tracks in order. Drag a row by its grip (or anywhere) to move it; Alt+Up/Down
-// moves the focused row; right-click has Move to top/bottom and Take out.
-function TrackList({ rows, look, genre, onOrder, onRemove }: {
+// A click on a playlist row opens the track, unless it landed on something in the row
+// with its own job: the drag grip, play, or take out.
+export function clickOpensRow(target: EventTarget | null, row: Element): boolean {
+  const el = target instanceof Element ? target : null;
+  if (!el || !row.contains(el)) return false;
+  const control = el.closest("button, a, input, .pl-grip");
+  return !control || !row.contains(control);
+}
+
+// The tracks in order. Click a row (or press Enter on it) to open the track's page.
+// Drag a row by its grip (or anywhere) to move it; Alt+Up/Down moves the focused row;
+// right-click has Move to top/bottom and Take out.
+function TrackList({ rows, look, genre, onOrder, onRemove, canOpen, onOpen }: {
   rows: Row[]; look: string; genre: string | null; onOrder: (ids: number[]) => void; onRemove: (id: number) => void;
+  canOpen: (id: number) => boolean; onOpen: (id: number) => void;
 }) {
   const ids = rows.map((r) => r.id);
   const [drag, setDrag] = useState<number | null>(null);
@@ -308,7 +320,9 @@ function TrackList({ rows, look, genre, onOrder, onRemove }: {
         const meta = { title: t.title, sub: t.project_match ? `From ${t.project_match}` : t.user ? `by ${t.user}` : t.genre || "",
           art: t.artwork_url, cover: t.project_match || t.title, genre: t.project_match ? t.project_genre : t.genre };
         const priv = t.sharing === "private";
+        const opens = canOpen(t.id);  // your own tracks have a page; other people's don't
         const menu: MenuItem[] = [
+          ...(opens ? [{ label: "Open track", onClick: () => onOpen(t.id) }] : []),
           ...(t.permalink_url ? [{ label: "Open on SoundCloud", onClick: () => openExternal(t.permalink_url!) }, "-" as const] : []),
           { label: "Move to top", disabled: i === 0, onClick: () => move(i, 0) },
           { label: "Move up", disabled: i === 0, onClick: () => move(i, i - 1) },
@@ -318,12 +332,13 @@ function TrackList({ rows, look, genre, onOrder, onRemove }: {
           { label: "Take out of this playlist", danger: true, onClick: () => onRemove(t.id) },
         ];
         const cls = [sleeve ? "pl-back__row" : "row cols pl-track-cols", "pl-drag",
-          drag === i ? "pl-drag--lifted" : "", over === i && drag !== null && drag !== i ? (drag < i ? "pl-drag--below" : "pl-drag--above") : ""].join(" ");
+          opens ? "pl-open" : "", drag === i ? "pl-drag--lifted" : "", over === i && drag !== null && drag !== i ? (drag < i ? "pl-drag--below" : "pl-drag--above") : ""].join(" ");
         return (<div key={t.id}>
           {sides && i === 0 && <div className="pl-back__side">Side A</div>}
           {sides && i === half && <div className="pl-back__side">Side B</div>}
           <div className={cls} data-pl-row tabIndex={0} draggable
-            aria-label={`${i + 1}. ${t.title}. Alt and arrow keys move it.`}
+            aria-label={`${i + 1}. ${t.title}.${opens ? " Enter opens it." : ""} Alt and arrow keys move it.`}
+            onClick={opens ? (e) => { if (clickOpensRow(e.target, e.currentTarget)) onOpen(t.id); } : undefined}
             onDragStart={(e) => { setDrag(i); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(t.id)); }}
             onDragEnter={() => setOver(i)}
             onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
@@ -333,6 +348,7 @@ function TrackList({ rows, look, genre, onOrder, onRemove }: {
               if (e.altKey && e.key === "ArrowUp" && i > 0) { e.preventDefault(); move(i, i - 1); focusRow(i - 1); }
               else if (e.altKey && e.key === "ArrowDown" && i < rows.length - 1) { e.preventDefault(); move(i, i + 1); focusRow(i + 1); }
               else if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); onRemove(t.id); }
+              else if (opens && e.key === "Enter" && e.target === e.currentTarget) { e.preventDefault(); onOpen(t.id); }
             }}
             onContextMenu={(e) => openMenu(e, menu)}>
             {sleeve ? <>
