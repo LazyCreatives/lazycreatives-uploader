@@ -6,7 +6,7 @@ from lazyupload.scanner import discover
 def test_discover_finds_only_audio(mixes_dir):
     found = discover([mixes_dir])
     names = {m["name"] for m in found}
-    assert names == {"Sunset Dub", "Midnight Drive", "Warehouse Set"}
+    assert names == {"Sunset Dub", "Midnight Drive", "Harbour Lights"}
     assert all(m["ext"] == ".wav" for m in found)
 
 

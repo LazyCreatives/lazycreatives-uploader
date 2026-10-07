@@ -20,6 +20,7 @@ export interface Config {
   watch_backups_folders?: boolean;  // also look in the export folders Backups knows
   auto_cover?: boolean;         // automatic posts get a waveform cover (off unless ticked)
   auto_playlist?: { mode: "off" | "one" | "genre"; playlist_id: number | null };  // new posts into a playlist
+  auto_new_versions?: boolean;  // the automatic check swaps in new versions of private songs
 }
 
 export interface Mix {
@@ -46,6 +47,15 @@ export interface Mix {
   // e.g. "AIF"); the winning file lists the formats it beat in dupe_formats.
   superseded_by?: string | null;
   dupe_formats?: string[];
+  // Every file of this mix (the row and its other formats), best first, so the row can
+  // show them all and post the one you pick. format_of: on the others, the row's path.
+  formats?: { path: string; format: string; size: number; uploaded: boolean }[];
+  format_of?: string;
+  song?: string;   // the song this file belongs to (name without version words)
+  // This song is already on SoundCloud: "same" = this mix (in another format, or
+  // posted elsewhere at the same length); "version" = another version of the song.
+  on_soundcloud?: { kind: "same" | "version"; title: string | null; format: string | null;
+    permalink_url: string | null; posted_at: string | null; count: number; id?: number | null } | null;
   short?: boolean; // shorter than the Settings minimum: hidden on Upload, never auto-posted
   stem?: boolean;  // one part of a song (kick, vocals): hidden on Upload, never auto-posted
   wip?: boolean;   // user is iterating on this track — keep private + watch for re-bounces
@@ -139,7 +149,7 @@ export type ProgressEvent =
   | { type: "track_start"; index: number; name: string; path?: string; total: number }
   | { type: "track_progress"; index: number; name: string; path?: string; sent: number; size: number }
   | { type: "track_done"; index: number; name: string; path?: string; permalink_url: string | null }
-  | { type: "track_skipped"; index: number; name: string; path?: string; reason: string }
+  | { type: "track_skipped"; index: number; name: string; path?: string; reason: string; note?: string; permalink_url?: string | null }
   // `error` is the full message (kept in History); `reason` is a few plain words for the row.
   | { type: "track_error"; index: number; name: string; path?: string; error: string; reason?: string }
   | { type: "upload_done"; ok_count: number; error_count: number; skipped_count: number; cancelled?: boolean };
@@ -184,7 +194,9 @@ export interface Track {
   original_format?: string | null;
   dupe_group?: number | null;   // the keeper track's id, shared across the group
   dupe_count?: number;          // group size (>1 ⇒ this track has duplicates)
-  dupe_keeper?: boolean;        // true on the highest-quality copy
+  dupe_keeper?: boolean;        // true on the copy to keep (most played, then best quality)
+  version_count?: number;       // the song is on SoundCloud in this many versions (lengths)
+  replaced_by?: { id: number | null; permalink_url: string | null } | null;  // a newer version took its place
   waveform_url?: string | null; // source for generated waveform cover art
   local_path?: string | null;   // the file this app posted, when it's still on this computer
 }
@@ -230,6 +242,7 @@ export interface UploadItemInput {
   file_hash?: string | null;
   size?: number;
   artwork_path?: string;
+  allow_double?: boolean;  // post even though this song is already on SoundCloud
 }
 
 // A listener's comment on one of your SoundCloud tracks.

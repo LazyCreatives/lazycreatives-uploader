@@ -5,13 +5,14 @@ import { IS_MAC } from "../desktop";
 import { COMPANION_KEYS, openCompanion } from "../companion";
 import { NavRecents } from "./Recents";
 
-export type Tab = "home" | "upload" | "manage" | "playlists" | "history" | "settings";
+export type Tab = "home" | "upload" | "manage" | "playlists" | "albums" | "history" | "settings";
 
 const ITEMS: { key: Tab; label: string; icon: IconName }[] = [
   { key: "home", label: "Home", icon: "home" },
   { key: "upload", label: "Upload", icon: "upload" },
   { key: "manage", label: "Your tracks", icon: "library" },
   { key: "playlists", label: "Playlists", icon: "disc" },
+  { key: "albums", label: "Albums", icon: "music" },
   { key: "history", label: "History", icon: "history" },
   { key: "settings", label: "Settings", icon: "settings" },
 ];

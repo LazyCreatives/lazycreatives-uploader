@@ -55,7 +55,8 @@ export function foldUpload(u: UploadState, ev: ProgressEvent): UploadState {
       return { ...u, completed: u.completed + 1, lastUrl: ev.permalink_url,
         items: setItem({ phase: "posted", url: ev.permalink_url }) };
     case "track_skipped":
-      return { ...u, skipped: u.skipped + 1, items: setItem({ phase: "skipped", reason: ev.reason }) };
+      return { ...u, skipped: u.skipped + 1,
+        items: setItem({ phase: "skipped", reason: ev.note || ev.reason, url: ev.permalink_url ?? null }) };
     case "track_error":
       return { ...u, errors: u.errors + 1,
         items: setItem({ phase: "failed", reason: ev.reason || "Something went wrong.", error: ev.error }) };

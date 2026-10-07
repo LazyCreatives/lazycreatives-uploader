@@ -42,6 +42,13 @@
 .mix-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .mix-title .col-trunc { min-width: 0; }
 .mix-title__edit { flex: 1; min-width: 0; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--accent-2); border-radius: 4px; padding: 0 6px; margin: 0; outline: none; }
+/* one mix in several formats: a small tag per format; the lit one is the file that posts */
+.fmtset { display: inline-flex; flex: none; gap: 3px; margin-left: 2px; }
+.fmtchip { height: 16px; padding: 0 5px; font: 600 10px/14px var(--font); letter-spacing: .04em; color: var(--text-faint);
+  background: none; border: 1px solid var(--border); border-radius: 3px; cursor: pointer; }
+.fmtchip:hover:not(:disabled) { color: var(--text); border-color: var(--border-interactive); }
+.fmtchip--on { color: var(--text); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.fmtchip:disabled { cursor: default; }
 .fmt-badge.fmt-badge--tag { height: 16px; padding: 0 4px; font-size: 10.5px; border-radius: 3px; color: var(--text-faint); }
 /* long lists: rows and cards off screen aren't drawn until they scroll into view */
 .table > .row.mix-cols:not(.cols-head) { content-visibility: auto; contain-intrinsic-size: auto 52px; }

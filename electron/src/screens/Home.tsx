@@ -23,7 +23,7 @@ const api = makeApi();
 // Mixes in the watched folders that haven't gone up yet (an extra format of the
 // same mix doesn't count), and the most recently exported one.
 export function waitingMixes(mixes: Mix[] | null): { count: number; newest: Mix | null } {
-  const fresh = (mixes ?? []).filter((m) => !m.uploaded && !m.superseded_by && !m.short);
+  const fresh = (mixes ?? []).filter((m) => !m.uploaded && !m.superseded_by && !m.short && !m.stem && !m.on_soundcloud);
   const newest = fresh.reduce<Mix | null>((a, m) => (!a || m.mtime > a.mtime ? m : a), null);
   return { count: fresh.length, newest };
 }

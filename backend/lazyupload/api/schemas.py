@@ -57,10 +57,18 @@ class Config(BaseModel):
     auto_cover: bool = False
     # Add new posts to a playlist: {"mode": "off" | "one" | "genre", "playlist_id"}.
     auto_playlist: AutoPlaylist = Field(default_factory=lambda: AutoPlaylist())
+    # When a song that is already up as a PRIVATE track is re-exported, the automatic
+    # folder check posts the new version in its place. Public songs always wait for
+    # the producer's Update click. On by default.
+    auto_new_versions: bool = True
 
 
 class ActivateRequest(BaseModel):
     key: str = Field(..., max_length=200)
+
+
+class NewVersionRequest(BaseModel):
+    path: str = Field(..., max_length=_PATH)  # the re-exported file to post in its song's place
 
 
 class ScanRequest(BaseModel):
@@ -79,6 +87,7 @@ class UploadItem(BaseModel):
     file_hash: str | None = Field(None, max_length=128)
     size: int | None = Field(None, ge=0)
     artwork_path: str | None = Field(None, max_length=_PATH)  # local image; overrides default cover
+    allow_double: bool = False    # post even though this song is on SoundCloud in another format/version
 
 
 class UploadRequest(BaseModel):

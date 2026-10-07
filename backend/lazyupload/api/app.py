@@ -13,13 +13,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from lazyupload import (coverart, covers, crypto, entitlement, playback, projectmeta, service,
                         soundcloud, waveform)
+from lazyupload.albums import Albums
+from lazyupload.albums_api import make_router as albums_router
 from lazyupload.api.auth import require_token, ws_token_ok
 from lazyupload.models import AUDIO_EXTS
 from lazyupload.api.progress import ProgressHub
 from lazyupload.api.schemas import (
     AccountActivateRequest, ActivateRequest, ArtworkRequest, BulkArtworkRequest, CoverRenderRequest,
     BulkDeleteRequest, BulkTrackUpdate, Config, DisconnectRequest, ScanRequest,
-    MixGenreRequest, PlaylistAdd, PlaylistCreate, PlaylistUpdate, TrackUpdate, UploadRequest, WipRequest,
+    MixGenreRequest, NewVersionRequest, PlaylistAdd, PlaylistCreate, PlaylistUpdate, TrackUpdate, UploadRequest, WipRequest,
 )
 from lazyupload.catalog import Catalog
 from lazyupload.connect import SoundCloudConnectSession
@@ -318,6 +320,33 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         asyncio.create_task(_run_job(job_id, items, defaults, req.force, req.release_at))
         return {"job_id": job_id, "state": "running"}
 
+    @app.post("/api/versions/update", dependencies=[Depends(require_token)])
+    async def update_version(req: NewVersionRequest):
+        """Post a re-exported file in place of its song on SoundCloud: same title, cover,
+        details and playlists; the old upload is kept and marked replaced."""
+        if not service.connected(catalog):
+            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+        if service.upload_in_progress():
+            raise HTTPException(status_code=409, detail="A post is already running. Try again when it's done.")
+
+        def progress(ev):
+            try:
+                hub.publish_threadsafe(ev)
+            except RuntimeError:
+                pass
+
+        app.state.hub.bind_loop(asyncio.get_running_loop())
+        mixes = await asyncio.to_thread(service.scan_mixes, catalog, _resolve_sources(None))
+        mix = next((m for m in mixes if m.get("path") == req.path), None)
+        if mix is None or (mix.get("on_soundcloud") or {}).get("kind") != "version":
+            raise HTTPException(status_code=404, detail="That file isn't a new version of a song on SoundCloud.")
+        try:
+            return await asyncio.to_thread(service.post_new_version, catalog, mix, progress)
+        except RuntimeError as e:
+            if str(e) == "old_track_gone":
+                raise HTTPException(status_code=404, detail="The song's upload is no longer on SoundCloud.")
+            raise
+
     @app.get("/api/jobs/{job_id}", dependencies=[Depends(require_token)])
     def job_status(job_id: str):
         job = app.state.jobs.get(job_id)
@@ -362,7 +391,20 @@ def create_app(token: str, db_path: Path) -> FastAPI:
             root = os.path.realpath(src)
             if real == root or real.startswith(root.rstrip(os.sep) + os.sep):
                 return True
-        return catalog.is_uploaded_path(str(p))
+        return catalog.is_uploaded_path(str(p)) or str(p) in albums.paths()
+
+    # ---- albums: one list shared with Backups (see albums.py) ----------------
+    albums = Albums()
+
+    def _album_candidates() -> list[dict]:
+        """Mixes that could go on an album: the songs in your watched folders, one per
+        song (no stems, no second format of the same mix, no test bounces)."""
+        mixes = service.scan_mixes(catalog, _resolve_sources(None))
+        return [{"path": m["path"], "title": m["name"], "project": m.get("project_match") or "",
+                 "genre": m.get("genre") or "", "duration": m.get("duration"), "posted": bool(m.get("uploaded"))}
+                for m in mixes if not m.get("stem") and not m.get("superseded_by") and not m.get("short")]
+
+    app.include_router(albums_router(require_token, projectmeta.find_backups_db, _album_candidates, albums))
 
     @app.get("/api/audio")
     def audio(request: Request, path: str, t: str = "", decode: int = 0):

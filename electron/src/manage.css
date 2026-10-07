@@ -164,7 +164,7 @@
 /* the title column keeps room for a name at the default window size; the waveform
    and project columns give way first */
 /* stripe · tick · play · cover · track · rating · waveform · from project · plays · score · privacy · actions */
-.track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) 78px minmax(48px, 1fr) minmax(104px, 1fr) 56px 72px 92px; }
+.track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) 84px minmax(48px, 1fr) minmax(104px, 1fr) 56px 72px 92px; }
 .table--crate .track-cols .mixrow__check { margin: 0; }
 /* narrower windows: rating, waveform and project step out (the project shows in the edit panel) */
 @media (max-width: 1099px) {

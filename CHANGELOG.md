@@ -14,6 +14,26 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## 0.2.7 (8 October 2026)
+
+### New
+- **Albums: plan what comes out next.** A new Albums page holds each album you're putting together: its songs in order (drag to reorder), the release day with a countdown, and what each song still needs before then, like a WAV, a proper title, or a fresh export after the project changed. Albums are shared with Backups, so a change in one app shows in the other.
+- **Hear the whole album, with crossfade.** Play album runs it top to bottom with the songs blending into each other, anywhere from Off to 12 seconds, the way Spotify or Apple Music would play it. Mark songs that should run straight into the next one, and "Play joins only" plays just the seconds around each change. It only changes how the album plays; your files stay exactly as they are.
+- **Report a problem in one click.** Help, Report a problem (or the new button at the bottom of Settings) opens a short report on GitHub with your app version and computer type already filled in. You read it before you send it.
+- **Crashes offer to report themselves.** If the app runs into an error, its engine stops or it closes suddenly, it says so and offers that same report, with what went wrong filled in. Nothing is ever sent by itself, and no music, files or SoundCloud login are included.
+- **Re-export a song and the new version goes up in its place.** It keeps the old upload's title, cover, details and playlist spots. Private songs swap by themselves during the automatic folder check (a Settings switch turns this off); a public song gets an Update button on Upload, since its plays and comments start again. The old upload is never deleted for you: Your tracks marks it "Replaced by a new version" with a Remove button.
+- **Pause the music when you minimize.** Tick "Pause the music when the window is minimized" in Settings, under App, and whatever is playing pauses when you minimize the window. Off unless you tick it, and the music waits for you to press play again.
+
+### Better
+- **Whole names on the big-type covers.** Covers that print a song's name in big letters now size each word to fit, so "Chrome Hearts" no longer reads "CHROI HEART".
+- **One row per song on Upload.** A mix saved as WAV and MP3 (even with slightly different names, like "Heavy master" and "Heavy") shows once, with a small tag for each format. The best one posts; click another tag to post that one instead.
+- **Your tracks spots songs posted twice.** Near-identical titles of the same length count as the same song, a line at the top says how many, and the copy with the most plays is the one marked to keep.
+
+### Fixed
+- **The level meters keep time with the music.** The two little meters in the player bar now listen to the song as it plays, so they jump with every beat, show left and right separately and fall the moment you pause, instead of drifting out of step.
+- **No more doubles on SoundCloud.** A song already up in any format or version, including ones you posted on the SoundCloud website, is no longer ticked as new. Posting it anyway asks you first, and two formats of one song ticked together only post once.
+- **Ratings sit in the middle of their column.** On Your tracks, the rating marks and the Rating heading are centred, and all five marks fit.
+
 ## 0.2.6 (7 October 2026)
 
 ### New

@@ -12,6 +12,7 @@ import { GlyphPicker } from "../components/Marks";
 import { DENSITIES, useDensity } from "../marks";
 import { useAuditionMode } from "../audition";
 import { UpdateCheck } from "../components/UpdateCheck";
+import { PAUSE_ON_MINIMIZE, keep, pausesOnMinimize } from "../desktop";
 
 const api = makeApi();
 
@@ -39,6 +40,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
   const [rows, setTrackRows] = useDensity("tracks");
   const [, setHistoryRows] = useDensity("history");
   const [preview, setPreview] = useAuditionMode();
+  const [pauseMin, setPauseMin] = useState(pausesOnMinimize);
 
   useEffect(() => { getOpenAtLogin().then(setAtLogin).catch(() => {}); }, []);
   // The export folders Backups knows about, for "Also look in Backups' export folders".
@@ -322,6 +324,16 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
           Songs posted by the folder check or as drafts get a cover drawn from the song itself, in your waveform
           colour. Off unless you tick it. Songs you post from Upload keep the cover you see there.
         </p>
+        <label className="toolchk" style={{ fontSize: 13.5, marginTop: 12 }}>
+          <input type="checkbox" checked={draft.auto_new_versions ?? true} disabled={!canAuto}
+            onChange={(e) => set("auto_new_versions", e.target.checked)} />
+          Post new versions of private songs by themselves
+        </label>
+        <p className="sub" style={{ margin: "6px 0 0", fontSize: 12 }}>
+          When you re-export a song that's up as private, the new version goes up with the same title, cover,
+          details and playlists. The old one stays until you remove it in Your tracks. Public songs always wait
+          for you to press Update on Upload.
+        </p>
         {!canAuto && <div className="locked-note">Automatic watch-folder uploads are a Pro feature.</div>}
       </div>
 
@@ -330,6 +342,10 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
         <label className="toolchk" style={{ fontSize: 13.5 }}>
           <input type="checkbox" checked={atLogin} onChange={(e) => toggleLogin(e.target.checked)} />
           Open Uploader when the computer starts
+        </label>
+        <label className="toolchk" style={{ fontSize: 13.5, marginTop: 8 }}>
+          <input type="checkbox" checked={pauseMin} onChange={(e) => { keep(PAUSE_ON_MINIMIZE, e.target.checked); setPauseMin(e.target.checked); }} />
+          Pause the music when the window is minimized
         </label>
       </div>
 
@@ -346,6 +362,15 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
         <h2>Updates</h2>
         <p className="sub" style={{ marginTop: 0 }}>The app checks for a new version on its own. Press the button to check right now.</p>
         <UpdateCheck />
+      </div>
+
+      <div className="card">
+        <h2>Something not working?</h2>
+        <p className="sub" style={{ marginTop: 0 }}>
+          Opens a short report on GitHub with your app version and computer type filled in. You read it before you send it.
+          If the app ever crashes, it offers the same report the next time it opens.
+        </p>
+        <div><Button sm onClick={() => (window as any).lazyupload?.reportProblem?.()}>Report a problem</Button></div>
       </div>
 
 

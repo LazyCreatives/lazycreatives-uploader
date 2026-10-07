@@ -228,6 +228,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   const lossyDupes = useMemo(
     () => (tracks || []).filter((t) => (t.dupe_count ?? 0) > 1 && !t.dupe_keeper),
     [tracks]);
+  const doubledSongs = useMemo(() => new Set(lossyDupes.map((t) => t.dupe_group)).size, [lossyDupes]);
   function selectLossyDupes() {
     setSelected(new Set(lossyDupes.map((t) => t.id)));
     setBulkSummary(null);
@@ -525,7 +526,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
             {lossyDupes.length > 0 && (
               <button type="button" className={`chip${filters.dupes ? " chip--on" : ""}`}
                 aria-pressed={filters.dupes} onClick={() => setFilters({ dupes: !filters.dupes })}
-                title="Same title uploaded in more than one format (e.g. FLAC + MP3)">Duplicates</button>
+                title="Songs on SoundCloud more than once (e.g. a WAV and an MP3 of one mix)">Posted twice</button>
             )}
             {anyFilter && (
               <span className="find__count">
@@ -545,10 +546,11 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
             <FacetChips genres={browse.genres} years={browse.years} genre={filters.genre} year={filters.year}
               onGenre={(g) => setFilters({ genre: g })} onYear={(y) => setFilters({ year: y })} yearTitle="Posted in" />
           )}
-          {canBulk && lossyDupes.length > 0 && (
+          {lossyDupes.length > 0 && (
             <div className="mng-dupehint">
-              {lossyDupes.length} lower-quality {lossyDupes.length === 1 ? "copy" : "copies"} of tracks you posted twice ·{" "}
-              <button type="button" className="linkbtn" onClick={selectLossyDupes}>tick {lossyDupes.length === 1 ? "it" : "them"}</button>
+              {doubledSongs === 1 ? "1 song is" : `${fmtCount(doubledSongs)} songs are`} on SoundCloud more than once ·{" "}
+              <button type="button" className="linkbtn" onClick={() => setFilters({ dupes: true })}>show them</button>
+              {canBulk && <> · <button type="button" className="linkbtn" onClick={selectLossyDupes}>tick the extra {lossyDupes.length === 1 ? "copy" : "copies"}</button></>}
             </div>
           )}
         </div>
@@ -633,7 +635,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
         <div className="row cols cols-head track-cols">
           <span /><span /><span /><span />
           <SortHead k="title" label="Track" sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
-          <SortHead k="rating" label="Rating" sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
+          <SortHead k="rating" label="Rating" mid sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
           <span>Waveform</span>
           <SortHead k="project" label="From project" sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
           <SortHead k="plays" label="Plays" num sortKey={sortKey} desc={sortDesc} onSort={sortBy} />
@@ -702,12 +704,12 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
 }
 
 // A Crate table heading that sorts the table: click it, click again to flip it.
-function SortHead({ k, label, num, sortKey, desc, onSort }: {
-  k: SortKey; label: string; num?: boolean; sortKey: SortKey; desc: boolean; onSort: (k: SortKey) => void;
+function SortHead({ k, label, num, mid, sortKey, desc, onSort }: {
+  k: SortKey; label: string; num?: boolean; mid?: boolean; sortKey: SortKey; desc: boolean; onSort: (k: SortKey) => void;
 }) {
   const on = sortKey === k;
   return (
-    <button type="button" className={`find__sort${num ? " col-num" : ""}${on ? " find__sort--on" : ""}`}
+    <button type="button" className={`find__sort${num ? " col-num" : ""}${mid ? " col-mid" : ""}${on ? " find__sort--on" : ""}`}
       onClick={() => onSort(k)}
       aria-label={on ? `${label}, sorted ${desc ? "high to low" : "low to high"}. Press to flip` : `${label}. Press to sort by it`}
       title={`Sort by ${label.toLowerCase()}`}>
@@ -728,10 +730,17 @@ function ProjectCell({ track }: { track: Track }) {
     ? { text: `backup older than track`, tone: "faint", title: `Last backup ${fmtDate(t.backups!.last_backup)}, before this track was posted` }
     : { text: `${t.backups!.count} backup${t.backups!.count === 1 ? "" : "s"}${t.backups!.verified ? ", checked" : ""}` });
   if ((t.missing_count ?? 0) > 0) notes.push({ text: `${fmtCount(t.missing_count)} sample${t.missing_count === 1 ? "" : "s"} missing`, tone: "warn" });
+  const fmt = t.original_format ? `${t.original_format.toUpperCase()} ` : "";
   if ((t.dupe_count ?? 0) > 1) notes.push({
-    text: `${(t.original_format || "?").toUpperCase()} ${t.dupe_keeper ? "copy to keep" : "duplicate"}`,
+    text: t.dupe_keeper ? `${fmt}copy to keep` : `${fmt}posted twice`,
     tone: t.dupe_keeper ? undefined : "warn",
-    title: t.dupe_keeper ? `Best quality of ${t.dupe_count} copies` : `Lower-quality copy (${t.dupe_count} share this title), safe to delete`,
+    title: t.dupe_keeper
+      ? `This song is on SoundCloud ${t.dupe_count} times. This copy has the most plays, so it's the one to keep.`
+      : `The same song is on SoundCloud ${t.dupe_count} times. This is an extra copy: removing it keeps the one with the plays.`,
+  });
+  else if ((t.version_count ?? 0) > 1) notes.push({
+    text: `${t.version_count} versions up`, tone: "faint",
+    title: `This song is on SoundCloud in ${t.version_count} versions of different lengths. Each is its own track, so nothing is marked to remove.`,
   });
   return (
     <div className="row__main">
@@ -819,7 +828,18 @@ function TrackRow({ track, index, defaultArt, selected, onCheck, onQuickPrivacy,
       <Art meta={meta} size={36} />
       <div className="row__main">
         <div className="row__title" title={t.title}>{t.title}</div>
-        <SubLine parts={[t.genre, t.duration ? fmtDuration(t.duration) : "", t.created_at ? `posted ${fmtDate(t.created_at)}` : ""]} />
+        {t.replaced_by ? (
+          <div className="row__sub">
+            <span style={{ color: "var(--warn)" }}
+              title="A newer version of this song was posted in its place, with the same title, cover and playlists. This old upload keeps its plays and comments until you remove it.">
+              Replaced by a new version</span>
+            {t.duration ? ` · ${fmtDuration(t.duration)} · ` : " · "}
+            <button type="button" className="linkbtn" style={{ color: "var(--text)", textDecoration: "underline" }}
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(); }}>Remove</button>
+          </div>
+        ) : (
+          <SubLine parts={[t.genre, t.duration ? fmtDuration(t.duration) : "", t.created_at ? `posted ${fmtDate(t.created_at)}` : ""]} />
+        )}
       </div>
       <Rating id={rateKey(t)} name={t.title} />
       <SongWave path={t.local_path} scUrl={t.local_path ? null : t.waveform_url} meta={meta} height={24} />

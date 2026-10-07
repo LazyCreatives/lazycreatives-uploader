@@ -152,6 +152,15 @@ class Catalog:
             ).fetchone()
         return dict(row) if row else None
 
+    def posted_uploads(self) -> list[dict]:
+        """Every successful post, oldest first: what the song-level double check reads."""
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT title, file_path, file_hash, sc_track_id, permalink_url, account, "
+                "timestamp FROM uploads WHERE status = 'uploaded' ORDER BY id ASC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def totals(self) -> dict:
         with self._lock:
             row = self.conn.execute(

@@ -16,6 +16,7 @@ import { Home } from "./screens/Home";
 import { Upload } from "./screens/Upload";
 import { History } from "./screens/History";
 import { Playlists } from "./screens/Playlists";
+import { Albums } from "./components/Albums";
 import { PlaylistPickHost } from "./components/PlaylistPick";
 import { loadPlaylists, playlistPlace, playlistsNow, songOnPlaylist } from "./playlists";
 import { Settings } from "./screens/Settings";
@@ -33,7 +34,7 @@ import { getRecents, openedWhen } from "./recents";
 
 const api = makeApi();
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-const TABS: Tab[] = ["home", "upload", "manage", "playlists", "history", "settings"];
+const TABS: Tab[] = ["home", "upload", "manage", "playlists", "albums", "history", "settings"];
 const LAST_PAGE = "lc-last-page";
 
 // Mixes Uploader can post; dropping one adds the folder it sits in.
@@ -100,7 +101,7 @@ export default function App() {
   const tracksWith = (f: Partial<TrackFilters>) => { showTracks({ ...NO_FILTERS, ...f }); setTab("manage"); };
   const paletteItems = (): PaletteItem[] => {
     const mod = IS_MAC ? "Cmd" : "Ctrl";
-    const pages: [Tab, string, PaletteItem["icon"]][] = [["home", "Home", "home"], ["upload", "Upload", "upload"], ["manage", "Your tracks", "library"], ["playlists", "Playlists", "disc"], ["history", "History", "history"], ["settings", "Settings", "settings"]];
+    const pages: [Tab, string, PaletteItem["icon"]][] = [["home", "Home", "home"], ["upload", "Upload", "upload"], ["manage", "Your tracks", "library"], ["playlists", "Playlists", "disc"], ["albums", "Albums", "music"], ["history", "History", "history"], ["settings", "Settings", "settings"]];
     const list = paletteTracks.current;
     const genres = [...new Set(list.map((t) => (t.genre || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
     return [
@@ -286,6 +287,9 @@ export default function App() {
             ) : tab === "playlists" ? (
               <Playlists open={onPlaylist.open} song={onPlaylist.track} onOpen={openPlaylist} onClose={() => setTab("playlists")}
                 onOpenTrack={openPlaylistSong} onCloseTrack={closePlaylistSong} />
+            ) : tab === "albums" ? (
+              <Albums app="uploader" oneLook open={sub} onOpen={(id) => setTab("albums", id)} onClose={() => setTab("albums")}
+                metaFor={(s, a, i) => ({ title: s.title, sub: `${a.title} · ${i + 1} of ${a.songs.length}`, cover: s.project || s.title })} />
             ) : tab === "history" ? (
               <History />
             ) : (

@@ -29,6 +29,12 @@ from lazyupload.catalog import Catalog  # noqa: E402
 from tests.helpers import make_wav  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _own_albums_list(tmp_path, monkeypatch):
+    """Albums are shared with Backups in a file outside the app; tests get their own."""
+    monkeypatch.setenv("LC_ALBUMS_DB", str(tmp_path / "shared-albums.db"))
+
+
 @pytest.fixture
 def catalog(tmp_path):
     cat = Catalog(tmp_path / "catalog.db")
@@ -41,6 +47,6 @@ def mixes_dir(tmp_path):
     d = tmp_path / "Mixes"
     make_wav(d / "Sunset Dub.wav", value=1)
     make_wav(d / "Midnight Drive.wav", value=2)
-    make_wav(d / "Warehouse Set.wav", value=3)
+    make_wav(d / "Harbour Lights.wav", value=3)
     (d / "session.als").write_bytes(b"not audio")  # a project file — ignored by the scanner
     return d

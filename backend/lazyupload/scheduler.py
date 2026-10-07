@@ -12,8 +12,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from lazyupload import entitlement
 from lazyupload.catalog import Catalog
 from lazyupload.service import (
-    auto_cover_on, auto_post_picks, get_wip, process_due_releases, process_wip, run_upload,
-    scan_mixes, upload_in_progress, watched_sources,
+    auto_cover_on, auto_post_new_versions, auto_post_picks, get_wip, process_due_releases,
+    process_wip, run_upload, scan_mixes, upload_in_progress, watched_sources,
 )
 
 _JOB_ID = "auto_upload"
@@ -77,8 +77,6 @@ class UploadScheduler:
 
         mixes = scan_mixes(self._catalog, sources)
         fresh = auto_post_picks(mixes)
-        if not fresh:
-            return
         if auto_cover_on(self._catalog):  # only when ticked in Settings
             fresh = [{**m, "auto_cover": True} for m in fresh]
         # Auto runs respect the configured defaults, but default to PRIVATE sharing so
@@ -98,7 +96,11 @@ class UploadScheduler:
                 except RuntimeError:
                     pass
 
-        run_upload(self._catalog, fresh, defaults=defaults, progress=progress)
+        if fresh:
+            run_upload(self._catalog, fresh, defaults=defaults, progress=progress)
+        # A re-exported private song swaps in its new version (public ones wait for
+        # the producer's Update click on Upload).
+        auto_post_new_versions(self._catalog, mixes, progress=progress)
 
     def refresh_wip_job(self) -> None:
         """Add/remove the WIP watch job to match whether any WIP tracks are marked (and

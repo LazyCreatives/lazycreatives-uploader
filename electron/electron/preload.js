@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("lazyupload", {
   readImage: (p) => ipcRenderer.invoke("read-image", p),
   revealPath: (target) => ipcRenderer.invoke("reveal-path", target),
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
+  reportProblem: () => ipcRenderer.invoke("report-problem"),
   getOpenAtLogin: () => ipcRenderer.invoke("get-open-at-login"),
   setOpenAtLogin: (enabled) => ipcRenderer.invoke("set-open-at-login", enabled),
   // "Check for updates" in Settings (see updater.js).
@@ -39,6 +40,12 @@ contextBridge.exposeInMainWorld("lazyupload", {
   // Light or dark (Settings > Look): the window and title strip follow it (desktop.js).
   setTheme: (choice, theme) => ipcRenderer.invoke("set-theme", choice, theme),
   pathForFile: (file) => { try { return webUtils.getPathForFile(file) || ""; } catch { return ""; } },
+  // Settings > "Pause when minimized" (see sendWindowMinimized in desktop.js).
+  onWindowMinimized: (cb) => {
+    const h = () => cb();
+    ipcRenderer.on("window-minimized", h);
+    return () => ipcRenderer.removeListener("window-minimized", h);
+  },
   onMenuCommand: (cb) => {
     const h = (_e, cmd) => cb(cmd);
     ipcRenderer.on("menu-command", h);

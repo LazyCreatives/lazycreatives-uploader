@@ -11,11 +11,11 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from lazyupload import coverart, crypto, projectmeta, seo, soundcloud
+from lazyupload import coverart, crypto, projectmeta, seo, songs, soundcloud
 from lazyupload.catalog import Catalog
 from lazyupload.hashing import hash_file
 from lazyupload.models import TrackMeta, UploadResult
-from lazyupload.scanner import discover
+from lazyupload.scanner import discover, duration as file_duration
 from lazyupload.stems import is_stem
 
 # Module-level "is an upload running" flag so a scheduled tick can stand down while a
@@ -304,8 +304,11 @@ def _enrich_track(catalog: Catalog, t: dict, upload_map: dict | None = None) -> 
 
 def _enrich_tracks(catalog: Catalog, tracks: list[dict]) -> None:
     upload_map = catalog.uploads_by_sc_track_id()  # one query for the whole list
+    replaced = replaced_tracks(catalog)
     for t in tracks:
         _enrich_track(catalog, t, upload_map)
+        r = replaced.get(str(t.get("id")))
+        t["replaced_by"] = {"id": r.get("new_id"), "permalink_url": r.get("permalink_url")} if r else None
 
 
 # Formats SoundCloud stores losslessly — preferred over lossy copies of the same title.
@@ -313,20 +316,24 @@ _LOSSLESS_FORMATS = {"wav", "wave", "aif", "aiff", "flac", "alac"}
 
 
 def _dupe_key(title: str) -> str:
-    return re.sub(r"\s+", " ", strip_wip_tag(title or "").strip().lower())
+    return songs.song_key(strip_wip_tag(title or ""))
 
 
-def _track_quality(t: dict) -> tuple:
-    """Rank within a duplicate group: lossless beats lossy, then larger original, then longer."""
+def _track_keep_rank(t: dict) -> tuple:
+    """Which copy of a double to keep: the one people have played (its plays, likes and
+    comments stay with it), then lossless over lossy, then the bigger original."""
     fmt = (t.get("original_format") or "").lower()
     lossless = 1 if fmt in _LOSSLESS_FORMATS else 0
-    return (lossless, t.get("original_content_size") or 0, t.get("duration") or 0)
+    return (t.get("playback_count") or 0, lossless, t.get("original_content_size") or 0,
+            t.get("duration") or 0)
 
 
 def _mark_track_dupes(tracks: list[dict]) -> None:
-    """Flag tracks that share a title (e.g. the same release uploaded as FLAC + MP3). Each
-    member gets dupe_group (the keeper's track id), dupe_count, and dupe_keeper, so Manage
-    can group them and offer to delete the lower-quality copies."""
+    """Flag the same song posted more than once. Tracks whose titles name the same song
+    ("Heavy", "Heavy (Master)", "heavy_final") and whose lengths agree are DOUBLES: each
+    gets dupe_group (the keeper's id), dupe_count and dupe_keeper, so Your tracks can
+    group them and offer to remove the extra copies. Same song at a different length is
+    another VERSION: version_count is set so it can be named, never offered for removal."""
     groups: dict[str, list[dict]] = {}
     for t in tracks:
         k = _dupe_key(t.get("title", ""))
@@ -335,17 +342,38 @@ def _mark_track_dupes(tracks: list[dict]) -> None:
     for members in groups.values():
         if len(members) < 2:
             continue
-        best = max(members, key=_track_quality)
-        for t in members:
-            t["dupe_group"] = best.get("id")
-            t["dupe_count"] = len(members)
-            t["dupe_keeper"] = t is best
+        clusters: list[list[dict]] = []
+        for t in sorted(members, key=_track_keep_rank, reverse=True):
+            d = t.get("duration")
+            home = next((c for c in clusters
+                         if d is None or c[0].get("duration") is None
+                         or abs(d - c[0]["duration"]) <= songs.SAME_LENGTH_SC), None)
+            if home is None:
+                clusters.append([t])
+            else:
+                home.append(t)
+        for c in clusters:
+            if len(clusters) > 1:
+                for t in c:
+                    t["version_count"] = len(clusters)
+            if len(c) < 2:
+                continue
+            best = c[0]
+            for t in c:
+                t["dupe_group"] = best.get("id")
+                t["dupe_count"] = len(c)
+                t["dupe_keeper"] = t is best
 
 
 def list_tracks(catalog: Catalog) -> list[dict]:
     if not connected(catalog):
         raise RuntimeError("not_connected")
     tracks = client_for(catalog).list_tracks()
+    try:  # so a folder check knows what is up, including songs posted elsewhere
+        songs.remember_sc_tracks(catalog, (active_account(catalog) or {}).get("id"),
+                                 tracks, time.time())
+    except Exception:
+        pass
     _enrich_tracks(catalog, tracks)
     _mark_track_dupes(tracks)
     return tracks
@@ -749,46 +777,53 @@ def _prune_hash_cache(catalog: Catalog, live_paths: set[str]) -> None:
         catalog.set_setting(_HASH_CACHE_KEY, pruned)
 
 
-_LOSSLESS_EXTS = {".wav", ".aiff", ".aif", ".flac"}
-
-
-def _format_quality(m: dict) -> tuple:
-    """Higher is better. Lossless beats lossy; within a tier the bigger file wins
-    (a stand-in for bit depth / bitrate)."""
-    return (1 if (m.get("ext") or "").lower() in _LOSSLESS_EXTS else 0, m.get("size") or 0)
-
-
 def mark_format_dupes(mixes: list[dict]) -> None:
-    """Collapse exports of the SAME mix in different formats (e.g. an AIF + an MP3 of
-    "HEAVY"). The highest-quality file wins; the rest get `superseded_by` = the kept
-    format so the UI can hide/deselect them and we never double-post one track. The
-    winner lists the alternates it beat in `dupe_formats`. Grouped by exact name
-    (case-insensitive) so distinct tracks are never merged. In-place."""
-    groups: dict[str, list[dict]] = {}
-    for m in mixes:
-        groups.setdefault((m.get("name") or "").strip().lower(), []).append(m)
-    for grp in groups.values():
-        if len(grp) < 2:
-            grp[0]["superseded_by"] = None
-            continue
-        best = max(grp, key=_format_quality)
-        best["superseded_by"] = None
-        best["dupe_formats"] = sorted({(x.get("ext") or "").lstrip(".").upper()
-                                       for x in grp if x is not best})
-        for m in grp:
-            if m is not best:
-                m["superseded_by"] = (best.get("ext") or "").lstrip(".").upper()
+    """Group files that are one mix in several formats (see songs.group_formats): the
+    best one is the row, the rest get `superseded_by`, so one mix never posts twice."""
+    songs.group_formats(mixes)
+
+
+# How long the copy of the account's track list counts as fresh for a folder check.
+_SC_SEEN_FRESH = 15 * 60
+
+
+def _posted_map(catalog: Catalog, refresh: bool = False) -> dict[str, list[dict]]:
+    """{song key: what of it is on SoundCloud}: this app's posts plus the tracks last
+    seen on the account. With `refresh`, a stale copy of the account's tracks is
+    fetched again (best-effort; offline keeps the old copy). A post this app made that
+    is no longer on the account (removed on SoundCloud) no longer counts."""
+    acct = (active_account(catalog) or {}).get("id")
+    seen, at = songs.seen_sc_tracks(catalog, acct)
+    if refresh and acct and connected(catalog) and time.time() - at > _SC_SEEN_FRESH:
+        try:
+            fresh = client_for(catalog).list_tracks()
+            songs.remember_sc_tracks(catalog, acct, fresh, time.time())
+            seen, at = songs.seen_sc_tracks(catalog, acct)
+        except Exception:
+            pass
+    uploads = catalog.posted_uploads()
+    if at:
+        live = {t.get("id") for t in seen}
+        me = account_label(catalog)
+        uploads = [u for u in uploads if u.get("sc_track_id") is None
+                   or u.get("account") != me or u["sc_track_id"] in live]
+    return songs.posted_songs(uploads, seen)
 
 
 def auto_post_picks(mixes: list[dict]) -> list[dict]:
-    """The mixes an automatic run may post: one file per song (the best format), never
-    a song already on SoundCloud in any format, never a short export and never a stem.
-    Without this, a song exported as both WAV and MP3 went up twice."""
-    posted = {(m.get("name") or "").strip().lower() for m in mixes if m.get("uploaded")}
-    return [m for m in mixes
-            if not m.get("uploaded") and not m.get("superseded_by") and not m.get("short")
-            and not m.get("stem")
-            and (m.get("name") or "").strip().lower() not in posted]
+    """The mixes an automatic run may post: one file per song (the best format of its
+    newest version), never a song already on SoundCloud in any format or version, and
+    never a short export or a stem. Without this, a song exported as both WAV and MP3
+    went up twice."""
+    posted = {m.get("song") for m in mixes if m.get("uploaded")}
+    picks: dict[str, dict] = {}
+    for m in mixes:
+        if not songs.is_new(m) or m.get("song") in posted:
+            continue
+        k = m.get("song") or (m.get("name") or "").strip().lower()
+        if k not in picks or (m.get("mtime") or 0) > (picks[k].get("mtime") or 0):
+            picks[k] = m
+    return list(picks.values())
 
 
 # ---- stems -------------------------------------------------------------------
@@ -898,6 +933,12 @@ def scan_mixes(catalog: Catalog, sources: list[Path], progress=None) -> list[dic
     apply_mix_genres(out, catalog)  # a genre the producer set for one mix wins
     mark_stems(out)            # one part of a song (kick, vocals) is never a song to post
     mark_format_dupes(out)     # same track in multiple formats -> keep the best one
+    try:                       # songs already up in another format or version
+        posted = {k: [_with_local_length(p) for p in v]
+                  for k, v in _posted_map(catalog, refresh=True).items()}
+        songs.mark_on_soundcloud(out, posted)
+    except Exception:
+        pass
     annotate_wip(out, catalog) # flag tracks the user is iterating on (WIP + watched)
     mark_short(out, min_length(catalog))  # clicks and test bounces stay out of the way
     if progress:
@@ -956,6 +997,45 @@ def short_reason(exc: BaseException) -> str:
     return "Something went wrong."
 
 
+def double_note(hit: dict) -> str:
+    """A few plain words on why a mix was held back as a double."""
+    where = f" as {hit['format']}" if hit.get("format") else ""
+    if hit.get("kind") == "version":
+        return "Another version of this song is already on SoundCloud."
+    return f"Already on SoundCloud{where}."
+
+
+def _song_on_soundcloud(catalog: Catalog, path: str, name: str, size: int, h: str,
+                        run_songs: dict) -> dict | None:
+    """Is this mix's song already up, in any format or version? Read fresh each time
+    (inside the post lock) so overlapping runs see each other's posts."""
+    key = songs.song_key(name)
+    posted = list(_posted_map(catalog).get(key, [])) + list(run_songs.get(key, []))
+    if not posted:
+        return None
+    try:
+        st = Path(path).stat()
+        dur = file_duration(Path(path), st.st_size, st.st_mtime)
+    except OSError:
+        dur = None
+    me = {"path": path, "file_hash": h, "duration": dur, "song": key}
+    return songs.match_on_soundcloud(me, [_with_local_length(p) for p in posted])
+
+
+def _with_local_length(p: dict) -> dict:
+    """SoundCloud rounds lengths to whole seconds; the posted file, when it is still
+    on disk, gives the exact one."""
+    if not p.get("path"):
+        return p
+    try:
+        f = Path(p["path"])
+        st = f.stat()
+        d = file_duration(f, st.st_size, st.st_mtime)
+    except OSError:
+        return p
+    return {**p, "duration": d} if d is not None else p
+
+
 def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None,
                progress=None, cancel=None, force: bool = False,
                release_at: str | None = None) -> dict:
@@ -988,6 +1068,7 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                     "results": [], "error": "not_connected"}
         client = client_for(catalog)
         uploaded = catalog.uploaded_hashes()
+        run_songs: dict[str, list[dict]] = {}  # songs posted earlier in this same run
         # A configured default cover is applied to any upload that doesn't carry its own.
         default_art = (catalog.get_setting("config") or {}).get("default_artwork_path") or None
         total = len(items)
@@ -1011,6 +1092,19 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                         results.append(UploadResult(name=name, status="skipped", file_hash=h))
                         emit({"type": "track_skipped", "index": i, "name": name, "path": path,
                               "reason": "duplicate"})
+                        continue
+                    # The same song in another format or version: only when the
+                    # producer said to post it anyway (the Upload page asks first).
+                    hit = None if (force or item.get("allow_double")) else _song_on_soundcloud(
+                        catalog, path, name, size, h, run_songs)
+                    if hit:
+                        skipped += 1
+                        note = double_note(hit)
+                        results.append(UploadResult(name=name, status="skipped", file_hash=h,
+                                                    error=note))
+                        emit({"type": "track_skipped", "index": i, "name": name, "path": path,
+                              "reason": "same_song", "note": note,
+                              "permalink_url": hit.get("permalink_url")})
                         continue
                     meta = _meta_for(item, defaults)
                     if release_at:
@@ -1043,6 +1137,15 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                         backups_project=pm.get("project"),
                         backups_project_id=pm.get("project_id"))
                     uploaded[h] = {"permalink_url": url, "title": meta.title}
+                    try:
+                        songs.add_seen_track(catalog, (active_account(catalog) or {}).get("id"),
+                                             {"id": tid, "title": meta.title, "permalink_url": url})
+                    except Exception:
+                        pass
+                    run_songs.setdefault(songs.song_key(name), []).append(
+                        {"title": meta.title, "format": songs.fmt(Path(path).suffix),
+                         "duration": None, "permalink_url": url, "created_at": default_timestamp(),
+                         "file_hash": h, "path": path, "id": tid})
                     ok += 1
                     results.append(UploadResult(name=name, status="uploaded", file_hash=h,
                                                 sc_track_id=tid, permalink_url=url))
@@ -1068,6 +1171,174 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
     finally:
         with _upload_lock:
             _uploading -= 1
+
+
+# ---- new versions of songs already on SoundCloud ---------------------------
+# Re-export a song that is already up and the new file is a NEW VERSION of it. Posting
+# it swaps it in: the new file goes up with the old upload's title, description,
+# genre, tags, privacy and cover, and takes the old one's place in every playlist.
+# SoundCloud doesn't let an app change the audio inside a track, so the old upload
+# stays (with its plays and comments) and is marked "replaced": the producer removes
+# it with one click in Your tracks. The app never deletes a track on its own.
+# The automatic folder check does this by itself for PRIVATE songs (nobody's plays to
+# lose); a public song waits for the producer's Update click on Upload.
+REPLACED_KEY = "replaced_tracks"
+
+
+def auto_new_versions(catalog: Catalog) -> bool:
+    """Swap in new versions of private songs during the automatic folder check."""
+    return bool((catalog.get_setting("config") or {}).get("auto_new_versions", True))
+
+
+def replaced_tracks(catalog: Catalog) -> dict:
+    """{old track id (str): {new_id, permalink_url, title, at}}."""
+    saved = catalog.get_setting(REPLACED_KEY) or {}
+    return saved if isinstance(saved, dict) else {}
+
+
+def _when(stamp) -> float | None:
+    """A posted time ("2026-10-07 14:03:00" or ISO) as seconds; None if unknown."""
+    if not stamp:
+        return None
+    for f in ("%Y-%m-%d %H:%M:%S", None):
+        try:
+            d = datetime.strptime(stamp, f) if f else datetime.fromisoformat(stamp)
+            return d.timestamp()
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def new_version_picks(mixes: list[dict], catalog: Catalog | None = None) -> list[dict]:
+    """The rows that are a new version of a song already up: the newest file of each
+    such song, made after the song was last posted. Never a short export, a stem, a
+    lesser format or a draft (drafts have their own watch)."""
+    wip = get_wip(catalog) if catalog is not None else {}
+    newest: dict[str, dict] = {}
+    for m in mixes:
+        k = m.get("song") or (m.get("name") or "").strip().lower()
+        if k not in newest or (m.get("mtime") or 0) > (newest[k].get("mtime") or 0):
+            newest[k] = m
+    picks = []
+    for m in newest.values():
+        on = m.get("on_soundcloud") or {}
+        if (on.get("kind") != "version" or on.get("id") is None or m.get("uploaded")
+                or m.get("superseded_by") or m.get("short") or m.get("stem") or m.get("wip")
+                or _wip_norm(m.get("name", "")) in wip):
+            continue
+        posted = _when(on.get("posted_at"))
+        if posted is not None and (m.get("mtime") or 0) <= posted:
+            continue  # the song was posted after this file was made
+        picks.append(m)
+    return picks
+
+
+def _cover_file(url: str | None, folder: str) -> str | None:
+    """The old upload's cover, saved to a temporary file so the new version carries it.
+    Best-effort: None when there is no cover or it can't be fetched."""
+    if not url:
+        return None
+    try:
+        if url.startswith("data:"):
+            import base64
+            head, data = url.split(",", 1)
+            raw = base64.b64decode(data) if ";base64" in head else data.encode()
+            ext = ".png" if "png" in head else ".jpg"
+        elif url.startswith(("http://", "https://")):
+            import requests
+            r = requests.get(url, timeout=30)
+            r.raise_for_status()
+            raw = r.content
+            ext = ".png" if url.lower().split("?")[0].endswith(".png") else ".jpg"
+        else:
+            return None
+        out = Path(folder) / f"cover{ext}"
+        out.write_bytes(raw)
+        return str(out)
+    except Exception:
+        return None
+
+
+def _swap_in_playlists(client, old_id, new_id) -> tuple[list[str], list[str]]:
+    """Put the new version where the old one sits in each of the account's playlists.
+    A playlist SoundCloud sent only part of is left alone (sending a short list would
+    drop tracks). Returns (playlists changed, playlists left alone)."""
+    moved, left = [], []
+    for pl in client.list_playlists():
+        ids = [t.get("id") for t in pl.get("tracks") or []]
+        if old_id not in ids:
+            continue
+        if len(ids) < (pl.get("track_count") or 0):
+            left.append(pl.get("title") or "")
+            continue
+        try:
+            client.update_playlist(pl["id"], track_ids=[new_id if i == old_id else i for i in ids])
+            moved.append(pl.get("title") or "")
+        except Exception:
+            left.append(pl.get("title") or "")
+    return moved, left
+
+
+def post_new_version(catalog: Catalog, mix: dict, progress=None) -> dict:
+    """Post `mix` as the new version of its song on SoundCloud (see above). The old
+    upload is only marked replaced, never deleted."""
+    on = mix.get("on_soundcloud") or {}
+    old_id = on.get("id")
+    if old_id is None:
+        raise RuntimeError("not_a_new_version")
+    if not connected(catalog):
+        raise RuntimeError("not_connected")
+    client = client_for(catalog)
+    old = next((t for t in client.list_tracks() if t.get("id") == old_id), None)
+    if old is None:
+        raise RuntimeError("old_track_gone")
+    with tempfile.TemporaryDirectory(prefix="lazyup-cover-") as tmp:
+        item = {"path": mix["path"], "name": mix.get("name"), "file_hash": mix.get("file_hash"),
+                "title": strip_wip_tag(old.get("title") or "") or mix.get("name"),
+                "description": old.get("description") or "", "sharing": old.get("sharing"),
+                "genre": old.get("genre") or "", "tags": list(old.get("tags") or []),
+                "downloadable": bool(old.get("downloadable")), "allow_double": True,
+                # its old playlists are swapped over below, so no auto-playlist add
+                "no_auto_playlist": True,
+                "artwork_path": _cover_file(old.get("artwork_url"), tmp)}
+        res = run_upload(catalog, [item], progress=progress)
+    done = next((r for r in res.get("results", []) if r.get("status") == "uploaded"), None)
+    if not done:
+        r0 = (res.get("results") or [{}])[0]
+        return {"ok": False, "error": r0.get("error") or res.get("error") or "not posted"}
+    new_id = done.get("sc_track_id")
+    moved, left = _swap_in_playlists(client, old_id, new_id) if new_id is not None else ([], [])
+    saved = replaced_tracks(catalog)
+    saved[str(old_id)] = {"new_id": new_id, "permalink_url": done.get("permalink_url"),
+                          "title": item["title"], "at": default_timestamp()}
+    catalog.set_setting(REPLACED_KEY, saved)
+    return {"ok": True, "old_id": old_id, "new_id": new_id, "sharing": old.get("sharing"),
+            "permalink_url": done.get("permalink_url"), "playlists": moved,
+            "playlists_left": left}
+
+
+def auto_post_new_versions(catalog: Catalog, mixes: list[dict], progress=None) -> list[dict]:
+    """The automatic folder check's part: swap in new versions of PRIVATE songs only.
+    A public song is left for the producer's Update click."""
+    if not auto_new_versions(catalog) or not connected(catalog):
+        return []
+    picks = new_version_picks(mixes, catalog)
+    if not picks:
+        return []
+    try:
+        private = {t.get("id") for t in client_for(catalog).list_tracks()
+                   if t.get("sharing") == "private"}
+    except Exception:
+        return []
+    out = []
+    for m in picks:
+        if (m.get("on_soundcloud") or {}).get("id") not in private:
+            continue
+        try:
+            out.append(post_new_version(catalog, m, progress=progress))
+        except Exception:
+            continue
+    return out
 
 
 # ---- work-in-progress (WIP) tracks ------------------------------------------
@@ -1221,7 +1492,7 @@ def process_wip(catalog: Catalog, sources: list[Path], progress=None) -> list[di
         base = (config.get("title_template") or "{name}").replace("{name}", m["name"]).strip() or m["name"]
         wip_title = wip_tag_title(base)  # show it as a WIP on SoundCloud
         item = {"path": m["path"], "name": m["name"], "title": wip_title, "file_hash": h,
-                "size": m.get("size"), "sharing": "private",
+                "size": m.get("size"), "sharing": "private", "allow_double": True,
                 "genre": m.get("genre") or None,
                 "tags": [f"{m['bpm']} BPM"] if m.get("bpm") else None,
                 "auto_cover": auto_cover_on(catalog)}

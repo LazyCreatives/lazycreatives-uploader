@@ -151,7 +151,7 @@ export function describeFilters(f: TrackFilters): string {
     f.q.trim() ? `“${f.q.trim()}”` : "", f.genre === "-" ? "No genre" : f.genre, f.year, band ? `${band.label} BPM` : "",
     f.daw ? dawName(f.daw) : "", f.rated ? `${f.rated}+ rated` : "",
     f.privacy === "all" ? "" : f.privacy === "public" ? "Public" : "Private", project[f.project],
-    f.score === "low" ? "Hard to find" : f.score === "good" ? "Easy to find" : "", f.dupes ? "Duplicates" : "",
+    f.score === "low" ? "Hard to find" : f.score === "good" ? "Easy to find" : "", f.dupes ? "Posted twice" : "",
   ].filter(Boolean);
   return parts.slice(0, 3).join(" · ") || "Everything";
 }

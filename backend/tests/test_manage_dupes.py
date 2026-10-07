@@ -15,8 +15,8 @@ def test_format_duplicates_are_grouped_lossless_wins(tmp_path, monkeypatch):
     _connect_mock(catalog)
     flac = make_wav(tmp_path / "Song.flac", value=1, seconds=0.2)
     mp3 = make_wav(tmp_path / "Song.mp3", value=2, seconds=0.1)
-    service.run_upload(catalog, [{"path": str(flac), "name": "Song"}], {"sharing": "public"})
-    service.run_upload(catalog, [{"path": str(mp3), "name": "Song"}], {"sharing": "public"})
+    service.run_upload(catalog, [{"path": str(flac), "name": "Song", "allow_double": True}], {"sharing": "public"})
+    service.run_upload(catalog, [{"path": str(mp3), "name": "Song", "allow_double": True}], {"sharing": "public"})
 
     dupes = [t for t in service.list_tracks(catalog) if t["title"] == "Song"]
     assert len(dupes) == 2
@@ -34,7 +34,7 @@ def test_wip_tag_does_not_split_a_duplicate_group(tmp_path, monkeypatch):
     a = make_wav(tmp_path / "Beat.flac", value=1, seconds=0.2)
     b = make_wav(tmp_path / "Beat.mp3", value=2, seconds=0.1)
     service.run_upload(catalog, [{"path": str(a), "name": "Beat", "title": "Beat [WIP]"}], {"sharing": "public"})
-    service.run_upload(catalog, [{"path": str(b), "name": "Beat", "title": "Beat"}], {"sharing": "public"})
+    service.run_upload(catalog, [{"path": str(b), "name": "Beat", "title": "Beat", "allow_double": True}], {"sharing": "public"})
     dupes = [t for t in service.list_tracks(catalog) if t["title"].startswith("Beat")]
     assert len(dupes) == 2 and all(t.get("dupe_count") == 2 for t in dupes)
 

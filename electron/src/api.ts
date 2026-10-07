@@ -3,6 +3,7 @@ import type {
   UploadItemInput, UploadRow,
 } from "./types";
 import type { CoverSource } from "./coverArt";
+import type { Album, AlbumCandidate, AlbumSongChange } from "./albums";
 
 function base() {
   const port = (window as any).lazyupload?.port ?? "8754";
@@ -28,6 +29,27 @@ async function req(method: string, path: string, body?: unknown) {
 
 export function makeApi() {
   return {
+    // Albums: one list shared by Backups and Uploader (see albums.ts).
+    async listAlbums(): Promise<{ rev: number; albums: Album[] }> { return req("GET", "/api/albums"); },
+    async albumsRev(): Promise<{ rev: number }> { return req("GET", "/api/albums/rev"); },
+    async albumCandidates(): Promise<AlbumCandidate[]> { return req("GET", "/api/albums/candidates"); },
+    async createAlbum(title: string, releaseDate = ""): Promise<Album> {
+      return req("POST", "/api/albums", { title, release_date: releaseDate });
+    },
+    async updateAlbum(id: string, change: { title?: string; release_date?: string; crossfade?: number }): Promise<Album> {
+      return req("PUT", `/api/albums/${id}`, change);
+    },
+    async deleteAlbum(id: string): Promise<{ ok: boolean }> { return req("DELETE", `/api/albums/${id}`); },
+    async addAlbumSongs(id: string, songs: { path: string; title?: string; project?: string }[]): Promise<Album> {
+      return req("POST", `/api/albums/${id}/songs`, { songs });
+    },
+    async orderAlbum(id: string, paths: string[]): Promise<Album> { return req("PUT", `/api/albums/${id}/order`, { paths }); },
+    async changeAlbumSong(id: string, change: AlbumSongChange): Promise<Album> {
+      return req("PUT", `/api/albums/${id}/song`, change);
+    },
+    async removeAlbumSong(id: string, path: string): Promise<Album> {
+      return req("DELETE", `/api/albums/${id}/song?path=${encodeURIComponent(path)}`);
+    },
     async getSettings(): Promise<Config> { return req("GET", "/api/settings"); },
     async backupsFolders(): Promise<{ installed: boolean; folders: string[] }> { return req("GET", "/api/backups-folders"); },
     async saveSettings(c: Config): Promise<Config> { return req("PUT", "/api/settings", c); },
@@ -52,6 +74,12 @@ export function makeApi() {
     },
     async upload(items: UploadItemInput[], force = false, releaseAt?: string): Promise<{ job_id: string }> {
       return req("POST", "/api/upload", { items, force, release_at: releaseAt ?? null });
+    },
+    // Post a re-exported file in its song's place on SoundCloud (same title, cover,
+    // details and playlists); the old upload is kept and marked replaced.
+    async updateVersion(path: string): Promise<{ ok: boolean; error?: string; permalink_url?: string | null;
+      playlists?: string[]; playlists_left?: string[] }> {
+      return req("POST", "/api/versions/update", { path });
     },
     async jobStatus(id: string): Promise<JobStatus> { return req("GET", `/api/jobs/${id}`); },
     async cancelJob(id: string): Promise<{ cancelling: boolean }> { return req("POST", `/api/jobs/${id}/cancel`); },

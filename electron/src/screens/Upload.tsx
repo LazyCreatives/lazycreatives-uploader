@@ -3,7 +3,7 @@ import { rowKey, useDialogFocus } from "../components/a11y";
 import { makeApi, openExternal, pickImage, readImage, revealPath, saveRenderedCover } from "../api";
 import { pickCover } from "../components/CoverPick";
 import { coverPng } from "../coverRender";
-import { Exit, openMenu, toast, type MenuItem, toastWarn } from "../components/Desktop";
+import { askConfirm, Exit, openMenu, toast, type MenuItem, toastWarn } from "../components/Desktop";
 import { GenreChip, pickGenre } from "../components/GenrePick";
 import { copyText } from "../desktop";
 import type { Config, Entitlement, Mix, Sharing, UploadItemInput } from "../types";
@@ -18,6 +18,19 @@ import type { ItemState, UploadState, ScanState } from "../useProgress";
 import { preselect as pickDropped } from "../companionQueue";
 
 const api = makeApi();
+
+// Free to tick and post without asking: not up in any format or version, the best
+// file of its mix, and not a short click, test bounce or stem.
+const isNew = (m: Mix) => !m.uploaded && !m.superseded_by && !m.short && !m.stem && !m.on_soundcloud;
+
+// One sentence on what of this song is already on SoundCloud.
+function doubleWhy(m: Mix): string {
+  const on = m.on_soundcloud;
+  if (!on) return "";
+  const title = on.title || m.name;
+  if (on.kind === "version") return `${m.name} is a new version of “${title}”, which is already on SoundCloud.`;
+  return `${m.name} is already on SoundCloud${on.format ? ` as ${on.format}` : ""}${title !== m.name ? ` (“${title}”)` : ""}.`;
+}
 
 function dedupeTags(tags: string[]): string[] {
   const seen = new Set<string>();
@@ -83,7 +96,8 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   const [releaseAtValue, setReleaseAtValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-  const [showDupes, setShowDupes] = useState(false);
+  // Which file of a mix posts, when you pick a format other than the best one (row path -> file path).
+  const [useFile, setUseFile] = useState<Record<string, string>>({});
   // The post settings (Post as, cover, go public later) stay folded under one button.
   const [optsOpen, setOptsOpen] = useState(false);
   // Mixes already on SoundCloud stay folded away until asked for.
@@ -130,20 +144,29 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
       // quality wins), so an old mix you left behind on purpose isn't posted by accident.
       // Single-only on Free.
       const since = ov?.last_upload ? new Date(ov.last_upload).getTime() / 1000 : 0;
-      const fresh = m.filter((x) => !x.uploaded && !x.superseded_by && !x.short && !x.stem).map((x) => x.path);
-      const recent = m.filter((x) => !x.uploaded && !x.superseded_by && !x.short && !x.stem && x.mtime > since).map((x) => x.path);
+      // A song already on SoundCloud, in any format or version, is never ticked for you.
+      const fresh = m.filter((x) => isNew(x)).map((x) => x.path);
+      const recent = m.filter((x) => isNew(x) && x.mtime > since).map((x) => x.path);
       let pick = keep ? fresh.filter((p) => keep.has(p)) : recent;
       if (!keep && preselect?.length) {
         const dropped = pickDropped(m, preselect);
-        pick = dropped.pick;
+        // A dropped MP3 of a mix ticks the mix's row, set to post that MP3.
+        const rows = new Map(m.map((x) => [x.path, x]));
+        const chosen: Record<string, string> = {};
+        pick = dropped.pick.map((p) => {
+          const row = rows.get(p)?.format_of;
+          if (row && rows.has(row)) { chosen[row] = p; return row; }
+          return p;
+        });
+        if (Object.keys(chosen).length) setUseFile((u) => ({ ...u, ...chosen }));
         onPreselected?.();
-        if (m.some((x) => x.short && dropped.pick.includes(x.path))) setShowShort(true);  // dropped on purpose
-        if (m.some((x) => x.stem && dropped.pick.includes(x.path))) setShowStems(true);  // picked on purpose
+        if (m.some((x) => x.short && pick.includes(x.path))) setShowShort(true);  // dropped on purpose
+        if (m.some((x) => x.stem && pick.includes(x.path))) setShowStems(true);  // picked on purpose
         if (dropped.already.length && !dropped.pick.length) {
           toast(dropped.already.length === 1 ? `${dropped.already[0].name} is already on SoundCloud.` : "Those mixes are already on SoundCloud.");
         } else if (dropped.pick.length) {
           const shown = ent.features.batch ? dropped.pick.length : 1;
-          toast(shown === 1 ? `${m.find((x) => x.path === dropped.pick[0])?.name ?? "Your mix"} is ticked and ready. Check the details, then post it.`
+          toast(shown === 1 ? `${m.find((x) => x.path === pick[0])?.name ?? "Your mix"} is ticked and ready. Check the details, then post it.`
             : `${shown} mixes are ticked and ready. Check the details, then post them.`);
         } else if (dropped.notFound.length) {
           toastWarn("Couldn’t find that mix in your folders. Try Check folders.");
@@ -239,6 +262,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     return (mixes || [])
       .filter((m) => paths.includes(m.path))
       .map((m) => {
+        const file = fileOf(m);  // the format picked for this mix (the best one unless you chose)
         // Pre-fill from the Backups match: genre -> SoundCloud genre, BPM -> a tag
         // added to the template's or the Settings tags.
         const tags = mixTags(baseTags, m.bpm);
@@ -249,13 +273,13 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
         const title = m.wip ? `${baseTitle} [WIP]` : (tmpl || own ? baseTitle : undefined);
         const itemSharing: Sharing = m.wip ? "private" : (tmpl ? tmpl.sharing : sharing);
         return {
-          path: m.path, name: m.name,
+          path: file.path, name: m.name,
           title,
           sharing: itemSharing,
           genre: tmpl?.genre || m.genre || undefined,
           tags: tags.length ? tags : undefined,
           description: tmpl?.description || undefined,
-          file_hash: m.file_hash, size: m.size,
+          file_hash: file.file_hash, size: file.size,
           // Per-batch cover overrides the configured default; undefined lets the
           // backend apply the default cover art.
           artwork_path: coverArt || undefined,
@@ -264,14 +288,58 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   }
 
   const extOf = (path: string) => (mixes || []).find((m) => m.path === path)?.ext ?? "";
+  // The file that posts for a mix's row: the format you picked, else the best one.
+  function fileOf(row: Mix): Mix {
+    const want = useFile[row.path];
+    return (want && row.formats?.some((f) => f.path === want) && (mixes || []).find((x) => x.path === want)) || row;
+  }
+
+  // Songs in this post that are already on SoundCloud, or ticked twice (two formats or
+  // versions of one song), each with a few words on why.
+  function doublesIn(items: UploadItemInput[]): { path: string; why: string }[] {
+    const all = mixes || [];
+    const rowOf = (p: string) => {
+      const f = all.find((x) => x.path === p);
+      return f?.format_of ? all.find((x) => x.path === f.format_of) ?? f : f;
+    };
+    const songs = new Set<string>();
+    const out: { path: string; why: string }[] = [];
+    for (const i of items) {
+      const row = rowOf(i.path);
+      if (!row) continue;
+      const on = row.on_soundcloud;
+      if (on) out.push({ path: i.path, why: doubleWhy(row) });
+      else if (row.song && songs.has(row.song)) out.push({ path: i.path, why: `${row.name} is another file of a song you ticked.` });
+      if (row.song) songs.add(row.song);
+    }
+    return out;
+  }
 
   // Post the ticked mixes, or just `only` (Try again on one mix that failed). More
   // than one mix, or anything going public, gets a last look first.
-  function start(only?: string) {
+  async function start(only?: string) {
     // a "Go public later" without a usable time never posts (and never posts public now)
     if (scheduleOn && releaseProblem(true, releaseAtValue)) return;
-    const items = plan(only);
+    let items = plan(only);
     if (items.length === 0) return;
+    // A song already on SoundCloud only goes up again when you say so.
+    const doubles = doublesIn(items);
+    if (doubles.length) {
+      const one = doubles.length === 1;
+      const again = await askConfirm({
+        title: one ? "This song is already on SoundCloud" : `${doubles.length} of these songs are already on SoundCloud`,
+        body: `${doubles.map((d) => d.why).join(" ")} Posting ${one ? "it" : "them"} makes a second copy there.`,
+        confirm: one ? "Post it anyway" : "Post them anyway", cancel: one ? "Leave it out" : "Leave them out",
+      });
+      const held = new Set(doubles.map((d) => d.path));
+      items = again ? items.map((i) => (held.has(i.path) ? { ...i, allow_double: true } : i))
+        : items.filter((i) => !held.has(i.path));
+      if (!again) {
+        const rows = new Set(doubles.map((d) => (mixes || []).find((x) => x.path === d.path)?.format_of ?? d.path));
+        setSelected((prev) => new Set([...prev].filter((p) => !rows.has(p))));
+      }
+      if (items.length === 0) return;
+    }
     const releaseAt = scheduleOn ? new Date(releaseAtValue).toISOString() : undefined;
     const goesPublic = !!releaseAt || items.some((i) => i.sharing === "public");
     // anything on the checklist worth a look also gets the last look, even one private mix
@@ -329,21 +397,23 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     : (running ? 3 : 0);
   const busy = running || upload.active;
   const itemOf = (m: Mix): ItemState | undefined => upload.items[m.path] ?? upload.items[m.name];
-  const newCount = (mixes || []).filter((m) => !m.uploaded && !m.superseded_by && !m.short && !m.stem).length;
+  const newCount = (mixes || []).filter(isNew).length;
   const shortCount = (mixes || []).filter((m) => m.short && !m.superseded_by && !m.stem).length;
   const stemCount = (mixes || []).filter((m) => m.stem && !m.superseded_by).length;
   const matched = (mixes || []).filter((m) => m.genre || m.bpm).length;
-  const dupeCount = (mixes || []).filter((m) => m.superseded_by).length;
   const wipCount = (mixes || []).filter((m) => m.wip && !m.superseded_by).length;
   const q = query.trim().toLowerCase();
-  const visible = (showDupes ? (mixes || []) : (mixes || []).filter((m) => !m.superseded_by))
+  // One row per mix: its other formats are chips on that row.
+  const visible = (mixes || []).filter((m) => !m.superseded_by)
     .filter((m) => showShort || !m.short)
     .filter((m) => showStems || !m.stem)
     .filter((m) => !q || [m.name, m.project_match, m.genre].some((v) => v && v.toLowerCase().includes(q)));
   // New mixes first; the ones already on SoundCloud go under their own heading.
-  const fresh = visible.filter((m) => !m.uploaded).sort((a, b) => b.mtime - a.mtime);
-  const posted = visible.filter((m) => m.uploaded);
-  const pickable = fresh.filter((m) => !m.superseded_by && !m.short && !m.stem).map((m) => m.path);  // a short one or a stem is ticked by hand
+  // A mix up in another format counts as on SoundCloud; a new version of a posted song stays here.
+  const isUp = (m: Mix) => m.uploaded || m.on_soundcloud?.kind === "same";
+  const fresh = visible.filter((m) => !isUp(m)).sort((a, b) => b.mtime - a.mtime);
+  const posted = visible.filter(isUp);
+  const pickable = fresh.filter(isNew).map((m) => m.path);  // a short one, a stem or a new version is ticked by hand
   const allPicked = pickable.length > 0 && pickable.every((p) => selected.has(p));
   const somePicked = pickable.some((p) => selected.has(p));
   function toggleAll() {
@@ -386,9 +456,43 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     "-" as const,
     { label: "Show the file", onClick: () => revealPath(m.path) },
     { label: "Copy file path", onClick: () => { copyText(m.path); } },
+    ...(m.on_soundcloud?.kind === "version" && !m.superseded_by ? ["-" as const,
+      { label: "Update the song on SoundCloud with this version…", onClick: () => void updateVersion(m), disabled: busy }] : []),
     ...(!m.uploaded && !m.superseded_by ? ["-" as const,
       { label: m.wip ? "Post as the final version" : "Post as work in progress (private)", onClick: () => toggleWip(m), disabled: running }] : []),
   ];
+  // A new version of a song already up: post it in that song's place (same title,
+  // cover, details and playlists). The old upload stays until you remove it.
+  async function updateVersion(m: Mix) {
+    const on = m.on_soundcloud;
+    if (!on || on.kind !== "version") return;
+    const ok = await askConfirm({
+      title: `Update “${on.title ?? m.name}” on SoundCloud?`,
+      body: `${m.name} goes up with the same title, cover, details and playlists. `
+        + "SoundCloud can't swap the sound inside a track, so the new version starts with no plays or comments. "
+        + "The old upload stays, marked “replaced”, until you remove it in Your tracks.",
+      confirm: "Update", cancel: "Not now",
+    });
+    if (!ok) return;
+    setRunning(true);
+    try {
+      const res = await api.updateVersion(m.path);
+      if (!res.ok) { toastWarn(res.error || "That didn't post. Try again."); return; }
+      const pl = res.playlists?.length ? ` It took the old one's place in ${res.playlists.length === 1 ? `“${res.playlists[0]}”` : `${res.playlists.length} playlists`}.` : "";
+      toast(`The new version of ${on.title ?? m.name} is up.${pl}`);
+      if (res.playlists_left?.length) toastWarn(`Couldn't update ${res.playlists_left.join(", ")}: add the new version there by hand.`);
+    } catch (e) {
+      toastWarn(e instanceof Error ? e.message : "That didn't post. Try again.");
+    } finally {
+      setRunning(false);
+      void rescan(selected);
+    }
+  }
+  const updateButton = (m: Mix) => m.on_soundcloud?.kind === "version" && !m.superseded_by && !itemOf(m) ? (
+    <button type="button" className="btn btn--ghost btn--sm mixstate__retry" disabled={busy}
+      title="Post this version in the song's place, with the same title, cover, details and playlists"
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); void updateVersion(m); }}>Update</button>
+  ) : null;
   const retry = (m: Mix) => (
     <button type="button" className="btn btn--ghost btn--sm mixstate__retry" disabled={busy}
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); void start(m.path); }}>Try again</button>
@@ -416,13 +520,22 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   // The line under the name that explains a skip or a failure, with Try again.
   const liveNote = (m: Mix) => {
     const it = itemOf(m);
-    if (it?.phase === "skipped") return <span className="mixstate__note">Skipped (already on SoundCloud)</span>;
+    if (it?.phase === "skipped") return <span className="mixstate__note">{it.reason && it.reason !== "duplicate"
+      ? `Skipped. ${it.reason}` : "Skipped (already on SoundCloud)"}</span>;
     if (it?.phase === "failed") return <span className="mixstate__note mixstate__note--err" title={it.error}>{it.reason}</span>;
     return null;
   };
   const statusBadge = (m: Mix) => liveBadge(m) ?? (m.uploaded
     ? <button type="button" className="pill pill--ok linkbtn"
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); m.permalink_url && openExternal(m.permalink_url); }}>Posted</button>
+    : m.on_soundcloud?.kind === "same"
+      ? <button type="button" className="pill pill--ok linkbtn" title={`${m.on_soundcloud.title ?? m.name} is on SoundCloud. This file is a copy of it in another format.`}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); m.on_soundcloud?.permalink_url && openExternal(m.on_soundcloud.permalink_url); }}>
+          Posted{m.on_soundcloud.format ? ` as ${m.on_soundcloud.format}` : ""}</button>
+    : m.on_soundcloud?.kind === "version"
+      ? <button type="button" className="pill pill--draft linkbtn" title={`${doubleWhy(m)} Click to open it.`}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); m.on_soundcloud?.permalink_url && openExternal(m.on_soundcloud.permalink_url); }}>
+          New version</button>
     : m.superseded_by
       ? <span className="pill pill--skipped">Using {m.superseded_by}</span>
       : m.short
@@ -442,6 +555,19 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   );
   // Under the name: genre and tempo, the project when it has a different name, and
   // any other formats of the same mix. A format other than WAV is named too.
+  const formatChips = (m: Mix) => m.formats && m.formats.length > 1 ? (
+    <span className="fmtset" role="group" aria-label={`Formats of ${m.name}`}>
+      {m.formats.map((f) => {
+        const on = fileOf(m).path === f.path;
+        return (
+          <button key={f.path} type="button" className={`fmtchip${on ? " fmtchip--on" : ""}`} aria-pressed={on}
+            disabled={isUp(m) || busy}
+            title={`${f.format}, ${fmtBytes(f.size)}${f.uploaded ? ", on SoundCloud" : ""}${on ? ". This one posts" : ". Click to post this one instead"}`}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setUseFile((u) => ({ ...u, [m.path]: f.path })); }}>
+            {f.format}</button>);
+      })}
+    </span>) : null;
+  const extLabel = (m: Mix) => m.formats && m.formats.length > 1 ? "" : m.ext.toLowerCase() === ".wav" ? "" : m.ext.replace(".", "").toUpperCase();
   const mixFrom = (m: Mix) => !m.project_match ? "not linked to a project"
     : m.project_match.trim().toLowerCase() === m.name.trim().toLowerCase() ? "" : `from ${m.project_match}`;
 
@@ -471,9 +597,10 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
         <div className="sleeve__meta">
           <div className="track-sleeve__top">
             <div className="sleeve__name" title={m.name}>{titles[m.path] || m.name}</div>
+            {formatChips(m)}
           </div>
           <div className="track-sleeve__sub">
-            <span className="col-trunc" title={m.project_match ?? undefined}>{[m.bpm ? `${Math.round(m.bpm)} BPM` : "", m.uploaded ? "" : fmtWhen(new Date(m.mtime * 1000).toISOString()), mixFrom(m), m.ext.toLowerCase() === ".wav" ? "" : m.ext.replace(".", "").toUpperCase()].filter(Boolean).join(" · ")}</span>
+            <span className="col-trunc" title={m.project_match ?? undefined}>{[m.bpm ? `${Math.round(m.bpm)} BPM` : "", m.uploaded ? "" : fmtWhen(new Date(m.mtime * 1000).toISOString()), mixFrom(m), extLabel(m)].filter(Boolean).join(" · ")}</span>
             <span className="mono">{m.duration ? fmtDuration(m.duration) : ""}</span>
           </div>
           <SongWave path={m.path} meta={meta} height={18} />
@@ -507,6 +634,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
                 onDoubleClick={(e) => { if (m.uploaded || m.superseded_by || running) return; e.preventDefault(); setEditing(m.path); }}>
                 {titles[m.path] || m.name}</span>}
           {titles[m.path] && editing !== m.path && <span className="pill pill--quiet" title={`The file is ${m.name}`}>New title</span>}
+          {editing !== m.path && formatChips(m)}
         </div>
         {note
           ? <div className="row__sub">{note}</div>
@@ -514,14 +642,13 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
               <button type="button" className={`linkbtn mix-genre${m.genre_by_you || !m.genre ? "" : " genre-guess"}`}
                 title={m.genre ? (m.genre_by_you ? "Genre set by you. Click to change" : "Genre guessed from the project. Click to correct it") : "Set a genre"}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); changeGenre(m); }}>{m.genre || "Set genre"}</button>
-              {[m.bpm ? `${Math.round(m.bpm)} BPM` : "", m.uploaded ? "" : `exported ${fmtWhen(new Date(m.mtime * 1000).toISOString())}`, mixFrom(m), m.ext.toLowerCase() === ".wav" ? "" : m.ext.replace(".", "").toUpperCase(),
-                m.dupe_formats && m.dupe_formats.length ? `also ${m.dupe_formats.join(", ")}` : ""]
+              {[m.bpm ? `${Math.round(m.bpm)} BPM` : "", m.uploaded ? "" : `exported ${fmtWhen(new Date(m.mtime * 1000).toISOString())}`, mixFrom(m), extLabel(m)]
                 .filter(Boolean).map((t) => ` · ${t}`).join("")}
             </div>}
       </div>
       <SongWave path={m.path} meta={meta} height={24} />
       <span className="col-num" title={fmtBytes(m.size)}>{m.duration ? fmtDuration(m.duration) : "—"}</span>
-      <span className="mixstate__cell">{statusBadge(m)}{it?.phase === "failed" && retry(m)}</span>
+      <span className="mixstate__cell">{statusBadge(m)}{it?.phase === "failed" ? retry(m) : updateButton(m)}</span>
       {moreButton(m)}
     </AuditionLabel>
     );
@@ -640,21 +767,15 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
               </span>
             </div>
           )}
-          {dupeCount > 0 && (
-            <label className="toolchk up-opt up-opt--end">
-              <input type="checkbox" checked={showDupes} onChange={(e) => setShowDupes(e.target.checked)} />
-              Show every format ({fmtCount(dupeCount)} hidden)
-            </label>
-          )}
           {shortCount > 0 && (
-            <label className={`toolchk up-opt${dupeCount > 0 || stemCount > 0 ? "" : " up-opt--end"}`}
+            <label className="toolchk up-opt up-opt--end"
               title="Exports shorter than the minimum length in Settings, like clicks and test bounces">
               <input type="checkbox" checked={showShort} onChange={(e) => setShowShort(e.target.checked)} />
               Show {fmtCount(shortCount)} short {shortCount === 1 ? "file" : "files"}
             </label>
           )}
           {stemCount > 0 && (
-            <label className={`toolchk up-opt${dupeCount > 0 ? "" : " up-opt--end"}`}
+            <label className={`toolchk up-opt${shortCount > 0 ? "" : " up-opt--end"}`}
               title="The separate parts of a song — a kick, the vocals — exported on their own. They are never posted for you.">
               <input type="checkbox" checked={showStems} onChange={(e) => setShowStems(e.target.checked)} />
               Show {fmtCount(stemCount)} {stemCount === 1 ? "stem" : "stems"}
