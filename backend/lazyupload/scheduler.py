@@ -12,8 +12,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from lazyupload import entitlement
 from lazyupload.catalog import Catalog
 from lazyupload.service import (
-    auto_post_picks, get_wip, process_due_releases, process_wip, run_upload, scan_mixes,
-    upload_in_progress,
+    auto_cover_on, auto_post_picks, get_wip, process_due_releases, process_wip, run_upload,
+    scan_mixes, upload_in_progress, watched_sources,
 )
 
 _JOB_ID = "auto_upload"
@@ -66,7 +66,7 @@ class UploadScheduler:
 
     def _run_once(self) -> None:
         config = self._catalog.get_setting("config") or {}
-        sources = config.get("sources", [])
+        sources = watched_sources(config)
         if not sources:
             return  # nothing watched yet
         tier = entitlement.verify_stored(self._catalog.get_setting("entitlement") or {})
@@ -75,10 +75,12 @@ class UploadScheduler:
         if upload_in_progress():
             return  # a manual/previous run is going — skip this tick
 
-        mixes = scan_mixes(self._catalog, [Path(s) for s in sources])
+        mixes = scan_mixes(self._catalog, sources)
         fresh = auto_post_picks(mixes)
         if not fresh:
             return
+        if auto_cover_on(self._catalog):  # only when ticked in Settings
+            fresh = [{**m, "auto_cover": True} for m in fresh]
         # Auto runs respect the configured defaults, but default to PRIVATE sharing so
         # hands-off automation never publishes a render publicly without opt-in.
         defaults = {
@@ -120,7 +122,7 @@ class UploadScheduler:
 
     def _run_wip(self) -> None:
         config = self._catalog.get_setting("config") or {}
-        sources = config.get("sources", [])
+        sources = watched_sources(config)
         if not sources or upload_in_progress():
             return
         tier = entitlement.verify_stored(self._catalog.get_setting("entitlement") or {})
@@ -134,7 +136,7 @@ class UploadScheduler:
                 except RuntimeError:
                     pass
 
-        published = process_wip(self._catalog, [Path(s) for s in sources], progress=progress)
+        published = process_wip(self._catalog, sources, progress=progress)
         if published and self._hub is not None:
             try:
                 self._hub.publish_threadsafe({"type": "wip_published", "count": len(published)})

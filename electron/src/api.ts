@@ -29,6 +29,7 @@ async function req(method: string, path: string, body?: unknown) {
 export function makeApi() {
   return {
     async getSettings(): Promise<Config> { return req("GET", "/api/settings"); },
+    async backupsFolders(): Promise<{ installed: boolean; folders: string[] }> { return req("GET", "/api/backups-folders"); },
     async saveSettings(c: Config): Promise<Config> { return req("PUT", "/api/settings", c); },
     async account(): Promise<Account> { return req("GET", "/api/account"); },
     async connect(): Promise<{ connect_id: string; auth_url: string | null; status: string; mock: boolean }> {

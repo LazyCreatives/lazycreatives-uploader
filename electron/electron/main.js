@@ -15,6 +15,12 @@ let companion = null; // the narrow window beside the music program (companion.j
 let isQuitting = false;
 let stopping = null;
 
+// Never ask the Mac's Keychain for anything. The window's own storage would
+// otherwise keep its key there, and because the installers are unsigned, macOS treats
+// every update as a new app and asks for your keychain password. Nothing secret lives
+// in the window's storage, so a fixed local key is enough.
+if (process.platform === "darwin") app.commandLine.appendSwitch("use-mock-keychain");
+
 // Single-instance: a second launch must focus the running window, not spawn a
 // duplicate sidecar (which would fight over the same DB + the fixed OAuth port).
 const gotTheLock = app.requestSingleInstanceLock();

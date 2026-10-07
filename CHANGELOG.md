@@ -14,6 +14,19 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## 0.2.6 (7 October 2026)
+
+### New
+- **Uploader can look in your Backups export folders too.** If you use Backups, one switch under Watched folders also looks in every export folder Backups knows about, so you don't have to add them twice. Off until you turn it on.
+- **A cover for automatic posts, if you want one.** Tick "Give automatic posts a waveform cover" in Settings and songs posted by the folder check or as drafts get a cover drawn from the song, in your waveform colour. Off unless you tick it.
+- **New posts can go into a playlist by themselves.** In Settings, pick one of your playlists, or "A playlist for each genre", and every song you post is added to it. Off until you pick one; nothing is ever taken out of a playlist.
+
+### Better
+- **Stems stay out of your way.** The separate parts of a song — a kick, the vocals, Ableton's "Song 3-Bass", anything in a Stems folder — are no longer listed for posting, never ticked for you and never posted by the automatic folder check. A "Show stems" box on Upload brings them back when you do want one.
+
+### Fixed
+- **No more keychain password prompts on Mac.** Uploader no longer asks your Mac's keychain for anything, so the repeated "wants to use your confidential information" boxes are gone. Your SoundCloud login is still encrypted, with its key in a file only your user account can open. After this update on a Mac, connect SoundCloud once more in Settings.
+
 ## 0.2.5 (7 October 2026)
 
 ### New

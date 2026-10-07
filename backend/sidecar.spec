@@ -26,8 +26,9 @@ for pkg in ("uvicorn", "fastapi", "starlette", "apscheduler", "websockets", "pyd
 # Cover-art lettering font (Inter Bold) + its licence, next to coverart.py.
 datas += [("lazyupload/fonts", "lazyupload/fonts")]
 
-if sys.platform != "win32":
-    # keyring finds its Keychain / Secret Service backends through package metadata.
+if sys.platform.startswith("linux"):
+    # keyring finds its Secret Service backends through package metadata. Linux only:
+    # the Mac build never touches the Keychain (see lazyupload/crypto.py).
     hiddenimports += collect_submodules("keyring.backends")
     datas += copy_metadata("keyring")
 

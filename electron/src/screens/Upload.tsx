@@ -89,6 +89,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   // Mixes already on SoundCloud stay folded away until asked for.
   const [showPosted, setShowPosted] = useState(false);
   const [showShort, setShowShort] = useState(false);
+  const [showStems, setShowStems] = useState(false);
   const [query, setQuery] = useState("");
   const [coverArt, setCoverArt] = useState<string | null>(null);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
@@ -129,14 +130,15 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
       // quality wins), so an old mix you left behind on purpose isn't posted by accident.
       // Single-only on Free.
       const since = ov?.last_upload ? new Date(ov.last_upload).getTime() / 1000 : 0;
-      const fresh = m.filter((x) => !x.uploaded && !x.superseded_by && !x.short).map((x) => x.path);
-      const recent = m.filter((x) => !x.uploaded && !x.superseded_by && !x.short && x.mtime > since).map((x) => x.path);
+      const fresh = m.filter((x) => !x.uploaded && !x.superseded_by && !x.short && !x.stem).map((x) => x.path);
+      const recent = m.filter((x) => !x.uploaded && !x.superseded_by && !x.short && !x.stem && x.mtime > since).map((x) => x.path);
       let pick = keep ? fresh.filter((p) => keep.has(p)) : recent;
       if (!keep && preselect?.length) {
         const dropped = pickDropped(m, preselect);
         pick = dropped.pick;
         onPreselected?.();
         if (m.some((x) => x.short && dropped.pick.includes(x.path))) setShowShort(true);  // dropped on purpose
+        if (m.some((x) => x.stem && dropped.pick.includes(x.path))) setShowStems(true);  // picked on purpose
         if (dropped.already.length && !dropped.pick.length) {
           toast(dropped.already.length === 1 ? `${dropped.already[0].name} is already on SoundCloud.` : "Those mixes are already on SoundCloud.");
         } else if (dropped.pick.length) {
@@ -327,19 +329,21 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     : (running ? 3 : 0);
   const busy = running || upload.active;
   const itemOf = (m: Mix): ItemState | undefined => upload.items[m.path] ?? upload.items[m.name];
-  const newCount = (mixes || []).filter((m) => !m.uploaded && !m.superseded_by && !m.short).length;
-  const shortCount = (mixes || []).filter((m) => m.short && !m.superseded_by).length;
+  const newCount = (mixes || []).filter((m) => !m.uploaded && !m.superseded_by && !m.short && !m.stem).length;
+  const shortCount = (mixes || []).filter((m) => m.short && !m.superseded_by && !m.stem).length;
+  const stemCount = (mixes || []).filter((m) => m.stem && !m.superseded_by).length;
   const matched = (mixes || []).filter((m) => m.genre || m.bpm).length;
   const dupeCount = (mixes || []).filter((m) => m.superseded_by).length;
   const wipCount = (mixes || []).filter((m) => m.wip && !m.superseded_by).length;
   const q = query.trim().toLowerCase();
   const visible = (showDupes ? (mixes || []) : (mixes || []).filter((m) => !m.superseded_by))
     .filter((m) => showShort || !m.short)
+    .filter((m) => showStems || !m.stem)
     .filter((m) => !q || [m.name, m.project_match, m.genre].some((v) => v && v.toLowerCase().includes(q)));
   // New mixes first; the ones already on SoundCloud go under their own heading.
   const fresh = visible.filter((m) => !m.uploaded).sort((a, b) => b.mtime - a.mtime);
   const posted = visible.filter((m) => m.uploaded);
-  const pickable = fresh.filter((m) => !m.superseded_by && !m.short).map((m) => m.path);  // a short one is ticked by hand
+  const pickable = fresh.filter((m) => !m.superseded_by && !m.short && !m.stem).map((m) => m.path);  // a short one or a stem is ticked by hand
   const allPicked = pickable.length > 0 && pickable.every((p) => selected.has(p));
   const somePicked = pickable.some((p) => selected.has(p));
   function toggleAll() {
@@ -357,7 +361,8 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   const summary = mixes === null ? "Looking through your watched folders…"
     : `${fmtCount(newCount)} new of ${fmtCount(mixes.length)} in your folders`
       + `${matched ? ` · ${fmtCount(matched)} tagged from Backups` : ""}${wipCount ? ` · ${wipCount} ${wipCount === 1 ? "draft" : "drafts"}` : ""}`
-      + `${shortCount && !showShort ? ` · ${fmtCount(shortCount)} short ${shortCount === 1 ? "file" : "files"} hidden` : ""}`;
+      + `${shortCount && !showShort ? ` · ${fmtCount(shortCount)} short ${shortCount === 1 ? "file" : "files"} hidden` : ""}`
+      + `${stemCount && !showStems ? ` · ${fmtCount(stemCount)} ${stemCount === 1 ? "stem" : "stems"} hidden` : ""}`;
   // What the post will do, in a few words beside the Post settings button.
   const tmplOn = !!templateName;
   const postsAs = [
@@ -422,6 +427,8 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
       ? <span className="pill pill--skipped">Using {m.superseded_by}</span>
       : m.short
       ? <span className="pill pill--skipped" title="Shorter than the minimum length in Settings. Tick it to post it anyway.">Short</span>
+      : m.stem
+      ? <span className="pill pill--skipped" title="One part of a song (a kick, the vocals), not the whole song. Tick it to post it anyway.">Stem</span>
       : m.wip
         ? <button type="button" className="pill pill--draft linkbtn"
             title="Draft: posted privately with [WIP] after its title, and replaced on each new bounce. Click to mark as final."
@@ -446,7 +453,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     const note = liveNote(m);
     const it = itemOf(m);
     return (
-      <AuditionDiv key={m.path} song={m.path} meta={meta} className={`sleeve${picked ? " sleeve--selected" : ""}${m.uploaded || m.superseded_by || m.short ? " sleeve--done" : ""}${it?.phase === "failed" ? " sleeve--failed" : ""}`}
+      <AuditionDiv key={m.path} song={m.path} meta={meta} className={`sleeve${picked ? " sleeve--selected" : ""}${m.uploaded || m.superseded_by || m.short || m.stem ? " sleeve--done" : ""}${it?.phase === "failed" ? " sleeve--failed" : ""}`}
         role="button" tabIndex={0} aria-pressed={picked} onContextMenu={(e) => openMenu(e, mixMenu(m))}
         onClick={() => { if (!locked) toggle(m.path); }}
         onKeyDown={rowKey(() => { if (!locked) toggle(m.path); })}>
@@ -492,7 +499,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
         checked={selected.has(m.path)} onChange={() => toggle(m.path)} aria-label={`Pick ${m.name}`} />
       <PlayButton path={m.path} meta={meta} size={28} />
       <Cover name={m.project_match || m.name} genre={m.genre} size={36} label={false} />
-      <div className="row__main" style={{ opacity: m.uploaded || m.superseded_by || m.short ? 0.6 : 1 }}>
+      <div className="row__main" style={{ opacity: m.uploaded || m.superseded_by || m.short || m.stem ? 0.6 : 1 }}>
         <div className="row__title mix-title">
           {editing === m.path
             ? <TitleField name={m.name} value={titles[m.path] || m.name} onDone={(t) => setTitle(m, t)} onCancel={() => setEditing(null)} />
@@ -640,10 +647,17 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
             </label>
           )}
           {shortCount > 0 && (
-            <label className={`toolchk up-opt${dupeCount > 0 ? "" : " up-opt--end"}`}
+            <label className={`toolchk up-opt${dupeCount > 0 || stemCount > 0 ? "" : " up-opt--end"}`}
               title="Exports shorter than the minimum length in Settings, like clicks and test bounces">
               <input type="checkbox" checked={showShort} onChange={(e) => setShowShort(e.target.checked)} />
               Show {fmtCount(shortCount)} short {shortCount === 1 ? "file" : "files"}
+            </label>
+          )}
+          {stemCount > 0 && (
+            <label className={`toolchk up-opt${dupeCount > 0 ? "" : " up-opt--end"}`}
+              title="The separate parts of a song — a kick, the vocals — exported on their own. They are never posted for you.">
+              <input type="checkbox" checked={showStems} onChange={(e) => setShowStems(e.target.checked)} />
+              Show {fmtCount(stemCount)} {stemCount === 1 ? "stem" : "stems"}
             </label>
           )}
           {(coverArt || scheduleOn) && (

@@ -17,6 +17,9 @@ export interface Config {
   cover_waveform_color: string;
   templates: MetadataTemplate[];
   min_length_seconds?: number;  // shorter exports are hidden on Upload; 0 = off
+  watch_backups_folders?: boolean;  // also look in the export folders Backups knows
+  auto_cover?: boolean;         // automatic posts get a waveform cover (off unless ticked)
+  auto_playlist?: { mode: "off" | "one" | "genre"; playlist_id: number | null };  // new posts into a playlist
 }
 
 export interface Mix {
@@ -44,6 +47,7 @@ export interface Mix {
   superseded_by?: string | null;
   dupe_formats?: string[];
   short?: boolean; // shorter than the Settings minimum: hidden on Upload, never auto-posted
+  stem?: boolean;  // one part of a song (kick, vocals): hidden on Upload, never auto-posted
   wip?: boolean;   // user is iterating on this track — keep private + watch for re-bounces
 }
 
@@ -63,7 +67,7 @@ export interface Account {
   multi: boolean;
   mock: boolean;
   // Where the SoundCloud login is locked away on this computer.
-  login_storage?: "windows" | "keychain" | "file" | "plain";
+  login_storage?: "windows" | "file" | "plain";
 }
 
 export interface MetadataTemplate {

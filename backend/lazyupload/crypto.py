@@ -5,18 +5,22 @@ current user account — another user on the same machine can't read the tokens,
 the key never lives in our code.
 
 On macOS and Linux the tokens are encrypted with AES-GCM under a random 256-bit key
-that lives in the computer's own secure storage: the **macOS Keychain**, or the
-**Secret Service** keyring on Linux (GNOME Keyring, KWallet). Some Linux desktops
-have no keyring running; there the key goes in a file only this user can read
-(`token.key`, mode 0600, next to the catalog) so the app still works and the tokens
-are still never stored in clear. `storage()` says which one is in use.
+kept in a file only this user can read (`token.key`, mode 0600, next to the
+catalog). `storage()` says which one is in use.
+
+We deliberately never use the macOS Keychain: the installers are unsigned, so every
+update looks like a new app to macOS and each Keychain read popped a password
+prompt (several per launch). Builds before 0.2.6 kept the key there
+(`aesgcm:keychain:`); on macOS those logins are left unread (the user connects
+SoundCloud again, with no prompt). On Linux the Secret Service keyring doesn't ask
+per app, so old keychain logins are read once and moved to the key file.
 
 Storage format is a self-describing string: `dpapi:<b64>`, `aesgcm:keychain:<b64>`,
 `aesgcm:file:<b64>` or `plain:<b64>` (only written if every other option failed).
 `decrypt` also accepts a raw legacy plaintext (for catalogs written before
 encryption shipped); `needs_upgrade` flags those so callers can re-save them.
 
-Env: LAZYUP_KEYCHAIN=0 skips the OS keychain (tests, headless machines);
+Env: LAZYUP_KEYCHAIN=0 skips the Linux keyring too (tests, headless machines);
 LAZYUP_KEY_DIR sets where the fallback key file lives.
 """
 import base64
@@ -64,6 +68,7 @@ if _WIN:
 
 # ---- macOS / Linux key management -------------------------------------------
 _keys: dict[str, bytes] = {}  # "keychain" / "file" -> key, cached per process
+_missing: set[str] = set()    # sources already found unusable this process: never re-ask
 
 
 def _key_dir() -> Path:
@@ -77,8 +82,8 @@ def _key_dir() -> Path:
 
 
 def _keyring():
-    """The OS keyring backend, or None when there isn't a usable one."""
-    if os.environ.get("LAZYUP_KEYCHAIN") == "0":
+    """The Linux keyring backend, or None. Never the macOS Keychain (see top)."""
+    if not sys.platform.startswith("linux") or os.environ.get("LAZYUP_KEYCHAIN") == "0":
         return None
     try:
         import keyring
@@ -91,27 +96,25 @@ def _keyring():
         return None
 
 
-def _keychain_key(create: bool) -> bytes | None:
+def _keychain_key(create: bool = False) -> bytes | None:
+    """Read-only: the key older builds kept in the keyring, asked for at most once
+    per process. New keys are never put there."""
     if "keychain" in _keys:
         return _keys["keychain"]
+    if "keychain" in _missing:
+        return None
+    _missing.add("keychain")
     kr = _keyring()
     if kr is None:
         return None
     try:
         stored = kr.get_password(_KEYRING_SERVICE, _KEYRING_USER)
-        if stored:
-            key = base64.b64decode(stored)
-        elif create:
-            key = secrets.token_bytes(32)
-            kr.set_password(_KEYRING_SERVICE, _KEYRING_USER, base64.b64encode(key).decode("ascii"))
-            if kr.get_password(_KEYRING_SERVICE, _KEYRING_USER) is None:
-                return None  # write didn't stick (locked keyring etc.)
-        else:
-            return None
+        key = base64.b64decode(stored) if stored else None
     except Exception:
         return None
-    if len(key) != 32:
+    if key is None or len(key) != 32:
         return None
+    _missing.discard("keychain")
     _keys["keychain"] = key
     return key
 
@@ -139,7 +142,8 @@ def _file_key(create: bool) -> bytes | None:
     return key
 
 
-_KEY_SOURCES = {"keychain": _keychain_key, "file": _file_key}
+_KEY_SOURCES = {"file": _file_key}                          # where new keys go
+_READ_SOURCES = {"file": _file_key, "keychain": _keychain_key}  # what old logins may use
 
 
 def _aes_encrypt(key: bytes, raw: bytes) -> bytes:
@@ -154,8 +158,8 @@ def _aes_decrypt(key: bytes, blob: bytes) -> bytes:
 
 
 def storage() -> str:
-    """Where tokens get locked away on this machine: "windows" (DPAPI), "keychain"
-    (macOS Keychain / Linux keyring), "file" (owner-only key file) or "plain"."""
+    """Where tokens get locked away on this machine: "windows" (DPAPI), "file"
+    (owner-only key file) or "plain"."""
     if _WIN:
         return "windows"
     for name, get in _KEY_SOURCES.items():
@@ -200,7 +204,7 @@ def decrypt(token: str) -> str:
         return _dpapi(_crypt32.CryptUnprotectData, blob).decode("utf-8")
     if token.startswith(_AES):
         name, _, b64 = token[len(_AES):].partition(":")
-        get = _KEY_SOURCES.get(name)
+        get = _READ_SOURCES.get(name)
         key = get(create=False) if get else None
         if key is None:
             raise OSError(f"the {name} key for this token isn't available")
@@ -216,7 +220,10 @@ def is_encrypted(token: str) -> bool:
 
 def needs_upgrade(token: str) -> bool:
     """True for values stored readable (`plain:` or legacy) that this machine can
-    now lock away properly; re-encrypting them moves them to secure storage."""
-    if not isinstance(token, str) or token.startswith((_DPAPI, _AES)):
+    now lock away properly, and for old keyring-locked ones (moved to the key file);
+    re-encrypting them moves them to the current storage."""
+    if not isinstance(token, str) or token.startswith(_DPAPI):
         return False
+    if token.startswith(_AES):
+        return token.startswith(f"{_AES}keychain:") and storage() == "file"
     return storage() != "plain"

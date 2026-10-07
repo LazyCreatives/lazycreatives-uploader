@@ -21,6 +21,11 @@ class MetadataTemplate(BaseModel):
     downloadable: bool = False
 
 
+class AutoPlaylist(BaseModel):
+    mode: Literal["off", "one", "genre"] = "off"
+    playlist_id: int | None = None
+
+
 class Config(BaseModel):
     sources: list[str] = Field(default_factory=list, max_length=_LIST)  # watched folders
     interval_minutes: int = Field(0, ge=0, le=44640)  # 0 = off … max 31 days
@@ -46,6 +51,12 @@ class Config(BaseModel):
     # Exports shorter than this many seconds are hidden on Upload and never posted
     # automatically (clicks, test bounces). 0 = show everything.
     min_length_seconds: int = Field(30, ge=0, le=3600)
+    watch_backups_folders: bool = False  # also look in the export folders Backups knows
+    # Automatic posts (folder check, drafts) get a waveform cover drawn from the song.
+    # Off unless the producer ticks it.
+    auto_cover: bool = False
+    # Add new posts to a playlist: {"mode": "off" | "one" | "genre", "playlist_id"}.
+    auto_playlist: AutoPlaylist = Field(default_factory=lambda: AutoPlaylist())
 
 
 class ActivateRequest(BaseModel):

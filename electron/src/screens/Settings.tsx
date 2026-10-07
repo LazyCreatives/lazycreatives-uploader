@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { getOpenAtLogin, makeApi, setOpenAtLogin } from "../api";
-import type { Account, Config, Entitlement, MetadataTemplate, Sharing } from "../types";
+import type { Account, Config, Entitlement, MetadataTemplate, Playlist, Sharing } from "../types";
 import { Button, PageHeader, ProBadge, TagsInput } from "../components/ui";
 import { CoverShelf } from "../components/CoverShelf";
 import { toast } from "../components/Desktop";
 import { Folders } from "../components/Folders";
+import { Icon } from "../components/Icon";
 import { ConnectPanel } from "../components/Connect";
 import { ThemePicker } from "../components/LookPicker";
 import { GlyphPicker } from "../components/Marks";
@@ -21,8 +22,7 @@ const BLANK_TEMPLATE: MetadataTemplate = {
 
 const LOGIN_STORAGE: Record<NonNullable<Account["login_storage"]>, string> = {
   windows: "Your SoundCloud login is encrypted and locked to your Windows user account.",
-  keychain: "Your SoundCloud login is encrypted, with the key kept in your computer’s own keychain.",
-  file: "Your SoundCloud login is encrypted. No system keychain was found, so the key is kept in a file only your user account can open.",
+  file: "Your SoundCloud login is encrypted, with the key kept in a file only your user account can open.",
   plain: "No secure storage was found on this computer, so your SoundCloud login is saved without encryption.",
 };
 
@@ -41,6 +41,20 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
   const [preview, setPreview] = useAuditionMode();
 
   useEffect(() => { getOpenAtLogin().then(setAtLogin).catch(() => {}); }, []);
+  // The export folders Backups knows about, for "Also look in Backups' export folders".
+  const [bkFolders, setBkFolders] = useState<{ installed: boolean; folders: string[] } | null>(null);
+  useEffect(() => { api.backupsFolders().then(setBkFolders).catch(() => setBkFolders(null)); }, []);
+  // Your playlists, for "Add new posts to a playlist".
+  const [playlists, setPlaylists] = useState<Playlist[] | null>(null);
+  useEffect(() => {
+    if (!account.connected) return;
+    api.listPlaylists().then(setPlaylists).catch(() => setPlaylists([]));
+  }, [account.connected]);
+  const plRule = draft.auto_playlist ?? { mode: "off", playlist_id: null };
+  const plValue = plRule.mode === "one" && plRule.playlist_id ? `pl:${plRule.playlist_id}` : plRule.mode === "genre" ? "genre" : "off";
+  // Only the ones not already in (or inside) a watched folder, as the app looks in them.
+  const under = (f: string, root: string) => f === root || f.startsWith(root.replace(/[\\/]+$/, "") + "/") || f.startsWith(root.replace(/[\\/]+$/, "") + "\\");
+  const bkExtra = (bkFolders?.folders || []).filter((f) => !draft.sources.some((r) => under(f, r)));
 
 
   function set<K extends keyof Config>(k: K, v: Config[K]) {
@@ -151,6 +165,33 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
       <div className="card">
         <h2>Watched folders</h2>
         <Folders sources={draft.sources} onChange={(s) => set("sources", s)} />
+        {bkFolders?.installed && (
+          <>
+            <div className="toolchk" style={{ fontSize: 13.5, marginTop: 14 }}>
+              <input type="checkbox" id="bk-folders" checked={!!draft.watch_backups_folders}
+                onChange={(e) => set("watch_backups_folders", e.target.checked)} />
+              <label htmlFor="bk-folders">Also look in the export folders Backups knows about</label>
+            </div>
+            <p className="sub" style={{ margin: "6px 0 0", fontSize: 12 }}>
+              {bkFolders.folders.length === 0
+                ? "Backups hasn't found any export folders yet."
+                : bkExtra.length === 0
+                  ? "Every export folder Backups knows about is already in your list."
+                  : <>No need to add them twice: {bkExtra.length === 1 ? "this folder" : `these ${bkExtra.length} folders`} from Backups {draft.watch_backups_folders ? "are" : "would be"} looked in too.</>}
+            </p>
+            {draft.watch_backups_folders && bkExtra.length > 0 && (
+              <div className="table" style={{ marginTop: 8 }}>
+                {bkExtra.map((f) => (
+                  <div key={f} className="row" style={{ marginBottom: 0 }}>
+                    <span className="faint" style={{ display: "flex" }}><Icon name="folder" /></span>
+                    <div className="row__main pathline"><div className="row__title mono col-trunc" style={{ fontSize: 12.5, fontWeight: 400 }} title={f}>{f}</div></div>
+                    <span className="pill">from Backups</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
         <div className="toolchk minlen" style={{ fontSize: 13.5, marginTop: 14 }}>
           <input type="checkbox" id="minlen-on" checked={(draft.min_length_seconds ?? 30) > 0}
             onChange={(e) => set("min_length_seconds", e.target.checked ? 30 : 0)} />
@@ -181,6 +222,24 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
             onChange={(e) => set("default_genre", e.target.value)} placeholder="e.g. House" /></label>
         <label className="field"><span>Tags (comma-separated)</span>
           <TagsInput tags={draft.default_tags} onChange={(t) => set("default_tags", t)} /></label>
+        <label className="field"><span>Add new posts to a playlist</span>
+          <select value={plValue} disabled={!account.connected}
+            onChange={(e) => {
+              const v = e.target.value;
+              set("auto_playlist", v === "genre" ? { mode: "genre", playlist_id: null }
+                : v.startsWith("pl:") ? { mode: "one", playlist_id: Number(v.slice(3)) } : { mode: "off", playlist_id: null });
+            }}>
+            <option value="off">No</option>
+            <option value="genre">A playlist for each genre</option>
+            {plRule.mode === "one" && plRule.playlist_id && !(playlists || []).some((p) => p.id === plRule.playlist_id) && (
+              <option value={plValue}>{playlists === null ? "Your playlist (loading…)" : "A playlist that's no longer there"}</option>)}
+            {(playlists || []).map((p) => <option key={p.id} value={`pl:${p.id}`}>{p.title}</option>)}
+          </select></label>
+        <p className="sub" style={{ margin: "-4px 0 12px", fontSize: 12 }}>
+          {plRule.mode === "genre"
+            ? "Each new song goes into the playlist named after its genre, made the first time one goes up. A private song never makes a public playlist."
+            : "Every song you post, by hand or automatically, is added to the end of that playlist. Nothing is ever taken out."}
+        </p>
         <label className="field"><span>Default description</span>
           <textarea value={draft.default_description}
             onChange={(e) => set("default_description", e.target.value)} /></label>
@@ -254,6 +313,15 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
             onChange={(e) => set("auto_upload_sharing", e.target.value as Sharing)}>
             <option value="private">Private (recommended)</option><option value="public">Public</option>
           </select></label>
+        <label className="toolchk" style={{ fontSize: 13.5, marginTop: 12 }}>
+          <input type="checkbox" checked={draft.auto_cover ?? false} disabled={!canAuto}
+            onChange={(e) => set("auto_cover", e.target.checked)} />
+          Give automatic posts a waveform cover
+        </label>
+        <p className="sub" style={{ margin: "6px 0 0", fontSize: 12 }}>
+          Songs posted by the folder check or as drafts get a cover drawn from the song itself, in your waveform
+          colour. Off unless you tick it. Songs you post from Upload keep the cover you see there.
+        </p>
         {!canAuto && <div className="locked-note">Automatic watch-folder uploads are a Pro feature.</div>}
       </div>
 

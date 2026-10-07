@@ -473,3 +473,43 @@ def backups_covers() -> dict | None:
     if not isinstance(state, dict):
         state = {}
     return {"state": state, "folder": str((db.parent / "covers").resolve())}
+
+
+def _backups_setting(key: str):
+    """One of Backups' settings, read-only; None when Backups isn't installed or the
+    setting isn't there."""
+    db = find_backups_db()
+    if not db:
+        return None
+    for uri in (f"file:{db}?mode=ro", f"file:{db}?mode=ro&immutable=1"):
+        try:
+            con = sqlite3.connect(uri, uri=True, timeout=2)
+        except sqlite3.Error:
+            continue
+        try:
+            row = con.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        except sqlite3.Error:
+            continue
+        finally:
+            con.close()
+        try:
+            return json.loads(row[0]) if row and row[0] else None
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def backups_export_folders() -> list[str] | None:
+    """The export folders Backups knows about (the ones added there and the ones it
+    found), that are still there; None when Backups isn't installed."""
+    if not find_backups_db():
+        return None
+    out: list[str] = []
+    for key in ("export_folders", "found_export_folders"):
+        for s in _backups_setting(key) or []:
+            try:
+                if isinstance(s, str) and s and s not in out and Path(s).is_dir():
+                    out.append(s)
+            except OSError:
+                continue
+    return out

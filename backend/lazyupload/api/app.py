@@ -83,8 +83,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     def _resolve_sources(supplied):
         if supplied:
             return [Path(s) for s in supplied]
-        saved = catalog.get_setting("config") or {}
-        return [Path(s) for s in saved.get("sources", [])]
+        return service.watched_sources(catalog.get_setting("config") or {})
 
     # ---- custom cover art -------------------------------------------------------
     covers_folder = covers.folder_for(db_path)
@@ -95,6 +94,13 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         if not found:
             return None, None
         return covers.from_saved(found["state"]), Path(found["folder"])
+
+    @app.get("/api/backups-folders", dependencies=[Depends(require_token)])
+    def backups_folders():
+        """The export folders Backups knows about, for "Also look in Backups' export
+        folders" in Settings. installed is false when Backups isn't on this computer."""
+        found = projectmeta.backups_export_folders()
+        return {"installed": found is not None, "folders": found or []}
 
     def _covers_extra() -> dict:
         state, _ = _backups_covers()

@@ -16,6 +16,7 @@ from lazyupload.catalog import Catalog
 from lazyupload.hashing import hash_file
 from lazyupload.models import TrackMeta, UploadResult
 from lazyupload.scanner import discover
+from lazyupload.stems import is_stem
 
 # Module-level "is an upload running" flag so a scheduled tick can stand down while a
 # manual upload is in flight (mirrors the Backups scheduler's guard).
@@ -435,6 +436,37 @@ def add_to_playlist(catalog: Catalog, playlist_id: int, track_ids: list[int]) ->
     return pl
 
 
+# ---- new posts straight into a playlist ----------------------------------------
+# Settings "Add new posts to a playlist": off (the default), one playlist the producer
+# picked, or a playlist per genre ("House", "Techno"), made the first time a song of
+# that genre goes up. Best-effort: a post never fails because its playlist couldn't
+# be changed. Only adds; never removes a track from anything.
+def auto_playlist(catalog: Catalog) -> dict:
+    """{"mode": "off" | "one" | "genre", "playlist_id": int | None}."""
+    v = (catalog.get_setting("config") or {}).get("auto_playlist") or {}
+    mode = v.get("mode") if v.get("mode") in ("one", "genre") else "off"
+    return {"mode": mode, "playlist_id": v.get("playlist_id")}
+
+
+def file_into_playlist(catalog: Catalog, track_id: int, genre: str, sharing: str) -> str | None:
+    """Add a just-posted track to its playlist per Settings. Returns the playlist's
+    title, or None when nothing was added."""
+    rule = auto_playlist(catalog)
+    try:
+        if rule["mode"] == "one" and rule["playlist_id"]:
+            return add_to_playlist(catalog, int(rule["playlist_id"]), [track_id]).get("title")
+        if rule["mode"] == "genre" and (genre or "").strip():
+            name = genre.strip()
+            pl = next((p for p in list_playlists(catalog)
+                       if (p.get("title") or "").strip().lower() == name.lower()), None)
+            if pl is None:  # a private song never makes a public playlist
+                return create_playlist(catalog, name, sharing or "private", [track_id]).get("title")
+            return add_to_playlist(catalog, pl["id"], [track_id]).get("title")
+    except Exception:
+        return None
+    return None
+
+
 def delete_playlist(catalog: Catalog, playlist_id: int) -> None:
     """Deletes the playlist only; its tracks stay on SoundCloud."""
     _need_connection(catalog)
@@ -559,6 +591,27 @@ def _render_cover(track: dict, name: str, watermark: bool, out_path: str,
         samples, name, strip_wip_tag(track.get("title") or ""), out_path,
         watermark=watermark, avatar_url=avatar_url, avatar_img=avatar_img,
         color=color, analysis=analysis)
+
+
+# ---- a cover for automatic posts ---------------------------------------------
+# Posts made on the Upload page carry the cover the producer sees. Automatic posts
+# (the folder check, drafts) have no page to draw one, so when the producer ticks
+# "Give automatic posts a waveform cover" in Settings they get one drawn from the song
+# itself. Off unless ticked. The audio is only read.
+def auto_cover_on(catalog: Catalog) -> bool:
+    return bool((catalog.get_setting("config") or {}).get("auto_cover", False))
+
+
+def auto_cover_file(catalog: Catalog, path: str, title: str, folder: str) -> str | None:
+    """A waveform cover for this song, saved in `folder`; None if it can't be drawn
+    (the post still goes up, without one)."""
+    try:
+        return _render_cover({"title": title}, account_label(catalog) or "",
+                             _cover_watermark(catalog), str(Path(folder) / "cover.png"),
+                             avatar_url=account_avatar(catalog), color=_cover_color(catalog),
+                             file_path=path)
+    except Exception:
+        return None
 
 
 def generate_waveform_cover(catalog: Catalog, track_id: int) -> dict:
@@ -729,12 +782,26 @@ def mark_format_dupes(mixes: list[dict]) -> None:
 
 def auto_post_picks(mixes: list[dict]) -> list[dict]:
     """The mixes an automatic run may post: one file per song (the best format), never
-    a song already on SoundCloud in any format, and never a short export. Without
-    this, a song exported as both WAV and MP3 went up twice."""
+    a song already on SoundCloud in any format, never a short export and never a stem.
+    Without this, a song exported as both WAV and MP3 went up twice."""
     posted = {(m.get("name") or "").strip().lower() for m in mixes if m.get("uploaded")}
     return [m for m in mixes
             if not m.get("uploaded") and not m.get("superseded_by") and not m.get("short")
+            and not m.get("stem")
             and (m.get("name") or "").strip().lower() not in posted]
+
+
+# ---- stems -------------------------------------------------------------------
+# A stem is one part of a song (the kick, the vocals), exported on its own. They land
+# in the same folders as finished songs, so each one is flagged `stem`: the Upload
+# page leaves them out (with a way to show them), they are never ticked for you, and
+# automatic posting never picks them. The file itself is never touched.
+def mark_stems(mixes: list[dict]) -> None:
+    """In-place: flag the exports that are one part of a song rather than the song."""
+    for m in mixes:
+        path = Path(m["path"])
+        project = m.get("project_match") or ""
+        m["stem"] = is_stem(path, project=project)
 
 
 # ---- genre the producer set for a single mix -----------------------------------
@@ -791,6 +858,21 @@ def mark_short(mixes: list[dict], seconds: int) -> None:
         m["short"] = bool(seconds) and d is not None and d < seconds
 
 
+def watched_sources(config: dict) -> list[Path]:
+    """The folders to look in: the ones picked in Settings, plus, when "Also look in
+    Backups' export folders" is on, the export folders Backups knows about (any not
+    already inside a picked folder). Only ever read."""
+    out = [Path(s) for s in config.get("sources", []) if s]
+    if config.get("watch_backups_folders"):
+        def inside(p: Path, root: Path) -> bool:
+            return p == root or root in p.parents
+        for s in projectmeta.backups_export_folders() or []:
+            p = Path(s)
+            if not any(inside(p, r) for r in out):
+                out.append(p)
+    return out
+
+
 def scan_mixes(catalog: Catalog, sources: list[Path], progress=None) -> list[dict]:
     """Discover mixes and mark which are already on SoundCloud (by content hash)."""
     found = discover(sources)
@@ -814,6 +896,7 @@ def scan_mixes(catalog: Catalog, sources: list[Path], progress=None) -> list[dic
     _prune_hash_cache(catalog, {m["path"] for m in found})
     projectmeta.annotate(out)  # borrow BPM/genre from the sibling Backups catalog by name
     apply_mix_genres(out, catalog)  # a genre the producer set for one mix wins
+    mark_stems(out)            # one part of a song (kick, vocals) is never a song to post
     mark_format_dupes(out)     # same track in multiple formats -> keep the best one
     annotate_wip(out, catalog) # flag tracks the user is iterating on (WIP + watched)
     mark_short(out, min_length(catalog))  # clicks and test bounces stay out of the way
@@ -940,7 +1023,10 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                     art = item.get("artwork_path") or default_art
                     if art and not Path(art).is_file():
                         art = None
-                    track = client.upload(path, meta, on_progress=on_prog, artwork_path=art)
+                    with tempfile.TemporaryDirectory(prefix="lazyup-cover-") as tmp:
+                        if not art and item.get("auto_cover"):
+                            art = auto_cover_file(catalog, path, meta.title, tmp)
+                        track = client.upload(path, meta, on_progress=on_prog, artwork_path=art)
                     tid = track.get("id")
                     url = track.get("permalink_url")
                     if release_at and tid is not None:
@@ -960,6 +1046,8 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                     ok += 1
                     results.append(UploadResult(name=name, status="uploaded", file_hash=h,
                                                 sc_track_id=tid, permalink_url=url))
+                    if tid is not None and not item.get("no_auto_playlist"):
+                        file_into_playlist(catalog, tid, meta.genre, meta.sharing)
                 emit({"type": "track_done", "index": i, "name": name, "path": path,
                       "permalink_url": url})
             except Exception as e:  # one bad track must not abort the batch
@@ -1084,7 +1172,7 @@ def process_wip(catalog: Catalog, sources: list[Path], progress=None) -> list[di
     mixes = scan_mixes(catalog, sources)
     best: dict[str, dict] = {}
     for m in mixes:
-        if m.get("superseded_by") or m.get("short"):
+        if m.get("superseded_by") or m.get("short") or m.get("stem"):
             continue  # only watch the highest-quality render of each track
         k = _wip_norm(m.get("name", ""))
         if k in wip and k not in best:
@@ -1135,7 +1223,8 @@ def process_wip(catalog: Catalog, sources: list[Path], progress=None) -> list[di
         item = {"path": m["path"], "name": m["name"], "title": wip_title, "file_hash": h,
                 "size": m.get("size"), "sharing": "private",
                 "genre": m.get("genre") or None,
-                "tags": [f"{m['bpm']} BPM"] if m.get("bpm") else None}
+                "tags": [f"{m['bpm']} BPM"] if m.get("bpm") else None,
+                "auto_cover": auto_cover_on(catalog)}
         defaults = {"sharing": "private", "genre": config.get("default_genre", ""),
                     "tags": config.get("default_tags", []),
                     "title_template": config.get("title_template", "{name}"),
