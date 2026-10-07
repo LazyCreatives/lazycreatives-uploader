@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld("lazyupload", {
   port: argValue("--lazyup-port"),
   // "vibrancy" (Mac), "mica" (Windows 11) or "none": see windowMaterial in desktop.js.
   material: argValue("--lc-material") || "none",
+  // "win32" makes the page draw its own title strip to drag the window by (TitleBar in Desktop.tsx).
+  platform: process.platform,
   pickFolder: () => ipcRenderer.invoke("pick-folder"),
   pickImage: () => ipcRenderer.invoke("pick-image"),
   readImage: (p) => ipcRenderer.invoke("read-image", p),

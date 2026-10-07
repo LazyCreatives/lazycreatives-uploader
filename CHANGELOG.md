@@ -14,6 +14,11 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## 0.2.3 (7 October 2026)
+
+### Fixed
+- **Move the window on Windows again.** The strip along the top of the window is back, so you can drag the window around by it and double-click it to make the window bigger. The ☰ button on its left opens the menus.
+
 ## 0.2.2 (7 October 2026)
 
 ### New
