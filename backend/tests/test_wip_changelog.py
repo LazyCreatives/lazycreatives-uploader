@@ -30,7 +30,7 @@ def test_wip_rebounce_posts_changelog_comment(catalog, tmp_path):
     _connect_mock(catalog)
     d = tmp_path / "wip"
     f = d / "Loop Idea.wav"
-    make_wav(f, value=1)
+    make_wav(f, seconds=31, value=1)
     service.set_wip(catalog, "Loop Idea", True)
 
     # First bounce: publishes v1. Nothing is overwritten yet, so no comment.
@@ -39,7 +39,7 @@ def test_wip_rebounce_posts_changelog_comment(catalog, tmp_path):
     assert all(not t.get("comments") for t in store.load())
 
     # Overwrite the file with new content → its hash changes → replace + changelog.
-    make_wav(f, value=2)
+    make_wav(f, seconds=31, value=2)
     service.process_wip(catalog, [d])
 
     commented = [t for t in store.load() if t.get("comments")]
@@ -54,9 +54,9 @@ def test_wip_rebounce_changelog_can_be_disabled(catalog, tmp_path):
     catalog.set_setting("config", {"changelog_comments": False})
     d = tmp_path / "wip"
     f = d / "Night Drive.wav"
-    make_wav(f, value=1)
+    make_wav(f, seconds=31, value=1)
     service.set_wip(catalog, "Night Drive", True)
     service.process_wip(catalog, [d])
-    make_wav(f, value=2)
+    make_wav(f, seconds=31, value=2)
     service.process_wip(catalog, [d])
     assert all(not t.get("comments") for t in service._MockStore(catalog).load())

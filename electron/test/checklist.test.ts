@@ -5,10 +5,12 @@ const cfg = { default_artwork_path: "", default_description: "" };
 const states = (c: ReturnType<typeof preflight>) => Object.fromEntries(c.map((x) => [x.key, x.state]));
 
 describe("the checklist before posting", () => {
-  it("flags a file-name title, no cover, no genre and too few tags", () => {
+  it("flags a file-name title, no genre and too few tags", () => {
     const c = preflight({ path: "/m/Neon_Rain_final_v3.wav", name: "Neon_Rain_final_v3", tags: ["one"] }, cfg, ".wav");
-    expect(states(c)).toMatchObject({ title: "warn", cover: "warn", genre: "warn", tags: "warn", description: "tip", file: "ok" });
-    expect(needsLook(c)).toBe(4);
+    expect(states(c)).toMatchObject({ title: "warn", cover: "ok", genre: "warn", tags: "warn", description: "tip", file: "ok" });
+    expect(needsLook(c)).toBe(3);
+    // with no picture picked, the mix goes up with the cover its row shows
+    expect(c.find((x) => x.key === "cover")!.say).toMatch(/shown on its row/);
   });
   it("is happy with a tidy, tagged mix and the default cover", () => {
     const c = preflight({ path: "/m/a.wav", name: "Neon Rain", genre: "Techno", tags: ["a", "b", "c"] },

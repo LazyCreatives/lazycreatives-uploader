@@ -37,3 +37,62 @@ def test_mock_client_uploads(tmp_path):
 
 def test_use_mock_without_credentials():
     assert soundcloud.use_mock() is True  # no LAZYUP_SC_CLIENT_ID configured in tests
+
+
+def _fake_client():
+    return soundcloud.SoundCloudClient({"access_token": "t", "expires_at": 9e12})
+
+
+class _Resp:
+    status_code = 200
+    headers: dict = {}
+
+    def __init__(self, body):
+        self._body = body
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        pass
+
+
+def test_upload_reply_lost_finds_the_track_instead_of_failing(tmp_path, monkeypatch):
+    """SoundCloud took the mix but the answer timed out: report the track it made, so
+    nothing marks it failed and "Try again" never posts it twice."""
+    import time
+    import requests
+    f = tmp_path / "mix.wav"
+    f.write_bytes(b"x" * 2048)
+    now = time.strftime("%Y/%m/%d %H:%M:%S +0000", time.gmtime())
+
+    def post(*a, **k):
+        raise requests.exceptions.ReadTimeout("no answer")
+
+    def get(url, **k):
+        return _Resp({"collection": [
+            {"id": 7, "title": "Other", "created_at": now},
+            {"id": 42, "title": "My Mix", "created_at": now,
+             "permalink_url": "https://soundcloud.com/me/my-mix"}]})
+
+    monkeypatch.setattr(soundcloud.requests, "post", post)
+    monkeypatch.setattr(soundcloud.requests, "get", get)
+    track = _fake_client().upload(str(f), TrackMeta(title="My Mix"))
+    assert track["id"] == 42
+
+
+def test_upload_reply_lost_and_no_track_still_fails(tmp_path, monkeypatch):
+    import pytest
+    import requests
+    f = tmp_path / "mix.wav"
+    f.write_bytes(b"x" * 2048)
+
+    def post(*a, **k):
+        raise requests.exceptions.ReadTimeout("no answer")
+
+    old = "2020/01/01 00:00:00 +0000"  # an older upload with the same name doesn't count
+    monkeypatch.setattr(soundcloud.requests, "post", post)
+    monkeypatch.setattr(soundcloud.requests, "get", lambda url, **k: _Resp(
+        {"collection": [{"id": 1, "title": "My Mix", "created_at": old}]}))
+    with pytest.raises(requests.exceptions.ReadTimeout):
+        _fake_client().upload(str(f), TrackMeta(title="My Mix"))

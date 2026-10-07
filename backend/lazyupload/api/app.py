@@ -1,24 +1,24 @@
 """FastAPI application factory for the uploader sidecar."""
 import asyncio
-import mimetypes
+import hashlib
 import os
 import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 
-from lazyupload import coverart, crypto, entitlement, service, soundcloud, waveform
+from lazyupload import (coverart, covers, crypto, entitlement, playback, projectmeta, service,
+                        soundcloud, waveform)
 from lazyupload.api.auth import require_token, ws_token_ok
 from lazyupload.models import AUDIO_EXTS
 from lazyupload.api.progress import ProgressHub
 from lazyupload.api.schemas import (
-    AccountActivateRequest, ActivateRequest, ArtworkRequest, BulkArtworkRequest,
+    AccountActivateRequest, ActivateRequest, ArtworkRequest, BulkArtworkRequest, CoverRenderRequest,
     BulkDeleteRequest, BulkTrackUpdate, Config, DisconnectRequest, ScanRequest,
-    MixGenreRequest, TrackUpdate, UploadRequest, WipRequest,
+    MixGenreRequest, PlaylistAdd, PlaylistCreate, PlaylistUpdate, TrackUpdate, UploadRequest, WipRequest,
 )
 from lazyupload.catalog import Catalog
 from lazyupload.connect import SoundCloudConnectSession
@@ -85,9 +85,54 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         saved = catalog.get_setting("config") or {}
         return [Path(s) for s in saved.get("sources", [])]
 
+    # ---- custom cover art -------------------------------------------------------
+    covers_folder = covers.folder_for(db_path)
+
+    def _backups_covers():
+        """Backups' cover state, loaded the same way as our own, plus its folder."""
+        found = projectmeta.backups_covers()
+        if not found:
+            return None, None
+        return covers.from_saved(found["state"]), Path(found["folder"])
+
+    def _covers_extra() -> dict:
+        state, _ = _backups_covers()
+        if state is None:
+            return {"backups": None}
+        pub = covers.public(state, url_prefix="/api/covers/backups-img/")
+        return {"backups": {"pictures": pub["pictures"], "projects": pub["projects"]}}
+
+    covers.install(app, catalog, db_path, extra=_covers_extra)
+
+    @app.post("/api/covers/render", dependencies=[Depends(require_token)])
+    def covers_render(req: CoverRenderRequest):
+        """Save a finished cover (drawn in the renderer) so an upload can use it as its
+        artwork_path. Named by its content, so the same cover is written once."""
+        _mime, raw = covers.decode_data_url(
+            req.data, allowed={"image/png": "png", "image/jpeg": "jpg"})
+        folder = covers_folder / "rendered"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{hashlib.sha1(raw).hexdigest()}.png"
+        if not path.is_file():
+            tmp = path.with_suffix(".part")
+            tmp.write_bytes(raw)
+            os.replace(tmp, path)
+        return {"path": str(path.resolve())}
+
+    @app.get("/api/covers/backups-img/{pic_id}")
+    def covers_backups_img(pic_id: str, t: str = ""):
+        if not ws_token_ok(app, t):
+            raise HTTPException(status_code=401, detail="invalid or missing token")
+        state, folder = _backups_covers()
+        path = covers.picture_path(folder, state, pic_id) if state is not None else None
+        if path is None:
+            raise HTTPException(status_code=404, detail="no such picture")
+        return covers.image_response(path)
+
     @app.get("/health")
     def health():
-        return {"status": "ok"}
+        # `player`: the bundled decoder for AIFF, Apple Lossless... is there
+        return {"status": "ok", "player": bool(playback.ffmpeg())}
 
     # ---- entitlement --------------------------------------------------------
     @app.get("/api/entitlement", dependencies=[Depends(require_token)])
@@ -313,14 +358,19 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         return catalog.is_uploaded_path(str(p))
 
     @app.get("/api/audio")
-    def audio(path: str, t: str = ""):
+    def audio(request: Request, path: str, t: str = "", decode: int = 0):
         """Stream a mix for the in-app player. An <audio> element can't send the auth
-        header, so the token rides in the query."""
+        header, so the token rides in the query. Formats the player can't read (AIFF,
+        Apple Lossless, WMA...) are decoded in memory; `decode=1` asks for that even
+        when the file looked playable."""
         if not ws_token_ok(app, t):
             raise HTTPException(status_code=401, detail="invalid or missing token")
         if not _playable(path):
             raise HTTPException(status_code=404, detail="not a known mix")
-        return FileResponse(path, media_type=mimetypes.guess_type(path)[0] or "application/octet-stream")
+        try:
+            return playback.response(path, request.headers.get("range"), force=bool(decode))
+        except playback.CannotPlay:
+            raise HTTPException(status_code=415, detail="this file can't be played") from None
 
     @app.get("/api/peaks", dependencies=[Depends(require_token)])
     def peaks(path: str):
@@ -431,6 +481,60 @@ def create_app(token: str, db_path: Path) -> FastAPI:
             raise HTTPException(status_code=402, detail="Bulk deleting is a Pro feature.")
         results = await asyncio.to_thread(service.bulk_delete, catalog, req.ids)
         return {"results": results}
+
+    # ---- playlists (SoundCloud "sets") ---------------------------------------
+    def _need_connected():
+        if not service.connected(catalog):
+            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+
+    @app.get("/api/playlists", dependencies=[Depends(require_token)])
+    async def list_playlists():
+        _need_connected()
+        try:
+            return {"playlists": await asyncio.to_thread(service.list_playlists, catalog)}
+        except Exception as e:
+            raise _track_http_error(e, "Couldn't load your playlists.")
+
+    @app.post("/api/playlists", dependencies=[Depends(require_token)])
+    async def create_playlist(req: PlaylistCreate):
+        _need_connected()
+        if not req.title.strip():
+            raise HTTPException(status_code=400, detail="Give the playlist a name.")
+        try:
+            return await asyncio.to_thread(service.create_playlist, catalog,
+                                           req.title, req.sharing, req.track_ids)
+        except Exception as e:
+            raise _track_http_error(e, "Couldn't make that playlist.")
+
+    @app.put("/api/playlists/{playlist_id}", dependencies=[Depends(require_token)])
+    async def update_playlist(playlist_id: int, req: PlaylistUpdate):
+        _need_connected()
+        if req.title is None and req.sharing is None and req.track_ids is None:
+            raise HTTPException(status_code=400, detail="Nothing to update.")
+        if req.title is not None and not req.title.strip():
+            raise HTTPException(status_code=400, detail="Give the playlist a name.")
+        try:
+            return await asyncio.to_thread(service.update_playlist, catalog, playlist_id,
+                                           req.title, req.sharing, req.track_ids)
+        except Exception as e:
+            raise _track_http_error(e, "Couldn't save that playlist.")
+
+    @app.post("/api/playlists/{playlist_id}/add", dependencies=[Depends(require_token)])
+    async def add_to_playlist(playlist_id: int, req: PlaylistAdd):
+        _need_connected()
+        try:
+            return await asyncio.to_thread(service.add_to_playlist, catalog, playlist_id, req.track_ids)
+        except Exception as e:
+            raise _track_http_error(e, "Couldn't add to that playlist.")
+
+    @app.delete("/api/playlists/{playlist_id}", dependencies=[Depends(require_token)])
+    async def delete_playlist(playlist_id: int):
+        _need_connected()
+        try:
+            await asyncio.to_thread(service.delete_playlist, catalog, playlist_id)
+        except Exception as e:
+            raise _track_http_error(e, "Couldn't delete that playlist.")
+        return {"ok": True}
 
     @app.post("/api/tracks/{track_id}/artwork", dependencies=[Depends(require_token)])
     async def set_track_artwork(track_id: int, req: ArtworkRequest):

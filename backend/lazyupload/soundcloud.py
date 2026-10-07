@@ -25,7 +25,7 @@ import os
 import re
 import secrets
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -349,6 +349,50 @@ def normalize_track(raw: dict) -> dict:
     }
 
 
+def normalize_playlist(raw: dict) -> dict:
+    """Flatten a SoundCloud (or mock) playlist ("set") into the shape the UI shows.
+    Its tracks keep their order; tracks by other people are kept (with `user`), since
+    a set can hold anyone's tracks."""
+    tracks = []
+    for t in raw.get("tracks") or []:
+        if not isinstance(t, dict) or t.get("id") is None:
+            continue
+        nt = normalize_track(t)
+        nt["user"] = (t.get("user") or {}).get("username") or ""
+        tracks.append(nt)
+    dur_ms = raw.get("duration")
+    if dur_ms is None:
+        dur_ms = sum(int(t.get("duration") or 0) for t in raw.get("tracks") or [] if isinstance(t, dict))
+    return {
+        "id": raw.get("id"),
+        "title": raw.get("title") or "",
+        "description": raw.get("description") or "",
+        "sharing": raw.get("sharing") or "public",
+        "permalink_url": raw.get("permalink_url"),
+        "artwork_url": _hires_artwork(raw.get("artwork_url")),
+        "duration": round(int(dur_ms or 0) / 1000) or None,
+        "track_count": raw.get("track_count") if raw.get("track_count") is not None else len(tracks),
+        "created_at": _iso_created_at(raw.get("created_at")),
+        "last_modified": _iso_created_at(raw.get("last_modified")),
+        "tracks": tracks,
+    }
+
+
+def _playlist_body(title=None, sharing=None, track_ids=None, description=None) -> dict:
+    """The JSON body SoundCloud's /playlists endpoints take. `track_ids` is the whole,
+    ordered list (SoundCloud replaces the set's tracks with it)."""
+    body: dict = {}
+    if title is not None:
+        body["title"] = title
+    if sharing is not None:
+        body["sharing"] = sharing
+    if description is not None:
+        body["description"] = description
+    if track_ids is not None:
+        body["tracks"] = [{"id": int(i)} for i in track_ids]
+    return {"playlist": body}
+
+
 # ---- the real client --------------------------------------------------------
 class SoundCloudClient:
     """Holds tokens for one connected account and talks to the SoundCloud API.
@@ -409,14 +453,47 @@ class SoundCloudClient:
                 art_fh = open(ap, "rb")
                 ctype = mimetypes.guess_type(ap.name)[0] or "image/jpeg"
                 files["track[artwork_data]"] = (ap.name, art_fh, ctype)
-            r = requests.post(f"{API_BASE}/tracks", headers=self._headers(),
-                              data=data, files=files, timeout=_UPLOAD_TIMEOUT)
+            started = time.time()
+            try:
+                r = requests.post(f"{API_BASE}/tracks", headers=self._headers(),
+                                  data=data, files=files, timeout=_UPLOAD_TIMEOUT)
+            except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError):
+                # The answer never came back, but SoundCloud may well have the track:
+                # look for it rather than report a failure, or "Try again" would post
+                # the mix a second time.
+                found = self._just_posted(meta.title, started)
+                if found is None:
+                    raise
+                return found
             _raise_for_status(r)
             return r.json()
         finally:
             pf.close()
             if art_fh:
                 art_fh.close()
+
+    def _just_posted(self, title: str, since: float) -> dict | None:
+        """The newest track on the account with this title, created since `since`
+        (a few minutes' slack for clock drift), or None."""
+        try:
+            r = requests.get(f"{API_BASE}/me/tracks", headers=self._headers(),
+                             params={"limit": 20}, timeout=30)
+            _raise_for_status(r)
+            body = r.json()
+        except Exception:
+            return None
+        items = body.get("collection", []) if isinstance(body, dict) else body
+        for raw in items or []:
+            if (raw.get("title") or "") != title:
+                continue
+            when = _iso_created_at(raw.get("created_at"))
+            try:
+                ts = datetime.fromisoformat(when).timestamp() if when else None
+            except ValueError:
+                ts = None
+            if ts is not None and ts >= since - 300:
+                return raw
+        return None
 
     def set_artwork(self, track_id: int, image_path: str) -> dict:
         """Replace a track's cover art (PUT track[artwork_data]). Returns the updated track."""
@@ -495,9 +572,58 @@ class SoundCloudClient:
         return r.json()
 
 
+    # ---- playlists ("sets") -------------------------------------------------
+    def list_playlists(self, page: int = 50, max_total: int = 500) -> list[dict]:
+        """Every playlist on the connected account, with its tracks in order."""
+        out: list[dict] = []
+        url = f"{API_BASE}/me/playlists"
+        params: dict | None = {"limit": page, "linked_partitioning": "true", "show_tracks": "true"}
+        while url and len(out) < max_total:
+            r = requests.get(url, headers=self._headers(), params=params, timeout=30)
+            _raise_for_status(r)
+            body = r.json()
+            items = body.get("collection", []) if isinstance(body, dict) else body
+            out.extend(normalize_playlist(p) for p in items if isinstance(p, dict))
+            url = body.get("next_href") if isinstance(body, dict) else None
+            params = None
+        return out[:max_total]
+
+    def get_playlist(self, playlist_id: int) -> dict:
+        r = requests.get(f"{API_BASE}/playlists/{playlist_id}", headers=self._headers(),
+                         params={"show_tracks": "true"}, timeout=30)
+        _raise_for_status(r)
+        return normalize_playlist(r.json())
+
+    def create_playlist(self, title: str, sharing: str = "public", track_ids=None) -> dict:
+        r = requests.post(f"{API_BASE}/playlists", headers=self._headers(),
+                          json=_playlist_body(title, sharing, list(track_ids or [])), timeout=30)
+        _raise_for_status(r)
+        return normalize_playlist(r.json())
+
+    def update_playlist(self, playlist_id: int, title=None, sharing=None, track_ids=None) -> dict:
+        r = requests.put(f"{API_BASE}/playlists/{playlist_id}", headers=self._headers(),
+                         json=_playlist_body(title, sharing, track_ids), timeout=30)
+        _raise_for_status(r)
+        return normalize_playlist(r.json())
+
+    def delete_playlist(self, playlist_id: int) -> None:
+        r = requests.delete(f"{API_BASE}/playlists/{playlist_id}", headers=self._headers(), timeout=30)
+        _raise_for_status(r)
+
+
 # ---- the mock client --------------------------------------------------------
 def _slug(title: str) -> str:
     return "".join(c if c.isalnum() else "-" for c in title.lower()).strip("-") or "mix"
+
+
+def _mock_length_ms(path) -> int:
+    """How long a demo upload is, as SoundCloud would report it (WAV only; else 0)."""
+    try:
+        import wave
+        with wave.open(str(path), "rb") as w:
+            return int(w.getnframes() * 1000 / max(1, w.getframerate()))
+    except Exception:
+        return 0
 
 
 def _img_data_url(path) -> str | None:
@@ -539,6 +665,14 @@ _SEED_COMMENTS = {
 }
 
 
+# A demo playlist so the Playlists page has something in it on a fresh demo.
+_SEED_PLAYLISTS = [
+    {"id": 700000001, "title": "Late night", "sharing": "public",
+     "permalink_url": "https://soundcloud.com/demo/sets/late-night",
+     "created_at": "2025/03/20 22:00:00 +0000", "track_ids": [900000002, 900000001]},
+]
+
+
 class MockSoundCloudClient:
     """Stand-in used when no SoundCloud credentials are configured.
 
@@ -549,10 +683,12 @@ class MockSoundCloudClient:
     """
     is_mock = True
 
-    def __init__(self, tokens: dict | None = None, on_tokens=None, store=None):
+    def __init__(self, tokens: dict | None = None, on_tokens=None, store=None, playlist_store=None):
         self.tokens = dict(tokens or {"username": "you (demo)", "access_token": "mock"})
         self._store = store
         self._mem: list[dict] | None = None
+        self._pl_store = playlist_store
+        self._pl_mem: list[dict] | None = None
 
     def me(self) -> dict:
         return {"username": self.tokens.get("username", "you (demo)"), "id": 0,
@@ -595,7 +731,7 @@ class MockSoundCloudClient:
         track = {"id": tid, "title": meta.title, "sharing": meta.sharing,
                  "description": meta.description, "genre": meta.genre, "tags": list(meta.tags),
                  "permalink_url": f"https://soundcloud.com/demo/{_slug(meta.title)}",
-                 "duration": 0, "playback_count": 0, "created_at": "",
+                 "duration": _mock_length_ms(file_path), "playback_count": 0, "created_at": "",
                  "artwork_url": (_img_data_url(artwork_path) if artwork_path else None),
                  "original_format": (Path(file_path).suffix.lstrip(".").lower() or None),
                  "original_content_size": total}
@@ -652,8 +788,74 @@ class MockSoundCloudClient:
         return comment
 
 
-def get_client(tokens: dict, on_tokens=None, store=None):
+    # ---- playlists: kept as ids pointing into the demo library ----------------
+    def _load_pl(self) -> list[dict]:
+        pls = self._pl_store.load() if self._pl_store is not None else self._pl_mem
+        if pls is None:
+            pls = [dict(p, track_ids=list(p["track_ids"])) for p in _SEED_PLAYLISTS]
+            self._save_pl(pls)
+        return pls
+
+    def _save_pl(self, pls: list[dict]) -> None:
+        if self._pl_store is not None:
+            self._pl_store.save(pls)
+        else:
+            self._pl_mem = pls
+
+    def _render_pl(self, p: dict) -> dict:
+        # A deleted track drops out of its playlists, as on SoundCloud.
+        by_id = {t.get("id"): t for t in self._load()}
+        tracks = [dict(by_id[i], user=self.tokens.get("username", "you (demo)"))
+                  for i in p.get("track_ids", []) if i in by_id]
+        first_art = next((t.get("artwork_url") for t in tracks if t.get("artwork_url")), None)
+        return normalize_playlist({**p, "tracks": [dict(t, user={"username": t["user"]}) for t in tracks],
+                                   "track_count": len(tracks), "artwork_url": p.get("artwork_url") or first_art})
+
+    def list_playlists(self, page: int = 50, max_total: int = 500) -> list[dict]:
+        return [self._render_pl(p) for p in self._load_pl()][:max_total]
+
+    def get_playlist(self, playlist_id: int) -> dict:
+        for p in self._load_pl():
+            if p.get("id") == playlist_id:
+                return self._render_pl(p)
+        raise RuntimeError("Playlist not found.")
+
+    def create_playlist(self, title: str, sharing: str = "public", track_ids=None) -> dict:
+        pls = self._load_pl()
+        pid = 700000000 + abs(hash((title, time.time()))) % 99_999_999
+        p = {"id": pid, "title": title, "sharing": sharing,
+             "permalink_url": f"https://soundcloud.com/demo/sets/{_slug(title)}",
+             "created_at": datetime.now(timezone.utc).strftime("%Y/%m/%d %H:%M:%S +0000"),
+             "track_ids": [int(i) for i in (track_ids or [])]}
+        pls.insert(0, p)
+        self._save_pl(pls)
+        return self._render_pl(p)
+
+    def update_playlist(self, playlist_id: int, title=None, sharing=None, track_ids=None) -> dict:
+        pls = self._load_pl()
+        for p in pls:
+            if p.get("id") == playlist_id:
+                if title is not None:
+                    p["title"] = title
+                if sharing is not None:
+                    p["sharing"] = sharing
+                if track_ids is not None:
+                    p["track_ids"] = [int(i) for i in track_ids]
+                p["last_modified"] = datetime.now(timezone.utc).strftime("%Y/%m/%d %H:%M:%S +0000")
+                self._save_pl(pls)
+                return self._render_pl(p)
+        raise RuntimeError("Playlist not found.")
+
+    def delete_playlist(self, playlist_id: int) -> None:
+        pls = self._load_pl()
+        kept = [p for p in pls if p.get("id") != playlist_id]
+        if len(kept) == len(pls):
+            raise RuntimeError("Playlist not found.")
+        self._save_pl(kept)
+
+
+def get_client(tokens: dict, on_tokens=None, store=None, playlist_store=None):
     """Return a real client when creds are configured, else the mock."""
     if use_mock():
-        return MockSoundCloudClient(tokens, on_tokens, store)
+        return MockSoundCloudClient(tokens, on_tokens, store, playlist_store)
     return SoundCloudClient(tokens, on_tokens)

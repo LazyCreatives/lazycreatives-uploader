@@ -22,9 +22,9 @@ export function preflight(item: UploadItemInput, cfg: Pick<Config, "default_artw
     FILE_WORDS.test(title)
       ? { key: "title", state: "warn", say: `The title looks like a file name (“${title}”). Give it a tidy title in a template or after posting.` }
       : { key: "title", state: "ok", say: `Title: ${title}` },
-    item.artwork_path || cfg.default_artwork_path
-      ? { key: "cover", state: "ok", say: item.artwork_path ? "Cover: the one picked for this post" : "Cover: your default cover" }
-      : { key: "cover", state: "warn", say: "No cover. SoundCloud shows a grey square; pick one above or set a default in Settings." },
+    // every mix goes up with a cover now: the one picked for the post, or the one its row shows
+    { key: "cover", state: "ok", say: item.artwork_path ? "Cover: the one picked for this post"
+      : cfg.default_artwork_path ? "Cover: your default cover" : "Cover: the one shown on its row" },
     item.genre
       ? { key: "genre", state: "ok", say: `Genre: ${item.genre}` }
       : { key: "genre", state: "warn", say: "No genre, so it won't show up when people browse by genre." },

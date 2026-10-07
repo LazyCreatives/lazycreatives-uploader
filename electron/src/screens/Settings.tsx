@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { getOpenAtLogin, makeApi, pickImage, readImage, setOpenAtLogin } from "../api";
+import { getOpenAtLogin, makeApi, setOpenAtLogin } from "../api";
 import type { Account, Config, Entitlement, MetadataTemplate, Sharing } from "../types";
 import { Button, PageHeader, ProBadge, TagsInput } from "../components/ui";
-import { Icon } from "../components/Icon";
+import { CoverShelf } from "../components/CoverShelf";
 import { toast } from "../components/Desktop";
 import { Folders } from "../components/Folders";
 import { ConnectPanel } from "../components/Connect";
@@ -33,18 +33,9 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
   const [licenseKey, setLicenseKey] = useState("");
   const [licenseError, setLicenseError] = useState<string | null>(null);
   const [atLogin, setAtLogin] = useState(false);
-  const [artPreview, setArtPreview] = useState<string | null>(null);
 
   useEffect(() => { getOpenAtLogin().then(setAtLogin).catch(() => {}); }, []);
 
-  // (Re)load the default-cover preview whenever the configured path changes.
-  useEffect(() => {
-    let alive = true;
-    const p = draft.default_artwork_path;
-    if (!p) { setArtPreview(null); return; }
-    readImage(p).then((url) => { if (alive) setArtPreview(url); }).catch(() => { if (alive) setArtPreview(null); });
-    return () => { alive = false; };
-  }, [draft.default_artwork_path]);
 
   function set<K extends keyof Config>(k: K, v: Config[K]) {
     setDraft((d) => ({ ...d, [k]: v }));
@@ -75,10 +66,6 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
   }, [draft]);
   async function toggleLogin(v: boolean) { setAtLogin(await setOpenAtLogin(v)); }
 
-  async function chooseArt() {
-    const p = await pickImage();
-    if (p) set("default_artwork_path", p);
-  }
 
   async function activate() {
     setLicenseError(null);
@@ -122,6 +109,15 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
       </div>
 
       <div className="card">
+        <h2>Covers</h2>
+        <p className="sub" style={{ marginTop: 0 }}>
+          Put your own pictures on your covers: behind the drawing, or as the whole cover. Each mix goes up to
+          SoundCloud with the cover it shows here. Change one mix by right-clicking it on Upload.
+        </p>
+        <CoverShelf sample="Your mix" what="mix" />
+      </div>
+
+      <div className="card">
         <h2>SoundCloud accounts {ent.features.multi_account && !ent.beta && <ProBadge />}</h2>
         <ConnectPanel account={account} onChange={onAccount} />
         {account.connected && account.login_storage && (
@@ -134,6 +130,20 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
       <div className="card">
         <h2>Watched folders</h2>
         <Folders sources={draft.sources} onChange={(s) => set("sources", s)} />
+        <div className="toolchk minlen" style={{ fontSize: 13.5, marginTop: 14 }}>
+          <input type="checkbox" id="minlen-on" checked={(draft.min_length_seconds ?? 30) > 0}
+            onChange={(e) => set("min_length_seconds", e.target.checked ? 30 : 0)} />
+          <label htmlFor="minlen-on">Hide exports shorter than</label>
+          <input type="number" min={1} max={3600} aria-label="Shortest length in seconds"
+            disabled={(draft.min_length_seconds ?? 30) === 0}
+            value={(draft.min_length_seconds ?? 30) || 30} style={{ width: 64 }}
+            onChange={(e) => set("min_length_seconds", Math.min(3600, Math.max(1, Math.round(Number(e.target.value)) || 1)))} />
+          <label htmlFor="minlen-on">seconds</label>
+        </div>
+        <p className="sub" style={{ margin: "6px 0 0", fontSize: 12 }}>
+          Keeps clicks, test bounces and one-shot renders out of your Upload list. Nothing is deleted:
+          Upload can still show them, and automatic posting skips them.
+        </p>
       </div>
 
       <div className="card">
@@ -158,23 +168,6 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
             onChange={(e) => set("changelog_comments", e.target.checked)} />
           Comment a timestamped changelog when a draft is re-bounced
         </label>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <span>Default cover art</span>
-          <div className="art-row">
-            <span className={`art-thumb${draft.default_artwork_path && artPreview ? "" : " art-thumb--ph"}`} aria-hidden="true">
-              {draft.default_artwork_path && artPreview
-                ? <img src={artPreview} alt="" />
-                : <Icon name="music" />}
-            </span>
-            <div className="art-row__actions">
-              <Button sm onClick={chooseArt}>Choose image…</Button>
-              {draft.default_artwork_path && (
-                <Button kind="ghost" sm onClick={() => set("default_artwork_path", "")}>Remove</Button>
-              )}
-            </div>
-          </div>
-          <span className="sub" style={{ marginTop: 6 }}>Applied as the cover for uploads that don’t pick their own art.</span>
-        </div>
         <label className="toolchk" style={{ fontSize: 13.5, marginTop: 14 }}>
           <input type="checkbox" checked={draft.cover_watermark !== false}
             onChange={(e) => set("cover_watermark", e.target.checked)} />

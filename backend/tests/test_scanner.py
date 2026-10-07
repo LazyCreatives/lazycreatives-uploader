@@ -38,3 +38,13 @@ def test_discover_skips_audio_inside_bitwig_projects(tmp_path):
     (tmp_path / "Bounce").mkdir()                       # not a Bitwig project folder
     (tmp_path / "Bounce" / "Sunday Keys.wav").write_bytes(b"x")
     assert sorted(m["name"] for m in discover([tmp_path])) == ["Night Drive", "Sunday Keys"]
+
+
+def test_discover_reads_length_of_other_formats(tmp_path):
+    import numpy as np
+    import soundfile
+    soundfile.write(str(tmp_path / "Night Drive.flac"), np.zeros(8000 * 3, dtype="int16"), 8000)
+    (tmp_path / "Mystery.m4a").write_bytes(b"not really audio")
+    found = {m["name"]: m["duration"] for m in discover([tmp_path])}
+    assert abs(found["Night Drive"] - 3.0) < 0.01
+    assert found["Mystery"] is None  # can't read it, so never counted as short

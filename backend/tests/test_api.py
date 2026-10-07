@@ -25,7 +25,7 @@ def _poll_job(client, job_id, timeout=8.0):
 
 
 def test_health(client):
-    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/health").json()["status"] == "ok"
 
 
 def test_settings_roundtrip(client):

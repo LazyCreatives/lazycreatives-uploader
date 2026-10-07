@@ -20,6 +20,8 @@ import {
 import { rowKey, useDialogFocus } from "../components/a11y";
 import { SmartBar } from "../components/SmartBar";
 import { ColumnBrowse, FacetChips, NO_GENRE, facets } from "../components/Browse";
+import { TrackPlaylists, pickPlaylist } from "../components/PlaylistPick";
+import { NoteOpened } from "../components/Recents";
 import "../manage.css";
 
 const api = makeApi();
@@ -305,6 +307,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
         { label: "Copy SoundCloud link", onClick: () => { copyText(t.permalink_url!); } },
         "-" as const] : []),
       { label: "Edit details", onClick: () => setEditing(t) },
+      { label: many.length > 1 ? `Add ${many.length} to a playlist…` : "Add to playlist…", onClick: () => void pickPlaylist(many) },
       { label: priv ? "Make public" : "Make private", onClick: () => void quickPrivacy(t, priv ? "public" : "private") },
       "-",
       ...ratingMenu(many.map(rateKey), ratingOf(rateKey(t))),
@@ -549,6 +552,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
           </span>
           <Button sm disabled={bulkBusy} onClick={() => void runBulkUpdate({ sharing: "public" })}>Make public</Button>
           <Button sm disabled={bulkBusy} onClick={() => void runBulkUpdate({ sharing: "private" })}>Make private</Button>
+          <Button sm disabled={bulkBusy} onClick={() => void pickPlaylist((tracks || []).filter((x) => selected.has(x.id)))}>Add to playlist…</Button>
           <Button sm disabled={bulkBusy} onClick={() => setBulkEdit(true)}>Edit details…</Button>
           <Button sm disabled={bulkBusy} onClick={() => void runBulkArtwork()}>Set cover…</Button>
           <Button sm disabled={bulkBusy} onClick={() => void runBulkWaveform()}>Waveform covers</Button>
@@ -659,6 +663,8 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
       )}
 
       {/* ---- edit drawer ---- */}
+      {editing && <NoteOpened id={String(editing.id)} name={editing.title} cover={editing.project_match || editing.title}
+        genre={editing.project_match ? editing.project_genre : editing.genre} />}
       <Exit>{editing && (
         <EditPanel track={editing} defaultArt={defaultArt} onClose={() => setEditing(null)}
           onSaved={(t) => { applyUpdate(t); setEditing(null); }} />
@@ -765,7 +771,7 @@ function SeoPanel({ seo }: { seo: SeoScore }) {
 function songMeta(t: Track, art: string | null): SongMeta {
   return {
     title: t.title, sub: t.project_match ? `From ${t.project_match}` : t.genre || "", art,
-    cover: t.project_match || t.title, genre: t.project_match ? t.project_genre : t.genre,
+    cover: t.project_match || t.title, genre: t.project_match ? t.project_genre : t.genre, track: String(t.id),
   };
 }
 
@@ -1063,6 +1069,8 @@ function EditPanel({ track, defaultArt, onClose, onSaved }: {
             </Button>
           </div>
         </div>
+
+        <TrackPlaylists track={track} />
 
         {track.seo && <SeoPanel seo={track.seo} />}
 

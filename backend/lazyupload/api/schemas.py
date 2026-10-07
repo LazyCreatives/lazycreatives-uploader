@@ -43,6 +43,9 @@ class Config(BaseModel):
     # Base hue for generated waveform covers (hex). Frequency depth shades it per slice.
     cover_waveform_color: str = Field("#86B3D3", max_length=9)
     templates: list[MetadataTemplate] = Field(default_factory=list, max_length=50)
+    # Exports shorter than this many seconds are hidden on Upload and never posted
+    # automatically (clicks, test bounces). 0 = show everything.
+    min_length_seconds: int = Field(30, ge=0, le=3600)
 
 
 class ActivateRequest(BaseModel):
@@ -125,3 +128,27 @@ class AccountActivateRequest(BaseModel):
 
 class DisconnectRequest(BaseModel):
     id: str | None = Field(None, max_length=64)  # which account; None = the active one
+
+
+class CoverRenderRequest(BaseModel):
+    """A finished 1000x1000 cover drawn in the renderer, as a PNG (or JPEG) data URL."""
+    name: str
+    data: str
+
+
+class PlaylistCreate(BaseModel):
+    """A new SoundCloud playlist, optionally with tracks already in it."""
+    title: str = Field(..., min_length=1, max_length=100)
+    sharing: Sharing = "public"
+    track_ids: list[int] = Field(default_factory=list, max_length=500)
+
+
+class PlaylistUpdate(BaseModel):
+    """Rename, change privacy, or replace the ordered track list. None = unchanged."""
+    title: str | None = Field(None, min_length=1, max_length=100)
+    sharing: Sharing | None = None
+    track_ids: list[int] | None = Field(None, max_length=500)
+
+
+class PlaylistAdd(BaseModel):
+    track_ids: list[int] = Field(..., min_length=1, max_length=500)

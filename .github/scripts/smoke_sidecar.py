@@ -28,6 +28,9 @@ try:
         except OSError:
             continue
         if status == 200:
+            # the bundled ffmpeg must run, or AIFF / Apple Lossless won't play
+            if not json.loads(get("/health")[1]).get("player"):
+                sys.exit("sidecar's audio decoder (ffmpeg) is missing or won't run")
             print("sidecar /health OK")
             status, body = get("/api/account")
             info = json.loads(body)

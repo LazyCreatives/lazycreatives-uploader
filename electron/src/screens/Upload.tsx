@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { rowKey, useDialogFocus } from "../components/a11y";
-import { makeApi, openExternal, pickImage, readImage, revealPath } from "../api";
+import { makeApi, openExternal, pickImage, readImage, revealPath, saveRenderedCover } from "../api";
+import { pickCover } from "../components/CoverPick";
+import { coverPng } from "../coverRender";
 import { Exit, openMenu, toast, type MenuItem, toastWarn } from "../components/Desktop";
 import { GenreChip, pickGenre } from "../components/GenrePick";
 import { copyText } from "../desktop";
@@ -83,6 +85,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [showDupes, setShowDupes] = useState(false);
+  const [showShort, setShowShort] = useState(false);
   const [query, setQuery] = useState("");
   const [coverArt, setCoverArt] = useState<string | null>(null);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
@@ -116,13 +119,14 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
       const m = await api.scan();
       setMixes(m);
       // default-select everything not yet uploaded, skipping lower-quality format
-      // duplicates (highest quality wins). Single-only on Free.
-      const fresh = m.filter((x) => !x.uploaded && !x.superseded_by).map((x) => x.path);
+      // duplicates (highest quality wins) and short exports. Single-only on Free.
+      const fresh = m.filter((x) => !x.uploaded && !x.superseded_by && !x.short).map((x) => x.path);
       let pick = keep ? fresh.filter((p) => keep.has(p)) : fresh;
       if (!keep && preselect?.length) {
         const dropped = pickDropped(m, preselect);
         pick = dropped.pick;
         onPreselected?.();
+        if (m.some((x) => x.short && dropped.pick.includes(x.path))) setShowShort(true);  // dropped on purpose
         if (dropped.already.length && !dropped.pick.length) {
           toast(dropped.already.length === 1 ? `${dropped.already[0].name} is already on SoundCloud.` : "Those mixes are already on SoundCloud.");
         } else if (dropped.pick.length) {
@@ -192,6 +196,29 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     }
   }
 
+  // Pick this mix's cover. Covers follow the song's project, like genres do.
+  function changeCover(m: Mix) {
+    void pickCover({
+      title: m.name, name: m.project_match || m.name, genre: m.genre,
+      note: m.project_match ? `Every mix of ${m.project_match} shows this cover. A cover picked in Backups shows here until you pick one here.` : undefined,
+    });
+  }
+
+  // The cover each mix shows, made into a picture for SoundCloud (unless one was picked
+  // for the whole post).
+  async function withCovers(items: UploadItemInput[]): Promise<UploadItemInput[]> {
+    return Promise.all(items.map(async (i) => {
+      if (i.artwork_path || cfg.default_artwork_path) return i;
+      const m = (mixes || []).find((x) => x.path === i.path);
+      const name = m?.project_match || m?.name || i.name || "";
+      try {
+        return { ...i, artwork_path: await saveRenderedCover(name, await coverPng(name, m?.genre)) };
+      } catch {
+        return i;  // the mix still goes up, without a cover, rather than not at all
+      }
+    }));
+  }
+
   // What the ticked mixes (or just `only`) will go up as.
   function plan(only?: string): UploadItemInput[] {
     const paths = only ? [only] : (mixes || []).filter((m) => selected.has(m.path)).map((m) => m.path);
@@ -243,7 +270,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     setReview(null);
     setError(null); resetUpload(items.map((i) => i.path), keepOthers); setRunning(true); setStopping(false);
     try {
-      const { job_id } = await api.upload(items, false, releaseAt);
+      const { job_id } = await api.upload(await withCovers(items), false, releaseAt);
       jobRef.current = job_id;
       // The live WS stream drives the UI; poll the job only to surface a hard error.
       const tick = async () => {
@@ -272,17 +299,19 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     : (running ? 3 : 0);
   const busy = running || upload.active;
   const itemOf = (m: Mix): ItemState | undefined => upload.items[m.path] ?? upload.items[m.name];
-  const newCount = (mixes || []).filter((m) => !m.uploaded && !m.superseded_by).length;
+  const newCount = (mixes || []).filter((m) => !m.uploaded && !m.superseded_by && !m.short).length;
+  const shortCount = (mixes || []).filter((m) => m.short && !m.superseded_by).length;
   const matched = (mixes || []).filter((m) => m.genre || m.bpm).length;
   const dupeCount = (mixes || []).filter((m) => m.superseded_by).length;
   const wipCount = (mixes || []).filter((m) => m.wip && !m.superseded_by).length;
   const q = query.trim().toLowerCase();
   const visible = (showDupes ? (mixes || []) : (mixes || []).filter((m) => !m.superseded_by))
+    .filter((m) => showShort || !m.short)
     .filter((m) => !q || [m.name, m.project_match, m.genre].some((v) => v && v.toLowerCase().includes(q)));
   // New mixes first; the ones already on SoundCloud go under their own heading.
   const fresh = visible.filter((m) => !m.uploaded);
   const posted = visible.filter((m) => m.uploaded);
-  const pickable = fresh.filter((m) => !m.superseded_by).map((m) => m.path);
+  const pickable = fresh.filter((m) => !m.superseded_by && !m.short).map((m) => m.path);  // a short one is ticked by hand
   const allPicked = pickable.length > 0 && pickable.every((p) => selected.has(p));
   const somePicked = pickable.some((p) => selected.has(p));
   function toggleAll() {
@@ -300,7 +329,8 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   const summary = mixes === null ? "Looking through your watched folders…"
     : `${fmtCount(mixes.length)} ${mixes.length === 1 ? "mix" : "mixes"} found · ${fmtCount(newCount)} new`
       + `${matched ? ` · ${fmtCount(matched)} tagged from Backups` : ""}${wipCount ? ` · ${wipCount} ${wipCount === 1 ? "draft" : "drafts"}` : ""}`
-      + `${dupeCount && !showDupes ? ` · ${dupeCount} extra ${dupeCount === 1 ? "format" : "formats"} hidden` : ""}`;
+      + `${dupeCount && !showDupes ? ` · ${dupeCount} extra ${dupeCount === 1 ? "format" : "formats"} hidden` : ""}`
+      + `${shortCount && !showShort ? ` · ${fmtCount(shortCount)} short ${shortCount === 1 ? "file" : "files"} hidden` : ""}`;
 
   const mixMeta = (m: Mix): SongMeta => ({
     title: m.name, sub: m.project_match ? `From ${m.project_match}` : m.genre || "", genre: m.genre,
@@ -312,6 +342,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
       { label: "Open on SoundCloud", onClick: () => openExternal(m.permalink_url!) },
       { label: "Copy SoundCloud link", onClick: () => { copyText(m.permalink_url!); } }, "-" as const] : []),
     { label: m.genre ? "Change genre…" : "Set genre…", onClick: () => changeGenre(m) },
+    { label: "Change cover…", onClick: () => changeCover(m) },
     { label: "Show the file", onClick: () => revealPath(m.path) },
     { label: "Copy file path", onClick: () => { copyText(m.path); } },
     ...(!m.uploaded && !m.superseded_by ? ["-" as const,
@@ -353,6 +384,8 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); m.permalink_url && openExternal(m.permalink_url); }}>Posted</button>
     : m.superseded_by
       ? <span className="pill pill--skipped">Using {m.superseded_by}</span>
+      : m.short
+      ? <span className="pill pill--skipped" title="Shorter than the minimum length in Settings. Tick it to post it anyway.">Short</span>
       : <span className="pill" style={{ ["--dot" as any]: "var(--accent)" }}>New</span>);
   const draftButton = (m: Mix) => m.wip
     ? <button type="button" className="chip chip--on" style={{ height: 24 }}
@@ -370,7 +403,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     const note = liveNote(m);
     const it = itemOf(m);
     return (
-      <AuditionDiv key={m.path} song={m.path} meta={meta} className={`sleeve${picked ? " sleeve--selected" : ""}${m.uploaded || m.superseded_by ? " sleeve--done" : ""}${it?.phase === "failed" ? " sleeve--failed" : ""}`}
+      <AuditionDiv key={m.path} song={m.path} meta={meta} className={`sleeve${picked ? " sleeve--selected" : ""}${m.uploaded || m.superseded_by || m.short ? " sleeve--done" : ""}${it?.phase === "failed" ? " sleeve--failed" : ""}`}
         role="button" tabIndex={0} aria-pressed={picked} onContextMenu={(e) => openMenu(e, mixMenu(m))}
         onClick={() => { if (!locked) toggle(m.path); }}
         onKeyDown={rowKey(() => { if (!locked) toggle(m.path); })}>
@@ -380,6 +413,8 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
           <input type="checkbox" className="mixrow__check mix-sleeve__check" disabled={locked} checked={picked}
             onClick={(e) => e.stopPropagation()} onChange={() => toggle(m.path)} aria-label={`Pick ${m.name}`} />
           <PlayButton path={m.path} meta={meta} size={34} className="sleeve__play" />
+          <button type="button" className="iconbtn sleeve__coverbtn" title="Change cover" aria-label={`Change the cover of ${m.name}`}
+            onClick={(e) => { e.stopPropagation(); changeCover(m); }}><Icon name="image" size={15} /></button>
           {it?.phase === "uploading" && (
             <span className="mix-sleeve__bar"><span style={{ "--pct": it.size > 0 ? (it.sent / it.size) * 100 : 0 } as CSSProperties} /></span>
           )}
@@ -417,7 +452,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
         checked={selected.has(m.path)} onChange={() => toggle(m.path)} aria-label={`Pick ${m.name}`} />
       <PlayButton path={m.path} meta={meta} size={28} />
       <Cover name={m.project_match || m.name} genre={m.genre} size={36} label={false} />
-      <div className="row__main" style={{ opacity: m.uploaded || m.superseded_by ? 0.6 : 1 }}>
+      <div className="row__main" style={{ opacity: m.uploaded || m.superseded_by || m.short ? 0.6 : 1 }}>
         <div className="row__title mix-title"><span className="col-trunc">{m.name}</span>
           <span className="fmt-badge fmt-badge--tag">{m.ext.replace(".", "")}</span></div>
         {note
@@ -426,6 +461,9 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
               <button type="button" className={`linkbtn mix-genre${m.genre_by_you || !m.genre ? "" : " genre-guess"}`}
                 title={m.genre ? (m.genre_by_you ? "Genre set by you. Click to change" : "Genre guessed from the project. Click to correct it") : "Set a genre"}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); changeGenre(m); }}>{m.genre || "Set genre"}</button>
+              {" · "}
+              <button type="button" className="linkbtn mix-genre" title="Change this mix's cover"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); changeCover(m); }}>Cover</button>
               {[m.bpm ? `${Math.round(m.bpm)} BPM` : "", m.dupe_formats && m.dupe_formats.length ? `also ${m.dupe_formats.join(", ")}` : ""]
                 .filter(Boolean).map((t) => ` · ${t}`).join("")}
             </div>}
@@ -546,7 +584,14 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
             Show every format
           </label>
         )}
-        <span style={{ marginLeft: dupeCount > 0 ? 0 : "auto" }}><AuditionToggle /></span>
+        {shortCount > 0 && (
+          <label className="toolchk" style={dupeCount > 0 ? undefined : { marginLeft: "auto" }}
+            title="Exports shorter than the minimum length in Settings, like clicks and test bounces">
+            <input type="checkbox" checked={showShort} onChange={(e) => setShowShort(e.target.checked)} />
+            Show {fmtCount(shortCount)} short {shortCount === 1 ? "file" : "files"}
+          </label>
+        )}
+        <span style={{ marginLeft: dupeCount > 0 || shortCount > 0 ? 0 : "auto" }}><AuditionToggle /></span>
       </div>
       {(coverArt || scheduleOn) && (
         <p className="faint" style={{ margin: "-6px 0 12px", fontSize: 12 }}>

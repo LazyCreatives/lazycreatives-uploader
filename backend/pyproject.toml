@@ -12,6 +12,7 @@ dependencies = [
     "pillow>=10",           # render waveform cover art
     "numpy>=1.26",          # waveform FFT / dynamics analysis for cover art
     "soundfile>=0.12",      # decode local audio (wav/flac/aiff/mp3) for cover analysis
+    "imageio-ffmpeg>=0.5",  # ships ffmpeg, so the player can read AIFF, Apple Lossless, WMA...
     "cryptography>=42",     # AES-GCM for SoundCloud logins on macOS/Linux
     "keyring>=24; sys_platform != 'win32'",  # macOS Keychain / Linux Secret Service
 ]

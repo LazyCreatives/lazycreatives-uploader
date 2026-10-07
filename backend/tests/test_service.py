@@ -2,6 +2,7 @@ from pathlib import Path
 
 from lazyupload import service
 from lazyupload.connect import SoundCloudConnectSession
+from tests.helpers import make_wav
 
 
 def _connect_mock(catalog):
@@ -65,3 +66,28 @@ def test_progress_events_emitted(catalog, mixes_dir):
                        progress=events.append)
     types = [e["type"] for e in events]
     assert "upload_start" in types and "track_done" in types and "upload_done" in types
+
+
+def test_short_exports_are_flagged_by_the_settings_minimum(catalog, tmp_path):
+    from lazyupload import service
+    make_wav(tmp_path / "Click.wav", seconds=2, value=1)
+    make_wav(tmp_path / "Night Drive.wav", seconds=31, value=2)
+    short = {m["name"]: m["short"] for m in service.scan_mixes(catalog, [tmp_path])}
+    assert short == {"Click": True, "Night Drive": False}  # 30 s by default
+    catalog.set_setting("config", {"min_length_seconds": 0})  # turned off
+    assert not any(m["short"] for m in service.scan_mixes(catalog, [tmp_path]))
+    catalog.set_setting("config", {"min_length_seconds": 60})
+    assert all(m["short"] for m in service.scan_mixes(catalog, [tmp_path]))
+    assert (tmp_path / "Click.wav").exists()  # hidden, never deleted
+
+
+def test_automatic_posting_skips_short_exports(catalog, tmp_path, monkeypatch):
+    from lazyupload import scheduler as sched_mod, service
+    make_wav(tmp_path / "Click.wav", seconds=2, value=1)
+    make_wav(tmp_path / "Night Drive.wav", seconds=31, value=2)
+    catalog.set_setting("config", {"sources": [str(tmp_path)]})
+    monkeypatch.setattr(sched_mod.entitlement, "allows", lambda tier, f: True)
+    posted = []
+    monkeypatch.setattr(sched_mod, "run_upload", lambda cat, items, **kw: posted.extend(m["name"] for m in items))
+    sched_mod.UploadScheduler(catalog)._run_once()
+    assert posted == ["Night Drive"]

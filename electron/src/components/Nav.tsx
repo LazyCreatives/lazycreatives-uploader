@@ -3,20 +3,23 @@ import { Icon, type IconName } from "./Icon";
 import { openPalette } from "./Palette";
 import { IS_MAC } from "../desktop";
 import { COMPANION_KEYS, openCompanion } from "../companion";
+import { NavRecents } from "./Recents";
 
-export type Tab = "home" | "upload" | "manage" | "history" | "settings";
+export type Tab = "home" | "upload" | "manage" | "playlists" | "history" | "settings";
 
 const ITEMS: { key: Tab; label: string; icon: IconName }[] = [
   { key: "home", label: "Home", icon: "home" },
   { key: "upload", label: "Upload", icon: "upload" },
   { key: "manage", label: "Your tracks", icon: "library" },
+  { key: "playlists", label: "Playlists", icon: "disc" },
   { key: "history", label: "History", icon: "history" },
   { key: "settings", label: "Settings", icon: "settings" },
 ];
 
-export function Nav({ tab, busy, onNavigate, account, tier, beta = false }: {
+export function Nav({ tab, busy, onNavigate, account, tier, beta = false, onOpenRecent, openId }: {
   tab: Tab; busy: boolean; onNavigate: (t: Tab) => void;
   account: string | null; tier: string; beta?: boolean;
+  onOpenRecent: (id: string) => void; openId?: string | null;  // the track open now
 }) {
   const plan = beta ? "free beta" : tier === "free" ? "free plan" : `${tier} plan`;
   return (
@@ -35,6 +38,7 @@ export function Nav({ tab, busy, onNavigate, account, tier, beta = false }: {
           {busy && it.key === "upload" && <span className="nav__dot" />}
         </button>
       ))}
+      <NavRecents onOpen={onOpenRecent} current={openId} />
       <div className="nav__spacer" />
       <NarrowWindowButton />
       <div className="nav__foot">

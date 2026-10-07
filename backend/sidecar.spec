@@ -14,7 +14,7 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metada
 
 datas, binaries, hiddenimports = [], [], []
 for pkg in ("uvicorn", "fastapi", "starlette", "apscheduler", "websockets", "pydantic",
-            "soundfile", "_soundfile_data"):
+            "soundfile", "_soundfile_data", "imageio_ffmpeg"):
     try:
         d, b, h = collect_all(pkg)
     except Exception:

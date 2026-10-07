@@ -12,7 +12,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from lazyupload import entitlement
 from lazyupload.catalog import Catalog
 from lazyupload.service import (
-    get_wip, process_due_releases, process_wip, run_upload, scan_mixes, upload_in_progress,
+    auto_post_picks, get_wip, process_due_releases, process_wip, run_upload, scan_mixes,
+    upload_in_progress,
 )
 
 _JOB_ID = "auto_upload"
@@ -75,7 +76,7 @@ class UploadScheduler:
             return  # a manual/previous run is going — skip this tick
 
         mixes = scan_mixes(self._catalog, [Path(s) for s in sources])
-        fresh = [m for m in mixes if not m.get("uploaded")]
+        fresh = auto_post_picks(mixes)
         if not fresh:
             return
         # Auto runs respect the configured defaults, but default to PRIVATE sharing so

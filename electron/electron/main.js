@@ -127,7 +127,7 @@ const IMAGE_MIME = {
   ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
   ".webp": "image/webp", ".gif": "image/gif",
 };
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 ipcMain.handle("read-image", async (_e, target) => {
   try {
     if (typeof target !== "string" || !target) return null;
@@ -173,7 +173,8 @@ app.whenReady().then(async () => {
             // sndcdn hosts serve SoundCloud cover art (i*.sndcdn.com) + profile avatars
             // (a*.sndcdn.com). Without them the Manage thumbnails/fallbacks render broken
             // in packaged builds — and dev skips CSP entirely, so this only bites a ship.
-            "img-src 'self' data: https://*.sndcdn.com; font-src 'self' data:",
+            // 127.0.0.1: your own cover pictures, served by the sidecar (Settings, Covers).
+            "img-src 'self' data: https://*.sndcdn.com http://127.0.0.1:*; font-src 'self' data:",
           ] } });
       });
     }

@@ -16,6 +16,7 @@ export interface Config {
   cover_watermark: boolean;
   cover_waveform_color: string;
   templates: MetadataTemplate[];
+  min_length_seconds?: number;  // shorter exports are hidden on Upload; 0 = off
 }
 
 export interface Mix {
@@ -42,6 +43,7 @@ export interface Mix {
   // e.g. "AIF"); the winning file lists the formats it beat in dupe_formats.
   superseded_by?: string | null;
   dupe_formats?: string[];
+  short?: boolean; // shorter than the Settings minimum: hidden on Upload, never auto-posted
   wip?: boolean;   // user is iterating on this track — keep private + watch for re-bounces
 }
 
@@ -233,4 +235,25 @@ export interface TrackComment {
   user: string;
   avatar_url?: string | null;
   created_at?: string | null;
+}
+
+// A SoundCloud playlist ("set"). Its tracks are in playlist order; a set can hold other
+// people's tracks too (`user` is who posted each one).
+export interface PlaylistTrack extends Pick<Track, "id" | "title" | "sharing" | "genre" | "permalink_url" | "artwork_url" | "duration"> {
+  user?: string;
+  waveform_url?: string | null;
+}
+export interface Playlist {
+  id: number;
+  title: string;
+  description: string;
+  sharing: Sharing;
+  permalink_url: string | null;
+  artwork_url: string | null;
+  duration: number | null;       // seconds, all tracks together
+  track_count: number;
+  created_at: string | null;
+  last_modified: string | null;
+  tracks: PlaylistTrack[];
+  added?: number;                // after "Add to playlist": how many were new
 }

@@ -38,7 +38,7 @@ def discover(sources: list[Path]) -> list[dict]:
                     "ext": ext,
                     "size": st.st_size,
                     "mtime": st.st_mtime,
-                    "duration": _wav_duration(p) if ext == ".wav" else None,
+                    "duration": duration(p, st.st_size, st.st_mtime),
                 }
             except OSError:
                 continue  # vanished/locked mid-scan — just skip it
@@ -85,6 +85,36 @@ def _in_bitwig_project(path: Path, src: Path, cache: dict) -> bool:
             return True
         d = d / part
     return False
+
+
+# Lengths already read, by (path, size, mtime), so a rescan doesn't reopen every file.
+_lengths: dict[tuple[str, int, float], float | None] = {}
+
+
+def duration(path: Path, size: int, mtime: float) -> float | None:
+    """Length in seconds, read from the file's header only (no decoding). WAV uses
+    the standard library; FLAC, AIFF, OGG and MP3 go through soundfile. None when the
+    length can't be read (M4A, AAC, WMA, or a damaged file)."""
+    key = (str(path), size, mtime)
+    if key not in _lengths:
+        ext = path.suffix.lower()
+        secs = _wav_duration(path) if ext == ".wav" else None
+        if secs is None and ext in _SOUNDFILE_EXTS:
+            secs = _soundfile_duration(path)
+        _lengths[key] = secs
+    return _lengths[key]
+
+
+_SOUNDFILE_EXTS = {".wav", ".flac", ".aiff", ".aif", ".ogg", ".mp3"}
+
+
+def _soundfile_duration(path: Path) -> float | None:
+    try:
+        import soundfile
+        info = soundfile.info(str(path))
+        return info.frames / float(info.samplerate) if info.samplerate and info.frames > 0 else None
+    except Exception:  # unreadable or unsupported by this libsndfile build
+        return None
 
 
 def _wav_duration(path: Path) -> float | None:

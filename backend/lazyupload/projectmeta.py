@@ -439,3 +439,37 @@ def annotate(mixes: list[dict]) -> int:
         mix["project_link"] = "exact" if pid and maps["by_id"].get(pid) is hit else "name"
         matched += 1
     return matched
+
+
+def backups_covers() -> dict | None:
+    """The custom cover choices made in Backups, so a cover picked there follows the
+    song here: ``{"state": <Backups' "covers" setting>, "folder": <abs path of its
+    pictures>}``, or None when Backups isn't installed. Read-only, never cached (it is
+    one small row and people change covers while both apps are open)."""
+    db = find_backups_db()
+    if not db:
+        return None
+    row = None
+    # Plain read-only first (sees fresh WAL writes); immutable as a fallback for a
+    # catalog whose folder we can't write the -shm file into.
+    for uri in (f"file:{db}?mode=ro", f"file:{db}?mode=ro&immutable=1"):
+        try:
+            con = sqlite3.connect(uri, uri=True, timeout=2)
+        except sqlite3.Error:
+            continue
+        try:
+            row = con.execute("SELECT value FROM settings WHERE key = ?", ("covers",)).fetchone()
+            break
+        except sqlite3.Error:
+            row = None
+        finally:
+            con.close()
+    state = {}
+    if row and row[0]:
+        try:
+            state = json.loads(row[0])
+        except (TypeError, ValueError):
+            state = {}
+    if not isinstance(state, dict):
+        state = {}
+    return {"state": state, "folder": str((db.parent / "covers").resolve())}

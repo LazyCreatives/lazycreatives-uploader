@@ -16,6 +16,25 @@ How to keep this up to date:
 
 ## Unreleased
 
+## 0.2.1 (7 October 2026)
+
+### New
+- **Recently opened.** The last five tracks you opened sit in the sidebar under the menu, newest first, so you can jump back in with one click; Find anything (Ctrl+K / Cmd+K) lists them before you type. Right-click to take one off or clear the list. Kept on this computer only.
+- **A bigger player.** Point at the cover in the player along the bottom and press the up arrow (or click the cover) to open a large Now playing view with a big cover, the waveform to scrub and the play button. The down arrow or Escape shrinks it back.
+- **Your own cover art.** In Settings, under Covers, save as many pictures as you like and use each one behind the drawn cover or as the whole cover. Give pictures to genres, mix them across your mixes, or use one for everything, and pick Ink print, Photo or Label strip for how a picture sits behind the drawing. Your old default cover moves in here by itself.
+- **Playlists.** A new Playlists page shows your SoundCloud playlists. Make one, add tracks (tick them in Your tracks and press Add to playlist, or add them from the playlist's own page), drag them into order and take them out. Every change goes to SoundCloud straight away.
+- **Change cover** on any mix (right-click it, or Cover on its row) picks the drawn cover, any saved picture or a new one, with its own style. A cover picked in Backups shows here too.
+- **Short exports stay out of the way.** Clicks, test bounces and one-shot renders shorter than 30 seconds are hidden on the Upload page and never posted automatically. Change the length or turn it off in Settings, under Watched folders; "Show short files" on Upload brings them back, and nothing is deleted.
+
+### Better
+- **Click a track's name in the player** to open that track's page.
+- **Every mix goes up with the cover you see** on the Upload page, so nothing lands on SoundCloud as a grey square.
+
+### Fixed
+- **Automatic posting sends each song once.** When a song was exported as both WAV and MP3, the automatic folder check posted both. Now it posts only the best file of each song, and never a song already on SoundCloud in another format.
+- **Mixes no longer post twice.** If the automatic folder check started while you pressed Post (or Post was pressed twice), every mix could go up two times. Now each mix is checked again right before it is sent, so it can only ever be posted once. And if SoundCloud takes a mix but its answer gets lost, the app now finds the track instead of calling it failed, so Try again doesn't post it a second time.
+- **Nearly every audio file now plays** in the player: AIFF, Apple Lossless, WMA, AC-3, WavPack, CAF, 64-bit and compressed WAVs and more, where you used to see "Couldn't play this file". Your files are only read, never changed or copied.
+
 ## 0.2.0 (6 October 2026)
 
 ### New

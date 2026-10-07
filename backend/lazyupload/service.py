@@ -20,7 +20,11 @@ from lazyupload.scanner import discover
 # Module-level "is an upload running" flag so a scheduled tick can stand down while a
 # manual upload is in flight (mirrors the Backups scheduler's guard).
 _upload_lock = threading.Lock()
-_uploading = False
+_uploading = 0  # how many posting runs are going (two can overlap)
+# Held while one mix is checked, sent and recorded, by every posting run (Post, the
+# automatic folder check, the WIP watch). Two runs that overlap therefore can never
+# both send the same mix: the second one waits, then sees it is already posted.
+_post_lock = threading.Lock()
 
 _LEGACY_ACCOUNT_KEY = "sc_account"  # single-account storage from before multi-account
 _ACCOUNTS_KEY = "sc_accounts"       # list of stored, encrypted account entries
@@ -33,7 +37,7 @@ def default_timestamp() -> str:
 
 
 def upload_in_progress() -> bool:
-    return _uploading
+    return _uploading > 0
 
 
 # ---- connected accounts (encrypted, multi-account) --------------------------
@@ -186,8 +190,10 @@ class _MockStore:
     uploads + edits survive restarts. Ignored entirely by the real client."""
     _KEY = "mock_library"
 
-    def __init__(self, catalog: Catalog):
+    def __init__(self, catalog: Catalog, key: str | None = None):
         self._catalog = catalog
+        if key:
+            self._KEY = key
 
     def load(self):
         return self._catalog.get_setting(self._KEY)  # None => client seeds demo tracks
@@ -206,7 +212,8 @@ def client_for(catalog: Catalog):
     def on_tokens(new: dict):
         _update_active_tokens(catalog, new)
 
-    return soundcloud.get_client(tokens, on_tokens, store=_MockStore(catalog))
+    return soundcloud.get_client(tokens, on_tokens, store=_MockStore(catalog),
+                                 playlist_store=_MockStore(catalog, "mock_playlists"))
 
 
 # ---- manage existing uploads ------------------------------------------------
@@ -363,6 +370,54 @@ def delete_track(catalog: Catalog, track_id: int) -> None:
     if not connected(catalog):
         raise RuntimeError("not_connected")
     client_for(catalog).delete_track(track_id)
+
+
+# ---- playlists ("sets" on SoundCloud) -----------------------------------------
+def _need_connection(catalog: Catalog) -> None:
+    if not connected(catalog):
+        raise RuntimeError("not_connected")
+
+
+def list_playlists(catalog: Catalog) -> list[dict]:
+    _need_connection(catalog)
+    return client_for(catalog).list_playlists()
+
+
+def create_playlist(catalog: Catalog, title: str, sharing: str = "public",
+                    track_ids: list[int] | None = None) -> dict:
+    _need_connection(catalog)
+    ids = list(dict.fromkeys(int(i) for i in (track_ids or [])))  # no repeats, order kept
+    return client_for(catalog).create_playlist(title.strip(), sharing, ids)
+
+
+def update_playlist(catalog: Catalog, playlist_id: int, title: str | None = None,
+                    sharing: str | None = None, track_ids: list[int] | None = None) -> dict:
+    """Rename, change privacy, or set the whole ordered track list (reorder / remove)."""
+    _need_connection(catalog)
+    if track_ids is not None:
+        track_ids = list(dict.fromkeys(int(i) for i in track_ids))
+    return client_for(catalog).update_playlist(
+        playlist_id, title=title.strip() if title is not None else None,
+        sharing=sharing, track_ids=track_ids)
+
+
+def add_to_playlist(catalog: Catalog, playlist_id: int, track_ids: list[int]) -> dict:
+    """Add tracks to the end of a playlist, skipping any already in it. Reads the
+    playlist first, because SoundCloud replaces the whole list on every change."""
+    _need_connection(catalog)
+    client = client_for(catalog)
+    current = [t["id"] for t in client.get_playlist(playlist_id).get("tracks", [])]
+    fresh = [int(i) for i in dict.fromkeys(track_ids) if int(i) not in current]
+    pl = client.update_playlist(playlist_id, track_ids=current + fresh) if fresh \
+        else client.get_playlist(playlist_id)
+    pl["added"] = len(fresh)
+    return pl
+
+
+def delete_playlist(catalog: Catalog, playlist_id: int) -> None:
+    """Deletes the playlist only; its tracks stay on SoundCloud."""
+    _need_connection(catalog)
+    client_for(catalog).delete_playlist(playlist_id)
 
 
 # ---- bulk track operations (Pro) --------------------------------------------
@@ -548,7 +603,8 @@ def client_for_account(catalog: Catalog, account_id: str):
                 a["id"] = account_id
         _write_accounts(catalog, accts)
 
-    return soundcloud.get_client(acct, on_tokens, store=_MockStore(catalog))
+    return soundcloud.get_client(acct, on_tokens, store=_MockStore(catalog),
+                                 playlist_store=_MockStore(catalog, "mock_playlists"))
 
 
 # ---- scheduled release (upload private now, flip public later) --------------
@@ -650,6 +706,16 @@ def mark_format_dupes(mixes: list[dict]) -> None:
                 m["superseded_by"] = (best.get("ext") or "").lstrip(".").upper()
 
 
+def auto_post_picks(mixes: list[dict]) -> list[dict]:
+    """The mixes an automatic run may post: one file per song (the best format), never
+    a song already on SoundCloud in any format, and never a short export. Without
+    this, a song exported as both WAV and MP3 went up twice."""
+    posted = {(m.get("name") or "").strip().lower() for m in mixes if m.get("uploaded")}
+    return [m for m in mixes
+            if not m.get("uploaded") and not m.get("superseded_by") and not m.get("short")
+            and (m.get("name") or "").strip().lower() not in posted]
+
+
 # ---- genre the producer set for a single mix -----------------------------------
 # Most mixes take their genre from their Backups project (corrected there for the
 # whole project). When one mix differs, e.g. a remix, the producer can set its own
@@ -680,6 +746,30 @@ def apply_mix_genres(mixes: list[dict], catalog: Catalog) -> None:
             m["genre_by_you"] = True
 
 
+# ---- short exports -----------------------------------------------------------
+# Clicks, test bounces and one-shot renders land in the same folder as finished
+# songs. Anything shorter than the Settings minimum is flagged `short`: the Upload
+# page hides it (with a way to show it) and automatic posting never picks it. The
+# file itself is never touched. A file whose length can't be read is never short.
+DEFAULT_MIN_LENGTH = 30
+
+
+def min_length(catalog: Catalog) -> int:
+    """Seconds below which an export counts as short; 0 = off."""
+    v = (catalog.get_setting("config") or {}).get("min_length_seconds", DEFAULT_MIN_LENGTH)
+    try:
+        return max(0, int(v))
+    except (TypeError, ValueError):
+        return DEFAULT_MIN_LENGTH
+
+
+def mark_short(mixes: list[dict], seconds: int) -> None:
+    """In-place: flag mixes shorter than `seconds` (never when `seconds` is 0)."""
+    for m in mixes:
+        d = m.get("duration")
+        m["short"] = bool(seconds) and d is not None and d < seconds
+
+
 def scan_mixes(catalog: Catalog, sources: list[Path], progress=None) -> list[dict]:
     """Discover mixes and mark which are already on SoundCloud (by content hash)."""
     found = discover(sources)
@@ -705,6 +795,7 @@ def scan_mixes(catalog: Catalog, sources: list[Path], progress=None) -> list[dic
     apply_mix_genres(out, catalog)  # a genre the producer set for one mix wins
     mark_format_dupes(out)     # same track in multiple formats -> keep the best one
     annotate_wip(out, catalog) # flag tracks the user is iterating on (WIP + watched)
+    mark_short(out, min_length(catalog))  # clicks and test bounces stay out of the way
     if progress:
         progress({"type": "scan_done", "count": len(out)})
     return out
@@ -782,7 +873,7 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
             progress(ev)
 
     with _upload_lock:
-        _uploading = True
+        _uploading += 1
     results: list[UploadResult] = []
     ok = skipped = errors = 0
     cancelled = False
@@ -808,43 +899,46 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
             try:
                 size = Path(path).stat().st_size
                 h = item.get("file_hash") or _hashed(catalog, path, size, Path(path).stat().st_mtime)
-                if not force and h in uploaded:
-                    skipped += 1
-                    results.append(UploadResult(name=name, status="skipped", file_hash=h))
-                    emit({"type": "track_skipped", "index": i, "name": name, "path": path,
-                          "reason": "duplicate"})
-                    continue
-                meta = _meta_for(item, defaults)
-                if release_at:
-                    meta.sharing = "private"  # publish privately, flip public later
+                with _post_lock:
+                    # Check the catalog again right before sending: another run may
+                    # have posted this mix since this run started.
+                    if not force and (h in uploaded or catalog.upload_by_hash(h)):
+                        skipped += 1
+                        results.append(UploadResult(name=name, status="skipped", file_hash=h))
+                        emit({"type": "track_skipped", "index": i, "name": name, "path": path,
+                              "reason": "duplicate"})
+                        continue
+                    meta = _meta_for(item, defaults)
+                    if release_at:
+                        meta.sharing = "private"  # publish privately, flip public later
 
-                def on_prog(sent, tot, _i=i, _n=name, _p=path):
-                    emit({"type": "track_progress", "index": _i, "name": _n, "path": _p,
-                          "sent": sent, "size": tot})
+                    def on_prog(sent, tot, _i=i, _n=name, _p=path):
+                        emit({"type": "track_progress", "index": _i, "name": _n, "path": _p,
+                              "sent": sent, "size": tot})
 
-                art = item.get("artwork_path") or default_art
-                if art and not Path(art).is_file():
-                    art = None
-                track = client.upload(path, meta, on_progress=on_prog, artwork_path=art)
-                tid = track.get("id")
-                url = track.get("permalink_url")
-                if release_at and tid is not None:
-                    add_pending_release(catalog, tid, release_at,
-                                        (active_account(catalog) or {}).get("id"), meta.title)
-                # Persist the resolved Backups link so the Manage join stays collision-proof
-                # even if the title is later renamed on SoundCloud. Backups' exact file
-                # link first; else a strict name match (a shared name anchors nothing).
-                pm = projectmeta.resolve(path, name) or {}
-                catalog.record_upload(
-                    title=meta.title, file_path=path, file_hash=h, size=size,
-                    sharing=meta.sharing, status="uploaded", timestamp=default_timestamp(),
-                    sc_track_id=tid, permalink_url=url, account=account_label(catalog),
-                    backups_project=pm.get("project"),
-                    backups_project_id=pm.get("project_id"))
-                uploaded[h] = {"permalink_url": url, "title": meta.title}
-                ok += 1
-                results.append(UploadResult(name=name, status="uploaded", file_hash=h,
-                                            sc_track_id=tid, permalink_url=url))
+                    art = item.get("artwork_path") or default_art
+                    if art and not Path(art).is_file():
+                        art = None
+                    track = client.upload(path, meta, on_progress=on_prog, artwork_path=art)
+                    tid = track.get("id")
+                    url = track.get("permalink_url")
+                    if release_at and tid is not None:
+                        add_pending_release(catalog, tid, release_at,
+                                            (active_account(catalog) or {}).get("id"), meta.title)
+                    # Persist the resolved Backups link so the Manage join stays collision-proof
+                    # even if the title is later renamed on SoundCloud. Backups' exact file
+                    # link first; else a strict name match (a shared name anchors nothing).
+                    pm = projectmeta.resolve(path, name) or {}
+                    catalog.record_upload(
+                        title=meta.title, file_path=path, file_hash=h, size=size,
+                        sharing=meta.sharing, status="uploaded", timestamp=default_timestamp(),
+                        sc_track_id=tid, permalink_url=url, account=account_label(catalog),
+                        backups_project=pm.get("project"),
+                        backups_project_id=pm.get("project_id"))
+                    uploaded[h] = {"permalink_url": url, "title": meta.title}
+                    ok += 1
+                    results.append(UploadResult(name=name, status="uploaded", file_hash=h,
+                                                sc_track_id=tid, permalink_url=url))
                 emit({"type": "track_done", "index": i, "name": name, "path": path,
                       "permalink_url": url})
             except Exception as e:  # one bad track must not abort the batch
@@ -864,7 +958,7 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                 "cancelled": cancelled, "results": [r.__dict__ for r in results]}
     finally:
         with _upload_lock:
-            _uploading = False
+            _uploading -= 1
 
 
 # ---- work-in-progress (WIP) tracks ------------------------------------------
@@ -969,7 +1063,7 @@ def process_wip(catalog: Catalog, sources: list[Path], progress=None) -> list[di
     mixes = scan_mixes(catalog, sources)
     best: dict[str, dict] = {}
     for m in mixes:
-        if m.get("superseded_by"):
+        if m.get("superseded_by") or m.get("short"):
             continue  # only watch the highest-quality render of each track
         k = _wip_norm(m.get("name", ""))
         if k in wip and k not in best:

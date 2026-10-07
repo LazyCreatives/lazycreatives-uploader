@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { makeApi } from "./api";
+import { makeApi, makeCoverSource, readImage } from "./api";
 import { Nav, type Tab } from "./components/Nav";
 import { LcBrand } from "./components/LcBrand";
 import { PlayerBar, togglePlaying } from "./components/Player";
@@ -15,23 +15,42 @@ import { Setup } from "./screens/Setup";
 import { Home } from "./screens/Home";
 import { Upload } from "./screens/Upload";
 import { History } from "./screens/History";
+import { Playlists } from "./screens/Playlists";
+import { PlaylistPickHost } from "./components/PlaylistPick";
+import { loadPlaylists, playlistsNow } from "./playlists";
 import { Settings } from "./screens/Settings";
 import { WhatsNewHost, openWhatsNew } from "./components/WhatsNew";
 import { ConfirmHost, ContextMenuHost, DropZone, ShortcutsPanel, ToastHost, toast, toastWarn } from "./components/Desktop";
 import { GenrePickHost } from "./components/GenrePick";
+import { CoverPickHost } from "./components/CoverPick";
+import { changeCovers, coverState, setCoverSource, shrinkImage } from "./coverArt";
 import { baseName, folderOf, isInside, keep, pageNumber, recall, useDesktopCommands, useEscapeToClose, useFileDrop, useIconProgress, type Dropped } from "./desktop";
 import { useLiveProgress } from "./useProgress";
 import type { Account, Config, Entitlement } from "./types";
 import { EmptyState } from "./components/SlothSpot";
 import { useBackForwardInput, useNav, type Place } from "./nav";
+import { getRecents, openedWhen } from "./recents";
 
 const api = makeApi();
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-const TABS: Tab[] = ["home", "upload", "manage", "history", "settings"];
+const TABS: Tab[] = ["home", "upload", "manage", "playlists", "history", "settings"];
 const LAST_PAGE = "lc-last-page";
 
 // Mixes Uploader can post; dropping one adds the folder it sits in.
 const AUDIO_FILE = /\.(wav|aiff?|flac|mp3|m4a|aac|ogg|opus)$/i;
+
+// The one default cover from before Settings, Covers existed becomes the main picture,
+// used as the full cover for everything: what it did before. Then the old setting goes.
+async function moveOldDefault(c: Config): Promise<Config | null> {
+  if (coverState().pictures.length) return null;
+  const raw = await readImage(c.default_artwork_path || "");
+  if (!raw) return null;  // the file is gone: the old setting keeps doing what it did
+  const { data, w, h } = await shrinkImage(raw);
+  const name = (c.default_artwork_path || "").split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "Default cover";
+  await changeCovers((s) => s.add({ data, name: name.slice(0, 80), use: "full", w, h }));
+  await changeCovers((s) => s.settings({ rule: "one" }));
+  return api.saveSettings({ ...c, default_artwork_path: "" });
+}
 
 export default function App() {
   const [cfg, setCfg] = useState<Config | null | "error">(null);
@@ -48,6 +67,7 @@ export default function App() {
   const setTab = (t: Tab, open: string | null = null) => nav.go({ tab: t, sub: open });
   // a track opens in a panel over its list, so the list stays where it was underneath
   const openTrack = (id: string) => nav.go({ tab: "manage", sub: id }, { overlay: true });
+  const openPlaylist = (id: number | "new") => setTab("playlists", String(id));
   // Close an open track: step back if that's where we came from, else stay on the list.
   const closeSub = () => {
     const p = nav.prev;
@@ -63,18 +83,24 @@ export default function App() {
   const paletteTracks = useRef<Track[]>([]);
   const showPalette = () => {
     const wait = new Promise((ok) => setTimeout(ok, 1200));
-    Promise.race([api.listTracks().then((t) => { paletteTracks.current = t; }), wait]).catch(() => {}).finally(openPalette);
+    const tracks = api.listTracks().then((t) => { paletteTracks.current = t; });
+    Promise.race([Promise.all([tracks, loadPlaylists()]), wait]).catch(() => {}).finally(openPalette);
   };
   const tracksWith = (f: Partial<TrackFilters>) => { showTracks({ ...NO_FILTERS, ...f }); setTab("manage"); };
   const paletteItems = (): PaletteItem[] => {
     const mod = IS_MAC ? "Cmd" : "Ctrl";
-    const pages: [Tab, string, PaletteItem["icon"]][] = [["home", "Home", "home"], ["upload", "Upload", "upload"], ["manage", "Your tracks", "library"], ["history", "History", "history"], ["settings", "Settings", "settings"]];
+    const pages: [Tab, string, PaletteItem["icon"]][] = [["home", "Home", "home"], ["upload", "Upload", "upload"], ["manage", "Your tracks", "library"], ["playlists", "Playlists", "disc"], ["history", "History", "history"], ["settings", "Settings", "settings"]];
     const list = paletteTracks.current;
     const genres = [...new Set(list.map((t) => (t.genre || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
     const other = getLook() === "crate" ? "sleeve" : "crate";
     return [
+      // the last few opened, ready before anything is typed
+      ...getRecents().slice(0, 4).map((r) => ({ id: `recent-${r.id}`, group: "Recently opened", label: r.name, cover: { name: r.cover, genre: r.genre },
+        hint: openedWhen(r.at).replace(/^o/, "O"), idle: true,
+        run: () => { setTab("manage"); openTrack(r.id); } })),
       ...pages.map(([t, label, icon], i) => ({ id: `go-${t}`, group: "Go to", label, icon, keys: `${mod} + ${i + 1}`, run: () => setTab(t) })),
       { id: "upload", group: "Actions", label: "Post a mix", icon: "upload", words: ["upload", "soundcloud", "post"], run: () => setTab("upload") },
+      { id: "new-playlist", group: "Actions", label: "New playlist", icon: "plus", words: ["playlist", "set", "make", "create"], run: () => openPlaylist("new") },
       { id: "look", group: "Actions", label: `Switch to the ${other === "sleeve" ? "Sleeve" : "Crate"} look`, icon: "palette", words: ["look", "theme", "crate", "sleeve"], run: () => setLook(other) },
       { id: "theme", group: "Actions", label: `Switch to ${currentTheme() === "light" ? "dark" : "light"}`, icon: "palette", words: ["theme", "light", "dark", "mode"], run: toggleTheme },
       { id: "companion", group: "Actions", label: "Open the narrow window", icon: "narrow", keys: COMPANION_KEYS,
@@ -85,6 +111,8 @@ export default function App() {
       ...smartCrates<TrackFilters>("tracks").map((c) => ({ id: `smart-${c.id}`, group: "Smart crates", label: c.name, icon: "crate" as const, run: () => tracksWith(c.filters) })),
       ...genres.map((g) => ({ id: `genre-${g}`, group: "Genres", label: g, colour: genreColor(g), quiet: true,
         hint: plural(list.filter((t) => (t.genre || "").trim() === g).length, "track"), run: () => tracksWith({ genre: g }) })),
+      ...playlistsNow().map((p) => ({ id: `pl-${p.id}`, group: "Playlists", label: p.title, icon: "disc" as const, quiet: true,
+        hint: plural(p.track_count, "track"), words: ["playlist", "set"], run: () => openPlaylist(p.id) })),
       ...list.map((t) => ({ id: `t-${t.id}`, group: "Your tracks", label: t.title, cover: { name: t.project_match || t.title, genre: t.project_match ? t.project_genre : t.genre }, quiet: true,
         hint: [t.genre, t.sharing === "private" ? "Private" : "Public", t.project_match ? `from ${t.project_match}` : ""].filter(Boolean).join(" · "),
         words: [t.genre || "", ...(t.tags || []), t.project_match || ""], run: () => { setTab("manage"); openTrack(String(t.id)); } })),
@@ -167,10 +195,12 @@ export default function App() {
   const setUpAtOpen = useRef<boolean | null>(null);
   const setUpOnce = useRef(false);
   useEffect(() => {
+    const covers = setCoverSource(makeCoverSource());
     Promise.all([api.getSettings(), api.account(), api.entitlement()])
       .then(([c, a, e]) => {
         if (setUpAtOpen.current === null) setUpAtOpen.current = c.sources.length > 0 && a.connected;
         setCfg(c); setAccount(a); setEnt(e);
+        if (c.default_artwork_path) covers.then(() => moveOldDefault(c)).then((m) => { if (m) setCfg(m); }).catch(() => {});
       })
       .catch(() => setCfg("error"));
   }, []);
@@ -229,7 +259,8 @@ export default function App() {
   return (
     <div className="app">
       <Nav tab={tab} busy={busy} onNavigate={(t) => setTab(t)}
-        account={account.account} tier={ent.tier} beta={Boolean(ent.beta)} />
+        account={account.account} tier={ent.tier} beta={Boolean(ent.beta)}
+        onOpenRecent={(id) => { setTab("manage"); openTrack(id); }} openId={tab === "manage" ? sub : null} />
       <div className="main">
         <div className="content">
           <div key={tab === "settings" || tab === "upload" ? `${tab}-${viewKey}` : tab} className="view-enter">
@@ -243,6 +274,8 @@ export default function App() {
             ) : tab === "manage" ? (
               <Manage ent={ent} cfg={cfg} openTrack={sub}
                 onOpenTrack={openTrack} onCloseTrack={closeSub} />
+            ) : tab === "playlists" ? (
+              <Playlists open={sub} onOpen={openPlaylist} onClose={() => setTab("playlists")} />
             ) : tab === "history" ? (
               <History />
             ) : (
@@ -252,12 +285,14 @@ export default function App() {
           </div>
         </div>
       </div>
-      <PlayerBar />
+      <PlayerBar onOpenTrack={(id) => { setTab("manage"); openTrack(id); }} />
       <WhatsNewHost setUp={setUpAtOpen.current === true} />
       <ContextMenuHost />
       <ToastHost />
       <ConfirmHost />
       <GenrePickHost />
+      <CoverPickHost />
+      <PlaylistPickHost onOpen={openPlaylist} />
       <PaletteHost items={paletteItems} />
       <DropZone show={dragging} title="Drop to watch" hint="Drop a folder of mixes to add it to the folders Uploader watches." />
       {showKeys && <ShortcutsPanel onClose={() => setShowKeys(false)} />}

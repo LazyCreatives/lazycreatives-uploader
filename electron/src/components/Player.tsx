@@ -14,7 +14,8 @@ const api = makeApi();
 // bar along the bottom shows whatever is loaded.
 // `cover` is the name the drawn cover art comes from: the Backups project when the mix is
 // linked to one, so a song has the same cover in both apps. `genre` colours it.
-export interface SongMeta { title: string; sub?: string; genre?: string | null; art?: string | null; cover?: string | null }
+// `track` opens the track's page from the player bar (a mix not posted yet has none).
+export interface SongMeta { title: string; sub?: string; genre?: string | null; art?: string | null; cover?: string | null; track?: string }
 type State = {
   path: string | null; playing: boolean; error: string | null;
   meta: SongMeta | null; time: number; duration: number;
@@ -41,9 +42,29 @@ function el(): HTMLAudioElement {
     audio.addEventListener("ended", () => set({ playing: false }));
     audio.addEventListener("timeupdate", () => set({ time: audio!.currentTime }));
     audio.addEventListener("durationchange", () => set({ duration: audio!.duration || 0 }));
-    audio.addEventListener("error", () => set({ playing: false, error: "Couldn't play this file" }));
+    audio.addEventListener("error", () => {
+      // The sidecar already decodes the formats the player is known to refuse. If one
+      // still fails, ask once for it decoded before giving up.
+      const a = audio!;
+      if (state.path && !a.src.includes("&decode=1")) {
+        const at = a.currentTime;
+        a.src = api.audioUrl(state.path, true);
+        if (at) a.addEventListener("loadedmetadata", () => { a.currentTime = at; }, { once: true });
+        if (wanted) a.play().catch(() => {}); else a.load();
+        return;
+      }
+      set({ playing: false, error: "Couldn't play this file" });
+    });
   }
   return audio;
+}
+
+// Whether the player should be playing (not paused), so a retry knows to carry on.
+let wanted = false;
+function start(a: HTMLAudioElement): Promise<void> {
+  wanted = true;
+  // a refusal shows up as the element's error (above), after the retry
+  return a.play().catch(() => {});
 }
 
 export function toggle(path: string, meta?: SongMeta) {
@@ -51,15 +72,15 @@ export function toggle(path: string, meta?: SongMeta) {
   if (state.auditioning) {
     window.clearInterval(fade); a.volume = 1; before = null;
     // pressing play on the mix being previewed keeps it playing, now for real
-    if (state.path === path) { set({ auditioning: false }); if (a.paused) a.play().catch(() => {}); return; }
+    if (state.path === path) { set({ auditioning: false }); if (a.paused) start(a); return; }
     set({ auditioning: false });
   }
-  if (state.path === path && !a.paused) { a.pause(); return; }
+  if (state.path === path && !a.paused) { wanted = false; a.pause(); return; }
   if (state.path !== path) {
     a.src = api.audioUrl(path);
     set({ path, error: null, meta: meta ?? { title: path.split(/[\\/]/).pop() || "Mix" }, time: 0, duration: 0 });
   }
-  a.play().catch(() => set({ playing: false, error: "Couldn't play this file" }));
+  start(a);
 }
 
 // The Space bar: pause, or carry on with whatever is in the player bar. False when
@@ -90,7 +111,7 @@ export function audition(path: string, meta: SongMeta) {
   set({ path, error: null, meta, time: 0, duration: 0, auditioning: true });
   const jump = () => { if (state.path === path && a.duration) a.currentTime = a.duration * AUDITION_FROM; };
   a.addEventListener("loadedmetadata", jump, { once: true });
-  a.play().then(() => {
+  start(a).then(() => {
     fade = window.setInterval(() => {
       a.volume = Math.min(1, a.volume + 0.1);
       if (a.volume >= 1) window.clearInterval(fade);
@@ -103,6 +124,7 @@ export function audition(path: string, meta: SongMeta) {
 export function endAudition(path: string) {
   if (!state.auditioning || state.path !== path || !audio) return;
   window.clearInterval(fade);
+  wanted = false;
   audio.pause();
   audio.volume = 1;
   const back = before;
@@ -150,6 +172,7 @@ export function AuditionLabel({ song, meta, ...rest }: React.LabelHTMLAttributes
 }
 
 export function close() {
+  wanted = false;
   if (audio) { audio.pause(); audio.removeAttribute("src"); audio.load(); audio.volume = 1; }
   set({ path: null, playing: false, meta: null, time: 0, duration: 0, error: null, auditioning: false });
 }
@@ -298,32 +321,106 @@ export function Art({ meta, size, className = "" }: { meta: SongMeta; size?: num
 const clock = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
 
 // The bar along the bottom while a mix is loaded: what it is, where you are, controls.
-export function PlayerBar() {
+// The title opens the track's page; the cover (or its up arrow) opens the big view.
+export function PlayerBar({ onOpenTrack }: { onOpenTrack?: (id: string) => void }) {
   const s = usePlayerState();
   const { peaks } = usePeaks({ path: s.path });
+  const [big, setBig] = useState(false);
   const shown = !!s.path && !s.auditioning;
   useEffect(() => {
     document.documentElement.classList.toggle("has-player", shown);
+    if (!shown) setBig(false);
   }, [shown]);
   if (!shown || !s.meta) return null;
   const m = s.meta;
+  const track = m.track;
+  const open = track && onOpenTrack ? () => { setBig(false); onOpenTrack(track); } : undefined;
+  const played = s.duration ? s.time / s.duration : 0;
+  const color = coverColor(m.genre, m.cover || m.title);
   return (
-    <div className="playerbar" role="region" aria-label="Now playing">
-      <Art meta={m} size={44} />
-      <div className="playerbar__what">
-        <div className="playerbar__title">{m.title}</div>
-        <div className="playerbar__sub">{s.error ?? m.sub ?? ""}</div>
+    <>
+      <div className="playerbar" role="region" aria-label="Now playing">
+        <button type="button" className="playerbar__art" onClick={() => setBig(true)}
+          aria-label="Make the player bigger" title="Make the player bigger">
+          <Art meta={m} size={44} />
+          <span className="playerbar__grow"><Icon name="chevronUp" size={14} /></span>
+        </button>
+        <div className="playerbar__what">
+          {open
+            ? <button type="button" className="playerbar__title playerbar__link" onClick={open} title={`Open ${m.title}`}>{m.title}</button>
+            : <div className="playerbar__title">{m.title}</div>}
+          <div className="playerbar__sub">{s.error ?? m.sub ?? ""}</div>
+        </div>
+        <button type="button" className="playbtn playerbar__play" onClick={() => toggle(s.path!, m)}
+          aria-label={s.playing ? "Pause" : "Play"}>
+          <Icon name={s.playing ? "pause" : "play"} size={14} />
+        </button>
+        <span className="playerbar__time">{clock(s.time)}</span>
+        <Wave peaks={peaks} color={color} played={played}
+          height={36} onSeek={seek} duration={s.duration} className="playerbar__wave" />
+        <span className="playerbar__time">{s.duration ? clock(s.duration) : "–:––"}</span>
+        <Meter peaks={peaks} playing={s.playing} duration={s.duration} now={now} />
+        <button type="button" className="iconbtn" onClick={close} aria-label="Close the player"><Icon name="close" /></button>
       </div>
-      <button type="button" className="playbtn playerbar__play" onClick={() => toggle(s.path!, m)}
-        aria-label={s.playing ? "Pause" : "Play"}>
-        <Icon name={s.playing ? "pause" : "play"} size={14} />
-      </button>
-      <span className="playerbar__time">{clock(s.time)}</span>
-      <Wave peaks={peaks} color={coverColor(m.genre, m.cover || m.title)} played={s.duration ? s.time / s.duration : 0}
-        height={36} onSeek={seek} duration={s.duration} className="playerbar__wave" />
-      <span className="playerbar__time">{s.duration ? clock(s.duration) : "–:––"}</span>
-      <Meter peaks={peaks} playing={s.playing} duration={s.duration} now={now} />
-      <button type="button" className="iconbtn" onClick={close} aria-label="Close the player"><Icon name="close" /></button>
+      {big && (
+        <NowPlaying color={color} onClose={() => setBig(false)}
+          art={<Art meta={m} className="nowplaying__cover" />}
+          title={m.title} sub={s.error ?? m.sub ?? ""} open={open} openLabel="Open track"
+          playing={s.playing} onPlay={() => toggle(s.path!, m)}
+          wave={<Wave peaks={peaks} color={color} played={played} height={88} onSeek={seek} duration={s.duration} className="nowplaying__wave" />}
+          time={s.time} duration={s.duration}
+          meter={<Meter peaks={peaks} playing={s.playing} duration={s.duration} now={now} />} />
+      )}
+    </>
+  );
+}
+
+// The player made big, over the page: a large cover, the name (opens its page), the
+// waveform to scrub and the controls. The down arrow or Escape shrinks it back.
+function NowPlaying({ color, art, title, sub, open, openLabel, playing, onPlay, wave, time, duration, meter, onClose }: {
+  color: string; art: React.ReactNode; title: string; sub: string; open?: () => void; openLabel: string;
+  playing: boolean; onPlay: () => void; wave: React.ReactNode; time: number; duration: number;
+  meter: React.ReactNode; onClose: () => void;
+}) {
+  const shrink = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    shrink.current?.focus();
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onClose(); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+  return (
+    <div className="nowplaying" role="dialog" aria-modal="true" aria-label="Now playing"
+      style={{ "--np-tint": color } as React.CSSProperties}>
+      <div className="nowplaying__top">
+        <button type="button" ref={shrink} className="iconbtn" onClick={onClose}
+          aria-label="Make the player smaller" title="Make the player smaller (Esc)"><Icon name="chevronDown" /></button>
+        <span className="nowplaying__label">Now playing</span>
+        <span />
+      </div>
+      <div className="nowplaying__body">
+        {art}
+        <div className="nowplaying__what">
+          {open
+            ? <button type="button" className="nowplaying__title playerbar__link" onClick={open} title={openLabel}>{title}</button>
+            : <div className="nowplaying__title">{title}</div>}
+          <div className="nowplaying__sub">{sub}</div>
+        </div>
+        <div className="nowplaying__deck">
+          <span className="playerbar__time">{clock(time)}</span>
+          {wave}
+          <span className="playerbar__time">{duration ? clock(duration) : "–:––"}</span>
+        </div>
+        <div className="nowplaying__controls">
+          <span />
+          <button type="button" className="playbtn playerbar__play nowplaying__play" onClick={onPlay}
+            aria-label={playing ? "Pause" : "Play"}>
+            <Icon name={playing ? "pause" : "play"} size={22} />
+          </button>
+          <span className="nowplaying__meter">{meter}</span>
+        </div>
+        {open && <button type="button" className="btn nowplaying__open" onClick={open}>{openLabel}</button>}
+      </div>
     </div>
   );
 }
