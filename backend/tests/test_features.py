@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -87,6 +87,24 @@ def test_scheduled_release_uploads_private_then_flips(catalog, mixes_dir):
     assert again["sharing"] == "public"
 
 
+def test_scheduled_release_utc_time_waits_for_its_date(catalog, mixes_dir):
+    # The app sends UTC with a "Z" (Date.toISOString). It must wait, not go public now.
+    _connect_mock(catalog)
+    mixes = service.scan_mixes(catalog, [mixes_dir])
+    future = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat().replace("+00:00", "Z")
+    service.run_upload(catalog, mixes[:1], {"sharing": "public"}, release_at=future)
+    assert service.process_due_releases(catalog) == []
+    assert len(service.pending_releases(catalog)) == 1
+    later = datetime.now() + timedelta(days=3, minutes=1)
+    assert len(service.process_due_releases(catalog, now=later)) == 1
+
+
+def test_unreadable_release_time_stays_private(catalog):
+    catalog.set_setting("pending_releases", [{"track_id": 1, "release_at": "soon"}])
+    assert service.process_due_releases(catalog) == []
+    assert len(service.pending_releases(catalog)) == 1
+
+
 # ---- API: gating + validation ----------------------------------------------
 @pytest.fixture
 def client(tmp_path, mixes_dir):
@@ -116,6 +134,8 @@ def test_scheduled_release_gated(client):
     assert client.post("/api/upload", json=body).status_code == 402  # Pro-only
     client.post("/api/entitlement/activate", json={"key": "LC-PRO-DEMO-2026"})
     assert client.post("/api/upload", json=body).status_code == 200
+    bad = {"items": [{"path": mixes[0]["path"]}], "release_at": "next friday"}
+    assert client.post("/api/upload", json=bad).status_code == 400
 
 
 def test_multi_account_api_flow(client):

@@ -62,6 +62,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     app.state.scheduler = scheduler
     app.state.jobs = {}
     app.state.cancels = {}            # job_id -> threading.Event
+    app.state.aborts = {}             # job_id -> threading.Event (stop now, mid-mix)
     app.state.connect_sessions = {}   # connect_id -> SoundCloudConnectSession
 
     _JOBS_CAP = 200
@@ -185,10 +186,16 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         scheduler.set_interval(config.interval_minutes)
         return config
 
+    def _connect_first() -> str:
+        if service.signed_out(catalog):
+            return "SoundCloud signed you out. Sign in again."
+        return "Connect a SoundCloud account first."
+
     # ---- account / connect --------------------------------------------------
     @app.get("/api/account", dependencies=[Depends(require_token)])
     def account():
         return {"connected": service.connected(catalog),
+                "signed_out": service.signed_out(catalog),
                 "account": service.account_label(catalog),
                 "avatar": service.account_avatar(catalog),
                 "accounts": service.accounts_public(catalog),
@@ -227,6 +234,15 @@ def create_app(token: str, db_path: Path) -> FastAPI:
             raise HTTPException(status_code=404, detail="Unknown sign-in.")
         return {"status": sess.status, "account": service.account_label(catalog),
                 "error": sess.error}
+
+    @app.post("/api/connect/{connect_id}/cancel", dependencies=[Depends(require_token)])
+    def connect_cancel(connect_id: str):
+        """Stop waiting for a sign-in (the person pressed Cancel): a page finished in the
+        browser after this no longer connects anything."""
+        sess = app.state.connect_sessions.pop(connect_id, None)
+        if sess and sess.status == "pending":
+            sess.cancel()
+        return {"status": "cancelled"}
 
     @app.post("/api/accounts/activate", dependencies=[Depends(require_token)])
     def activate_account(req: AccountActivateRequest):
@@ -277,6 +293,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     # ---- upload -------------------------------------------------------------
     async def _run_job(job_id, items, defaults, force, release_at):
         cancel = app.state.cancels[job_id]
+        abort = app.state.aborts[job_id]
 
         def progress(ev):
             hub.publish_threadsafe(ev)
@@ -284,17 +301,18 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         try:
             result = await asyncio.to_thread(
                 service.run_upload, catalog, items, defaults, progress,
-                cancel.is_set, force, release_at)
+                cancel.is_set, force, release_at, abort.is_set)
             app.state.jobs[job_id] = {"state": "done", "result": result}
         except Exception as e:  # pragma: no cover - defensive
             app.state.jobs[job_id] = {"state": "error", "error": str(e)}
         finally:
             app.state.cancels.pop(job_id, None)
+            app.state.aborts.pop(job_id, None)
 
     @app.post("/api/upload", dependencies=[Depends(require_token)])
     async def upload(req: UploadRequest):
         if not service.connected(catalog):
-            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+            raise HTTPException(status_code=400, detail=_connect_first())
         items = [i.model_dump(exclude_none=True) for i in req.items]
         if not items:
             raise HTTPException(status_code=400, detail="No mixes selected.")
@@ -304,6 +322,12 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         if req.release_at and not _allows("schedule_release"):
             raise HTTPException(status_code=402,
                                 detail="Scheduled public release is a Pro feature.")
+        if req.release_at:
+            try:
+                service.parse_release_at(req.release_at)
+            except ValueError:
+                raise HTTPException(status_code=400,
+                                    detail="That release date can't be read. Pick it again.")
         saved = catalog.get_setting("config") or {}
         defaults = {
             "sharing": saved.get("default_sharing", "public"),
@@ -317,6 +341,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         job_id = uuid.uuid4().hex
         _new_job(job_id)
         app.state.cancels[job_id] = threading.Event()
+        app.state.aborts[job_id] = threading.Event()
         asyncio.create_task(_run_job(job_id, items, defaults, req.force, req.release_at))
         return {"job_id": job_id, "state": "running"}
 
@@ -325,7 +350,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         """Post a re-exported file in place of its song on SoundCloud: same title, cover,
         details and playlists; the old upload is kept and marked replaced."""
         if not service.connected(catalog):
-            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+            raise HTTPException(status_code=400, detail=_connect_first())
         if service.upload_in_progress():
             raise HTTPException(status_code=409, detail="A post is already running. Try again when it's done.")
 
@@ -355,15 +380,24 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         return job
 
     @app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(require_token)])
-    def cancel_job(job_id: str):
+    def cancel_job(job_id: str, now: bool = False):
+        """Stop a post after the mix going up, or with `now`, straight away (the mix
+        going up is cut off and not posted)."""
         ev = app.state.cancels.get(job_id)
         if ev is None:
             raise HTTPException(status_code=404, detail="job not running")
         ev.set()
+        if now and job_id in app.state.aborts:
+            app.state.aborts[job_id].set()
         job = app.state.jobs.get(job_id)
         if job and job.get("state") == "running":
             app.state.jobs[job_id] = {"state": "cancelling"}
         return {"cancelling": True}
+
+    @app.get("/api/busy", dependencies=[Depends(require_token)])
+    def busy():
+        """Is a mix going up right now? Asked before the app quits."""
+        return {"uploading": service.upload_in_progress()}
 
     # ---- overview / history -------------------------------------------------
     @app.get("/api/overview", dependencies=[Depends(require_token)])
@@ -460,18 +494,16 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         """Map a SoundCloud client failure to a typed HTTP error so the UI can tell
         'reconnect your account' (401) from 'rate-limited' (429) from a generic failure."""
         if isinstance(exc, soundcloud.AuthError):
-            return HTTPException(status_code=401,
-                                 detail="Your SoundCloud session expired — please reconnect the account.")
+            return HTTPException(status_code=401, detail=str(exc))  # "SoundCloud signed you out. Sign in again."
         if isinstance(exc, soundcloud.RateLimitError):
-            return HTTPException(status_code=429,
-                                 detail="SoundCloud is rate-limiting requests — try again shortly.")
+            return HTTPException(status_code=429, detail=str(exc))  # "SoundCloud asked us to wait 3 minutes."
         print(f"[soundcloud] {fallback} {type(exc).__name__}: {exc}", file=sys.stderr)  # for diagnosis
         return HTTPException(status_code=502, detail=fallback)
 
     @app.get("/api/tracks", dependencies=[Depends(require_token)])
     async def list_tracks():
         if not service.connected(catalog):
-            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+            raise HTTPException(status_code=400, detail=_connect_first())
         try:
             tracks = await asyncio.to_thread(service.list_tracks, catalog)
         except Exception as e:
@@ -481,7 +513,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     @app.put("/api/tracks/{track_id}", dependencies=[Depends(require_token)])
     async def update_track(track_id: int, req: TrackUpdate):
         if not service.connected(catalog):
-            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+            raise HTTPException(status_code=400, detail=_connect_first())
         fields = req.model_dump(exclude_none=True)
         if not fields:
             raise HTTPException(status_code=400, detail="Nothing to update.")
@@ -494,7 +526,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     async def track_comments(track_id: int):
         """The comments on one of your tracks, with where each sits in the song."""
         if not service.connected(catalog):
-            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+            raise HTTPException(status_code=400, detail=_connect_first())
         try:
             comments = await asyncio.to_thread(service.list_comments, catalog, track_id)
         except Exception as e:
@@ -504,7 +536,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     @app.delete("/api/tracks/{track_id}", dependencies=[Depends(require_token)])
     async def delete_track(track_id: int):
         if not service.connected(catalog):
-            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+            raise HTTPException(status_code=400, detail=_connect_first())
         try:
             await asyncio.to_thread(service.delete_track, catalog, track_id)
         except Exception as e:
@@ -514,7 +546,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     @app.post("/api/tracks/bulk", dependencies=[Depends(require_token)])
     async def bulk_update_tracks(req: BulkTrackUpdate):
         if not service.connected(catalog):
-            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+            raise HTTPException(status_code=400, detail=_connect_first())
         if not _allows("batch"):
             raise HTTPException(status_code=402, detail="Bulk editing is a Pro feature.")
         patch = req.patch.model_dump(exclude_none=True)
@@ -526,7 +558,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     @app.post("/api/tracks/bulk-delete", dependencies=[Depends(require_token)])
     async def bulk_delete_tracks(req: BulkDeleteRequest):
         if not service.connected(catalog):
-            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+            raise HTTPException(status_code=400, detail=_connect_first())
         if not _allows("batch"):
             raise HTTPException(status_code=402, detail="Bulk deleting is a Pro feature.")
         results = await asyncio.to_thread(service.bulk_delete, catalog, req.ids)
@@ -535,7 +567,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     # ---- playlists (SoundCloud "sets") ---------------------------------------
     def _need_connected():
         if not service.connected(catalog):
-            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+            raise HTTPException(status_code=400, detail=_connect_first())
 
     @app.get("/api/playlists", dependencies=[Depends(require_token)])
     async def list_playlists():
@@ -604,7 +636,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     @app.post("/api/tracks/{track_id}/artwork", dependencies=[Depends(require_token)])
     async def set_track_artwork(track_id: int, req: ArtworkRequest):
         if not service.connected(catalog):
-            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+            raise HTTPException(status_code=400, detail=_connect_first())
         if not Path(req.artwork_path).is_file():
             raise HTTPException(status_code=400, detail="Image file not found.")
         try:
@@ -615,7 +647,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     @app.post("/api/tracks/bulk-artwork", dependencies=[Depends(require_token)])
     async def bulk_set_artwork(req: BulkArtworkRequest):
         if not service.connected(catalog):
-            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+            raise HTTPException(status_code=400, detail=_connect_first())
         if not _allows("batch"):
             raise HTTPException(status_code=402, detail="Bulk cover art is a Pro feature.")
         if not Path(req.artwork_path).is_file():
@@ -626,7 +658,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     @app.post("/api/tracks/{track_id}/waveform-cover", dependencies=[Depends(require_token)])
     async def waveform_cover(track_id: int):
         if not service.connected(catalog):
-            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+            raise HTTPException(status_code=400, detail=_connect_first())
         try:
             return await asyncio.to_thread(service.generate_waveform_cover, catalog, track_id)
         except Exception as e:
@@ -635,7 +667,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
     @app.post("/api/tracks/bulk-waveform-cover", dependencies=[Depends(require_token)])
     async def bulk_waveform_cover(req: BulkDeleteRequest):
         if not service.connected(catalog):
-            raise HTTPException(status_code=400, detail="Connect a SoundCloud account first.")
+            raise HTTPException(status_code=400, detail=_connect_first())
         if not _allows("batch"):
             raise HTTPException(status_code=402, detail="Bulk cover art is a Pro feature.")
         results = await asyncio.to_thread(service.bulk_generate_waveform_covers, catalog, req.ids)

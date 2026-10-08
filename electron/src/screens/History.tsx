@@ -9,9 +9,8 @@ import { Icon } from "../components/Icon";
 import { Cover } from "../components/Cover";
 import { PlayButton, SongWave } from "../components/Player";
 import { EmptyState } from "../components/SlothSpot";
-import { genreColor, useLook } from "../look";
+import { genreColor } from "../look";
 import { useDensity, type Density } from "../marks";
-import { rowKey } from "../components/a11y";
 
 const api = makeApi();
 
@@ -111,69 +110,10 @@ export function canRetry(r: UploadRow, rows: UploadRow[]): boolean {
     && (x.file_path === r.file_path || (!!r.file_hash && x.file_hash === r.file_hash)));
 }
 
-// "October 2026": the month a post went up, for the Sleeve look's back catalogue.
-export function monthLabel(s: string): string {
-  const d = parseWhen(s);
-  return isNaN(d.getTime()) ? "Earlier" : d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
-}
-
-// Sleeve look: History as a label's back catalogue, every post as its cover,
-// a shelf per month, newest month first. Failed posts sit faded with their reason.
-function BackCatalogue({ rows }: { rows: UploadRow[] }) {
-  const months: { label: string; rows: UploadRow[] }[] = [];
-  for (const r of rows) {
-    const label = monthLabel(r.timestamp);
-    const last = months[months.length - 1];
-    if (last && last.label === label) last.rows.push(r); else months.push({ label, rows: [r] });
-  }
-  return (
-    <div className="backcat">
-      {months.map((m) => (
-        <section key={m.label} className="backcat__month" aria-label={m.label}>
-          <h2 className="backcat__head">{m.label}<span>{fmtCount(m.rows.filter((r) => r.status === "uploaded").length)} posted</span></h2>
-          <div className="sleeves">
-            {m.rows.map((r) => {
-              const st = STATUS[r.status] ?? { pill: "", label: r.status };
-              const open = () => { if (r.permalink_url) openExternal(r.permalink_url); else revealPath(r.file_path); };
-              const meta = { title: r.title, sub: r.project_match ? `From ${r.project_match}` : `Posted ${fmtWhen(r.timestamp)}`,
-                cover: r.project_match || r.title, genre: r.project_genre };
-              return (
-                <div key={r.id} className={`sleeve${r.status === "uploaded" ? "" : " sleeve--done"}`} role="button" tabIndex={0}
-                  onClick={open} onKeyDown={rowKey(open)}
-                  onContextMenu={(e) => openMenu(e, [
-                    ...(r.permalink_url ? [
-                      { label: "Open on SoundCloud", onClick: () => openExternal(r.permalink_url!) },
-                      { label: "Copy SoundCloud link", onClick: () => { copyText(r.permalink_url!); } }, "-" as const] : []),
-                    { label: "Show the file", onClick: () => revealPath(r.file_path) },
-                    { label: "Copy file path", onClick: () => { copyText(r.file_path); } },
-                  ])}>
-                  <div className="sleeve__art">
-                    <Cover name={meta.cover} genre={meta.genre} />
-                    <span className="sleeve__badge">
-                      <span className={`dot ${r.status === "uploaded" ? (r.sharing === "private" ? "dot--warn" : "dot--ok") : r.status === "error" ? "dot--error" : ""}`} />
-                      {r.status === "uploaded" ? (r.sharing === "private" ? "Private" : "Public") : st.label}
-                    </span>
-                    <PlayButton path={r.file_path} meta={meta} size={34} className="sleeve__play" />
-                  </div>
-                  <div className="sleeve__meta">
-                    <div className="sleeve__name" title={r.title}>{r.title}</div>
-                    <div className="sleeve__sub" title={r.error || undefined}>{r.error ? r.error : `${dayLabel(r.timestamp)}, ${fmtTime(r.timestamp)}`}</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ))}
-    </div>
-  );
-}
-
 type ResultFilter = "all" | "uploaded" | "error" | "skipped";
 const PAGE = 100;
 
 export function History() {
-  const [look] = useLook();
   const [density] = useDensity("history");   // set in Settings > Lists
   const [rows, setRows] = useState<UploadRow[] | null>(null);
   const [limit, setLimit] = useState(PAGE);
@@ -223,7 +163,7 @@ export function History() {
 
   return (
     <div>
-      <PageHeader title="History" sub={look === "sleeve" ? "Your back catalogue: everything Uploader has posted, a shelf per month." : "Everything Uploader has posted, newest first."} />
+      <PageHeader title="History" sub="Everything Uploader has posted, newest first." />
       {rows && rows.length === 0 && (
         <EmptyState pose="napping" title="Nothing posted yet" say="Nothing yet. I’m patient.">
           Every mix you post shows here, newest first, with a link to it on SoundCloud.
@@ -249,7 +189,7 @@ export function History() {
           </div>}
         </div>
         {shown.length > 0
-          ? look === "sleeve" ? <BackCatalogue rows={shown} /> : <UploadTable rows={shown} byDay density={density} onRetry={(r) => void retry(r)} retrying={retrying} />
+          ? <UploadTable rows={shown} byDay density={density} onRetry={(r) => void retry(r)} retrying={retrying} />
           : <div className="table"><EmptyState pose="searching" title="Nothing matches" say="Looked everywhere. Nothing.">
               Try fewer letters, or pick All.
             </EmptyState></div>}

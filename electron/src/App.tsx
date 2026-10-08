@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { makeApi, makeCoverSource, readImage } from "./api";
+import { makeApi, makeCoverSource, readImage, SIGNED_OUT_EVENT } from "./api";
+import { SignInWaiting, useSignIn } from "./components/Connect";
 import { Nav, type Tab } from "./components/Nav";
 import { LcBrand } from "./components/LcBrand";
 import { PlayerBar, togglePlaying } from "./components/Player";
@@ -53,10 +54,25 @@ async function moveOldDefault(c: Config): Promise<Config | null> {
   return api.saveSettings({ ...c, default_artwork_path: "" });
 }
 
+const SET_UP_KEY = "lc-uploader-set-up";
+function setUpBefore(): boolean {
+  try { return localStorage.getItem(SET_UP_KEY) === "1"; } catch { return false; }
+}
+function rememberSetUp() {
+  try { localStorage.setItem(SET_UP_KEY, "1"); } catch { /* the next launch asks again */ }
+}
+
 export default function App() {
   const [cfg, setCfg] = useState<Config | null | "error">(null);
   useGenreColors();  // a crate colour you pick redraws every screen
   const [account, setAccount] = useState<Account | null>(null);
+  // Sign in again after SoundCloud stopped accepting the saved sign-in (sidebar, Upload).
+  const signIn = useSignIn(setAccount);
+  useEffect(() => {
+    const recheck = () => { api.account().then(setAccount).catch(() => {}); };
+    window.addEventListener(SIGNED_OUT_EVENT, recheck);
+    return () => window.removeEventListener(SIGNED_OUT_EVENT, recheck);
+  }, []);
   const [ent, setEnt] = useState<Entitlement | null>(null);
   // Where you are: a tab, maybe a track open for editing on it. Kept as a back/forward
   // history (side mouse buttons, Alt+arrows), the same as in Backups.
@@ -203,7 +219,10 @@ export default function App() {
   // Was the app already set up when it opened? Only then can "What's new" show
   // on a first run of this version (a fresh install has nothing new to show).
   const setUpAtOpen = useRef<boolean | null>(null);
-  const setUpOnce = useRef(false);
+  // Set up once on this computer: the welcome never shows again, even after the last
+  // folder is removed or the account is disconnected (Home, Upload and Settings offer
+  // the next step instead).
+  const setUpOnce = useRef(setUpBefore());
   useEffect(() => {
     const covers = setCoverSource(makeCoverSource());
     Promise.all([api.getSettings(), api.account(), api.entitlement()])
@@ -223,6 +242,9 @@ export default function App() {
   }, []);
   const prevDone = useRef(false);
   useEffect(() => {
+    if (live.upload.done && !prevDone.current && live.upload.stopped === "signed_out") {
+      api.account().then(setAccount).catch(() => {});
+    }
     if (live.upload.done && !prevDone.current && "Notification" in window
         && Notification.permission === "granted") {
       new Notification("LazyCreatives Uploader", {
@@ -256,7 +278,10 @@ export default function App() {
   // set up, disconnecting the last account (or removing the last folder) keeps you where
   // you are: Settings and Home offer to connect again.
   const configured = cfg.sources.length > 0 && account.connected;
-  if (configured) setUpOnce.current = true;
+  if ((configured || account.signed_out) && !setUpOnce.current) {
+    setUpOnce.current = true;  // signed out by SoundCloud: set up before, just sign in again
+    rememberSetUp();
+  }
   if (!configured && !setUpOnce.current) {
     return (
       <Setup cfg={cfg} account={account} onAccount={setAccount}
@@ -270,6 +295,8 @@ export default function App() {
     <div className="app">
       <Nav tab={tab} busy={busy} onNavigate={(t) => setTab(t)}
         account={account.account} tier={ent.tier} beta={Boolean(ent.beta)}
+        signIn={{ signedOut: !!account.signed_out, busy: signIn.busy, start: () => void signIn.start(),
+          waiting: <>{signIn.error && <span className="faint">{signIn.error}</span>}<SignInWaiting signIn={signIn} compact /></> }}
         onOpenRecent={(id) => { setTab("manage"); openTrack(id); }} openId={tab === "manage" ? sub : null} />
       <div className="main">
         <div className="content">
@@ -280,7 +307,8 @@ export default function App() {
                 onOpenTrack={(id) => { setTab("manage"); openTrack(id); }} />
             ) : tab === "upload" ? (
               <Upload cfg={cfg} ent={ent} scan={live.scan} upload={live.upload} resetUpload={live.resetUpload}
-                account={account.account} preselect={preselect} onPreselected={() => setPreselect(null)} />
+                account={account.account} preselect={preselect} onPreselected={() => setPreselect(null)}
+                signIn={{ busy: signIn.busy, start: () => void signIn.start() }} />
             ) : tab === "manage" ? (
               <Manage ent={ent} cfg={cfg} openTrack={sub}
                 onOpenTrack={openTrack} onCloseTrack={closeSub} />
@@ -289,7 +317,7 @@ export default function App() {
                 onOpenTrack={openPlaylistSong} onCloseTrack={closePlaylistSong} />
             ) : tab === "albums" ? (
               <Albums app="uploader" oneLook open={sub} onOpen={(id) => setTab("albums", id)} onClose={() => setTab("albums")}
-                metaFor={(s, a, i) => ({ title: s.title, sub: `${a.title} · ${i + 1} of ${a.songs.length}`, cover: s.project || s.title })} />
+                metaFor={(s, a, i) => ({ title: s.title, sub: `${a.title} · ${i + 1} of ${a.songs.length}`, cover: s.project || s.title, genre: s.genre || null })} />
             ) : tab === "history" ? (
               <History />
             ) : (

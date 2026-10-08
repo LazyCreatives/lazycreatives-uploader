@@ -1,19 +1,19 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { rowKey, useDialogFocus } from "../components/a11y";
+import { useDialogFocus } from "../components/a11y";
 import { makeApi, openExternal, pickImage, readImage, revealPath, saveRenderedCover } from "../api";
 import { pickCover } from "../components/CoverPick";
 import { coverPng } from "../coverRender";
 import { askConfirm, Exit, openMenu, toast, type MenuItem, toastWarn } from "../components/Desktop";
-import { GenreChip, pickGenre } from "../components/GenrePick";
+import { pickGenre } from "../components/GenrePick";
 import { copyText } from "../desktop";
 import type { Config, Entitlement, Mix, Sharing, UploadItemInput } from "../types";
 import { Button, fmtBytes, fmtCount, fmtDuration, fmtWhen, PageHeader, ProBadge, ProgressBar } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Cover } from "../components/Cover";
-import { AuditionDiv, AuditionLabel, PlayButton, SongWave, type SongMeta } from "../components/Player";
+import { AuditionLabel, PlayButton, SongWave, type SongMeta } from "../components/Player";
 import { levelCheck, needsLook, preflight, type Check } from "../checklist";
-import { genreColor, useLook } from "../look";
-import { EmptyState } from "../components/SlothSpot";
+import { genreColor } from "../look";
+import { EmptyState, SlothSpot } from "../components/SlothSpot";
 import type { ItemState, UploadState, ScanState } from "../useProgress";
 import { preselect as pickDropped } from "../companionQueue";
 
@@ -79,13 +79,54 @@ export function lastLookTitle(n: number, sharings: Sharing[], account: string | 
   return `Post ${what} to SoundCloud${all ? ` as ${all === "public" ? "Public" : "Private"}` : ""}${on}`;
 }
 
-export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, preselect = null, onPreselected }: {
+// A failure only signing in again fixes ("SoundCloud signed you out. Sign in again.").
+export const needsSignIn = (reason?: string | null) => !!reason && /sign in again/i.test(reason);
+
+// What the post card says when a post ends: stopped by hand, stopped early because
+// SoundCloud signed you out or asked us to wait, or done.
+export function postEndLine(u: Pick<UploadState, "cancelled" | "completed" | "total" | "stopped" | "stopNote" | "notSent">): string {
+  if (u.stopped) {
+    const left = u.notSent ? ` ${u.notSent} ${u.notSent === 1 ? "mix wasn’t" : "mixes weren’t"} sent.` : "";
+    const then = u.stopped === "rate_limit" && u.notSent ? " Post them again then." : "";
+    return `${u.stopNote || "SoundCloud stopped the post."}${left}${then}`;
+  }
+  if (u.cancelled) return u.total === 1 && u.completed === 0 ? "Stopped. It wasn’t posted."
+    : `Stopped. ${u.completed} posted, the rest weren’t posted.`;
+  return "Done";
+}
+
+// The main Post button: what it says and how it looks, kept in one place. Until a mix
+// is ticked it is an outlined button asking for a tick; once something is ticked it
+// turns SoundCloud orange, the one button in the app that posts to SoundCloud. While a
+// post runs it goes back to outlined ("Posting…"), since it can't be pressed.
+export function postButtonLook(picked: number, running: boolean): { kind: "sc" | "ghost"; label: string } {
+  if (running) return { kind: "ghost", label: "Posting…" };
+  if (picked === 0) return { kind: "ghost", label: "Tick mixes to post" };
+  return { kind: "sc", label: `Post ${picked} to SoundCloud` };
+}
+
+// The one line that ends a post, in plain words with the real counts.
+export function doneLine(ok: number, skipped: number, failed: number): string {
+  const mixes = (n: number) => `${n} ${n === 1 ? "mix" : "mixes"}`;
+  if (failed > 0) {
+    const where = `The reason is on ${failed === 1 ? "its row" : "their rows"}.`;
+    if (ok === 0) return `${failed === 1 ? "That mix" : `Those ${mixes(failed)}`} didn’t go up. ${where}`;
+    return `${mixes(ok)} posted, ${failed} didn’t go up. ${where}`;
+  }
+  const again = skipped === 0 ? ""
+    : ` ${skipped} ${skipped === 1 ? "was" : "were"} already there, so ${skipped === 1 ? "it wasn’t" : "they weren’t"} posted again.`;
+  if (ok === 0) return skipped ? `${skipped === 1 ? "That mix was" : "Those mixes were"} already on SoundCloud, so nothing went up twice.` : "Nothing went up.";
+  const up = `${mixes(ok)} ${ok === 1 ? "is" : "are"} up on SoundCloud.`;
+  return again ? `${up}${again}` : `${up} ${ok === 1 ? "Just the once." : "None went up twice."}`;
+}
+
+export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, preselect = null, onPreselected, signIn }: {
   cfg: Config; ent: Entitlement; scan: ScanState; upload: UploadState; account?: string | null;
   resetUpload: (queue?: string[], keepOthers?: boolean) => void;
   preselect?: string[] | null;     // mixes dropped on the narrow window: tick just these
   onPreselected?: () => void;
+  signIn?: { busy: boolean; start: () => void };  // "Sign in again" after SoundCloud signed you out
 }) {
-  const [look] = useLook();
   const [mixes, setMixes] = useState<Mix[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // "Post as" starts from the Default release in Settings.
@@ -382,11 +423,11 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     }
   }
 
-  // Finish the mix going up now, then post no more.
-  async function stopAfterThis() {
+  // Finish the mix going up now, then post no more; with `now`, cut that mix off too.
+  async function stopAfterThis(now = false) {
     if (!jobRef.current || stopping) return;
     setStopping(true);
-    try { await api.cancelJob(jobRef.current); }
+    try { await api.cancelJob(jobRef.current, now); }
     catch { setStopping(false); toastWarn("Couldn’t stop the post. It may have just finished."); }
   }
 
@@ -493,7 +534,11 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
       title="Post this version in the song's place, with the same title, cover, details and playlists"
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); void updateVersion(m); }}>Update</button>
   ) : null;
-  const retry = (m: Mix) => (
+  const retry = (m: Mix) => needsSignIn(itemOf(m)?.reason) && signIn ? (
+    <button type="button" className="btn btn--ghost btn--sm mixstate__retry" disabled={busy || signIn.busy}
+      title="SoundCloud signed you out. Sign in again, then post it."
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); signIn.start(); }}>Sign in again</button>
+  ) : (
     <button type="button" className="btn btn--ghost btn--sm mixstate__retry" disabled={busy}
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); void start(m.path); }}>Try again</button>
   );
@@ -504,11 +549,12 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     const pct = it.size > 0 ? Math.round((it.sent / it.size) * 100) : 0;
     switch (it.phase) {
       case "waiting": return <span className="pill pill--skipped">Waiting</span>;
+      // the bar is the mix's own waveform filling up (see SongWave's `upload`); a small
+      // bar stands in only when the window is too narrow for the waveform column
       case "uploading": return (
         <span className="mixstate mixstate--up">
-          <span className="mixstate__label">Uploading <span className="num">{pct}%</span></span>
-          <span className="mixstate__bar"><span style={{ "--pct": it.size > 0 ? pct : 0 } as CSSProperties}
-            className={it.size > 0 ? "" : "mixstate__bar--wait"} /></span>
+          <span className="mixstate__label">Uploading{it.size > 0 ? <> <span className="num">{pct}%</span></> : "…"}</span>
+          {it.size > 0 && <span className="mixstate__bar" aria-hidden="true"><span style={{ "--pct": pct } as CSSProperties} /></span>}
         </span>);
       case "posted": return (
         <button type="button" className="pill pill--ok mixstate--ok linkbtn" title={it.url ? "Open on SoundCloud" : undefined}
@@ -546,6 +592,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
         ? <button type="button" className="pill pill--draft linkbtn"
             title="Draft: posted privately with [WIP] after its title, and replaced on each new bounce. Click to mark as final."
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleWip(m); }}>Draft</button>
+        : isNew(m) ? <span className="pill pill--new">New</span>
         : null);
   // The "more" button at the end of a mix: the same list as a right-click.
   const moreButton = (m: Mix, cls = "") => (
@@ -571,54 +618,13 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   const mixFrom = (m: Mix) => !m.project_match ? "not linked to a project"
     : m.project_match.trim().toLowerCase() === m.name.trim().toLowerCase() ? "" : `from ${m.project_match}`;
 
-  // One mix as a sleeve (Sleeve look) or a row (Crate look).
-  const sleeveCard = (m: Mix) => {
-    const meta = mixMeta(m);
-    const picked = selected.has(m.path);
-    const locked = m.uploaded || busy;
-    const note = liveNote(m);
-    const it = itemOf(m);
-    return (
-      <AuditionDiv key={m.path} song={m.path} meta={meta} className={`sleeve${picked ? " sleeve--selected" : ""}${m.uploaded || m.superseded_by || m.short || m.stem ? " sleeve--done" : ""}${it?.phase === "failed" ? " sleeve--failed" : ""}`}
-        role="button" tabIndex={0} aria-pressed={picked} onContextMenu={(e) => openMenu(e, mixMenu(m))}
-        onClick={() => { if (!locked) toggle(m.path); }}
-        onKeyDown={rowKey(() => { if (!locked) toggle(m.path); })}>
-        <div className="sleeve__art">
-          <Cover name={m.project_match || m.name} genre={m.genre} />
-          {statusBadge(m) && <span className="sleeve__badge">{statusBadge(m)}</span>}
-          <input type="checkbox" className="mixrow__check mix-sleeve__check" disabled={locked} checked={picked}
-            onClick={(e) => e.stopPropagation()} onChange={() => toggle(m.path)} aria-label={`Pick ${m.name}`} />
-          <PlayButton path={m.path} meta={meta} size={34} className="sleeve__play" />
-          {moreButton(m, "sleeve__coverbtn")}
-          {it?.phase === "uploading" && (
-            <span className="mix-sleeve__bar"><span style={{ "--pct": it.size > 0 ? (it.sent / it.size) * 100 : 0 } as CSSProperties} /></span>
-          )}
-        </div>
-        <div className="sleeve__meta">
-          <div className="track-sleeve__top">
-            <div className="sleeve__name" title={m.name}>{titles[m.path] || m.name}</div>
-            {formatChips(m)}
-          </div>
-          <div className="track-sleeve__sub">
-            <span className="col-trunc" title={m.project_match ?? undefined}>{[m.bpm ? `${Math.round(m.bpm)} BPM` : "", m.uploaded ? "" : fmtWhen(new Date(m.mtime * 1000).toISOString()), mixFrom(m), extLabel(m)].filter(Boolean).join(" · ")}</span>
-            <span className="mono">{m.duration ? fmtDuration(m.duration) : ""}</span>
-          </div>
-          <SongWave path={m.path} meta={meta} height={18} />
-          {note
-            ? <div className="mix-sleeve__state">{note}{it?.phase === "failed" && retry(m)}</div>
-            : !m.superseded_by && !m.uploaded && <div className="mix-sleeve__draft">
-                <GenreChip genre={m.genre ?? null} setByYou={!!m.genre_by_you} onClick={() => changeGenre(m)} />
-              </div>}
-        </div>
-      </AuditionDiv>
-    );
-  };
+  // One mix as a row.
   const crateRow = (m: Mix, i: number) => {
     const meta = mixMeta(m);
     const note = liveNote(m);
     const it = itemOf(m);
     return (
-    <AuditionLabel key={m.path} song={m.path} meta={meta} className={`row cols mix-cols scanrow--enter${selected.has(m.path) ? " row--selected" : ""}`}
+    <AuditionLabel key={m.path} song={m.path} meta={meta} className={`row cols mix-cols scanrow--enter${selected.has(m.path) ? " row--selected" : ""}${it?.phase === "posted" ? " mixrow--justposted" : ""}`}
       onContextMenu={(e) => openMenu(e, mixMenu(m))}
       style={{ ["--i" as any]: i, cursor: m.uploaded || busy ? "default" : "pointer" }}>
       <span className="stripe" style={{ background: genreColor(m.genre) }} />
@@ -646,13 +652,23 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
                 .filter(Boolean).map((t) => ` · ${t}`).join("")}
             </div>}
       </div>
-      <SongWave path={m.path} meta={meta} height={24} />
+      <SongWave path={m.path} meta={meta} height={24}
+        upload={it?.phase === "uploading" && it.size > 0 ? { fraction: it.sent / it.size, label: `Uploading ${m.name}` } : undefined} />
       <span className="col-num" title={fmtBytes(m.size)}>{m.duration ? fmtDuration(m.duration) : "—"}</span>
-      <span className="mixstate__cell">{statusBadge(m)}{it?.phase === "failed" ? retry(m) : updateButton(m)}</span>
+      <span className="mixstate__cell">
+        {/* a new state fades in over the old one (Uploading to Posted) */}
+        {it ? <span key={it.phase} className="mixstate__in">{statusBadge(m)}</span> : statusBadge(m)}
+        {it?.phase === "failed" ? retry(m) : updateButton(m)}
+      </span>
       {moreButton(m)}
     </AuditionLabel>
     );
   };
+
+  const postLook = postButtonLook(selected.size, running);
+  // when a post ends: the first one's link, for "Open on SoundCloud"
+  const firstUrl = Object.values(upload.items).find((i) => i.phase === "posted" && i.url)?.url ?? null;
+  const ended = upload.done && !upload.cancelled && !upload.stopped;
 
   return (
     <div>
@@ -664,20 +680,28 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
           <span className={`up-when${whenProblem ? " up-when--bad" : ""}`} role="status">
             {whenProblem ?? `Goes public ${fmtRelease(releaseAtValue)}`}</span>
         )}
-        <Button kind="primary" disabled={selected.size === 0 || busy || !!whenProblem} onClick={() => start()}
-          title={whenProblem ?? undefined}>
-          {running ? "Posting…" : selected.size ? `Post ${selected.size} to SoundCloud` : "Post to SoundCloud"}
+        <Button kind={postLook.kind} className={`btn btn--${postLook.kind} up-post`} disabled={selected.size === 0 || busy || !!whenProblem}
+          onClick={() => start()} title={whenProblem ?? (selected.size === 0 && !busy ? "Tick the mixes you want to post" : undefined)}>
+          {postLook.label}
         </Button>
       </>} />
 
       {error && <div className="banner banner--warn"><Icon name="alert" className="banner__icon" />{error}</div>}
 
-      {(running || upload.active || upload.done) && (
+      {ended && (
+        <section className="card section up-overall up-done celebrate">
+          {upload.errors === 0 && <SlothSpot pose="waving" size={44} />}
+          <p className="up-done__line" role="status">{doneLine(upload.completed, upload.skipped, upload.errors)}</p>
+          {firstUrl && <Button sm onClick={() => openExternal(firstUrl)}>
+            <Icon name="external" size={14} />Open on SoundCloud</Button>}
+        </section>
+      )}
+      {(running || upload.active || upload.done) && !ended && (
         <section className="card section up-overall">
           <div className="row-spread">
             <b style={{ fontWeight: 600 }}>{upload.done
-              ? (upload.cancelled ? `Stopped. ${upload.completed} posted, the rest weren’t posted.` : "Done")
-              : stopping ? `Stopping after ${upload.current ?? "this mix"}…`
+              ? postEndLine(upload)
+              : stopping ? (upload.total - finished > 1 ? `Stopping after ${upload.current ?? "this mix"}…` : "Stopping…")
               : upload.current ? `Posting ${Math.min(finished + 1, upload.total)} of ${upload.total}` : "Getting ready…"}</b>
             <span className="muted up-overall__counts">
               {upload.completed} posted · {upload.skipped} skipped · {upload.errors} failed
@@ -692,6 +716,15 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
               <Button kind="quiet" sm onClick={() => void stopAfterThis()} disabled={stopping}
                 title="Finish the mix going up now, then post no more">
                 {stopping ? "Stopping…" : "Stop after this mix"}</Button>
+            )}
+            {!upload.done && jobRef.current && upload.total - finished === 1 && (
+              <Button kind="quiet" sm onClick={() => void stopAfterThis(true)} disabled={stopping}
+                title="Stop sending this mix. It won’t be posted.">
+                {stopping ? "Stopping…" : "Stop"}</Button>
+            )}
+            {upload.done && (upload.stopped === "signed_out" || upload.stopped === "refused") && signIn && (
+              <Button kind="sc" sm onClick={signIn.start} disabled={signIn.busy}>
+                {signIn.busy ? "Waiting for browser…" : "Sign in again"}</Button>
             )}
           </div>
         </section>
@@ -713,9 +746,6 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
           {query && <button type="button" className="find__x" aria-label="Clear search"
             onClick={() => setQuery("")}><Icon name="close" size={13} /></button>}
         </label>
-        {look === "sleeve" && pickable.length > 0 && (
-          <Button kind="quiet" sm onClick={toggleAll} disabled={busy}>{allPicked ? "Untick all" : `Tick all ${pickable.length} new`}</Button>
-        )}
         <span className="up-tools__plan" title={postsAs}>{postsAs}</span>
         <button type="button" className={`btn btn--sm up-tools__opts${optsOpen ? " up-tools__opts--on" : ""}`}
           aria-expanded={optsOpen} aria-controls="post-settings" onClick={() => setOptsOpen((o) => !o)}>
@@ -796,16 +826,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
         </EmptyState></div>
       )}
 
-      {visible.length > 0 && look === "sleeve" && (<>
-        {fresh.length > 0 && <div className="sleeves mix-sleeves">{fresh.map(sleeveCard)}</div>}
-        {posted.length > 0 && <>
-          <button type="button" className="mix-split mix-split--btn" aria-expanded={showPosted || !!q} onClick={() => setShowPosted((v) => !v)}>
-            <Icon name={showPosted || q ? "chevronDown" : "chevronRight"} size={15} />Already on SoundCloud<span>{fmtCount(posted.length)}</span></button>
-          {(showPosted || !!q) && <div className="sleeves mix-sleeves">{posted.map(sleeveCard)}</div>}
-        </>}
-      </>)}
-
-      {visible.length > 0 && look === "crate" && (
+      {visible.length > 0 && (
         <div className="table table--crate">
           <div className="row cols cols-head mix-cols">
             <span />

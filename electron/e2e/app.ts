@@ -46,6 +46,7 @@ export async function launchApp(): Promise<RunningApp> {
     LAZYUP_KEY_DIR: path.join(WORK_DIR, "data"),
     LAZYUP_DB: path.join(WORK_DIR, "data", "catalog.db"),
     LAZYUP_BACKUPS_DB: path.join(WORK_DIR, "backups-catalog.db"),  // made-up Backups catalog (BPM, genre)
+    LC_ALBUMS_DB: path.join(WORK_DIR, "data", "albums.db"),           // the albums list shared with Backups
     // Keep the backend away from the real home folder.
     HOME: FAKE_HOME, USERPROFILE: FAKE_HOME,
     E2E_USER_DATA: userData,
@@ -77,6 +78,14 @@ export async function launchApp(): Promise<RunningApp> {
   });
   const version = await app.evaluate(({ app }) => app.getVersion());
   return { app, page, port, token, version };
+}
+
+// Change the window's size (the narrow-window pictures), keeping it the same on every machine.
+export async function resizeWindow(running: RunningApp, size: { width: number; height: number }): Promise<void> {
+  await running.app.evaluate(({ BrowserWindow }, s) => {
+    BrowserWindow.getAllWindows()[0].setContentSize(s.width, s.height);
+  }, size);
+  await running.page.setViewportSize(size);
 }
 
 export async function closeApp(running: RunningApp | undefined): Promise<void> {

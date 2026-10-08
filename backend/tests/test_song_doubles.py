@@ -163,3 +163,45 @@ def test_a_post_made_after_the_account_was_last_read_still_counts(tmp_path, monk
     make_wav(tmp_path / "Mixes2" / "Late.wav", value=2, seconds=0.5)
     row = service.scan_mixes(cat, [tmp_path / "Mixes2"])[0]
     assert row["on_soundcloud"]["kind"] == "same"
+
+
+# ---- numbered series and titles in any script ----------------------------------
+def test_a_number_in_the_title_makes_a_different_song():
+    assert songs.song_key("Episode 100") != songs.song_key("Episode 101")
+    assert songs.song_key("Track 1") != songs.song_key("Track 9")
+    assert songs.song_key("Basement Tapes 03") == songs.song_key("Basement Tapes 3")
+    # render counts are still versions of one song
+    assert {songs.song_key(n) for n in ["Heavy v2", "Heavy_2.wav", "Heavy final 2", "Heavy"]} == {"heavy"}
+
+
+def test_titles_in_other_scripts_and_with_accents_stay_apart():
+    assert songs.song_key("深夜 Tape 814") != songs.song_key("Tape 深夜 930")
+    assert songs.song_key("深夜") != songs.song_key("朝")
+    assert songs.song_key("Áurea") == songs.song_key("Aurea") == "aurea"
+
+
+def test_the_next_episode_is_not_held_back_as_a_version(tmp_path, monkeypatch):
+    cat = _catalog(tmp_path, monkeypatch)
+    ep100 = make_wav(tmp_path / "Mixes" / "Episode 100.wav", value=1, seconds=1.0)
+    service.run_upload(cat, [{"path": str(ep100), "name": "Episode 100"}], {})
+    make_wav(tmp_path / "Mixes" / "Episode 101.wav", value=2, seconds=2.0)
+    row = next(m for m in service.scan_mixes(cat, [tmp_path / "Mixes"]) if m["name"] == "Episode 101")
+    assert row["on_soundcloud"] is None and songs.is_new(row)
+
+
+def test_your_tracks_do_not_mark_a_numbered_series_as_doubles():
+    tracks = [{"id": i, "title": f"Sunday Session {i}", "duration": 3600 + i} for i in range(1, 5)]
+    tracks += [{"id": 9, "title": "深夜 Tape 814", "duration": 1800},
+               {"id": 10, "title": "Tape 深夜 930", "duration": 1801}]
+    service._mark_track_dupes(tracks)
+    for t in tracks:
+        assert "dupe_group" not in t and "version_count" not in t, t["title"]
+
+
+def test_wip_saved_by_an_older_version_still_finds_its_song(tmp_path, monkeypatch):
+    cat = _catalog(tmp_path, monkeypatch)
+    cat.set_setting("wip_tracks", {"episode": {"name": "Episode 100"}})  # old key
+    assert set(service.get_wip(cat)) == {"episode 100"}
+    mixes = [{"name": "Episode 100"}, {"name": "Episode 101"}]
+    service.annotate_wip(mixes, cat)
+    assert mixes[0].get("wip") and not mixes[1].get("wip")

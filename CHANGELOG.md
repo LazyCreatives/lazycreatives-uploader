@@ -14,6 +14,38 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## Unreleased
+
+## 0.2.8 (8 October 2026)
+
+### New
+- **Home shows big rolling numbers**: ready to post, posted, plays and failed.
+- **Watch it go up.** While a mix uploads, its own waveform fills with colour. When posting finishes, the sloth waves and says how many went up, with a button to open the first one on SoundCloud.
+- **Stop a post, and a warning before quitting mid-post.**
+- **"Out now" on release day.** A stamp lands on the album's cover on release day and stays there after.
+
+### Better
+- **First run asks Light, Dark or Match my computer**, the same choice as in Settings, instead of looks Uploader doesn't have.
+- **The Post button says "Tick mixes to post"** until you tick something, then turns SoundCloud orange. New mixes say "New" in the Status column.
+- **Your tracks stays quick with thousands of tracks.** Search waits until you stop typing, the Genre › Year columns show 200 at a time, and Rows, Covers and Columns sit at the top with words.
+- **Connecting SoundCloud can be cancelled**, or its page opened again, while you sign in.
+- **Albums:** rows take the colour of their songs' main genre, crossfade is one line in the album header, and the album list says "ready" once.
+- **One calm type scale and square record-pool corners.** Coloured edges only mean genre or what's playing.
+- **Search finds mixes named in any script**, and light mode's tick boxes and coloured words are easier to see.
+- **Album songs slide out of the way when you drag one.** The others make room as you move it, and the numbers update as you go, so you see the new order before you let go. Turned off if your computer is set to reduce motion.
+- **Warnings in plain words.** When something doesn't work, the app now says what went wrong and what to do next, instead of short programmer notes like "no such picture" or a bare number.
+- **The page after you sign in to SoundCloud matches the app.** Same look as Uploader, light or dark like your computer, and it names the account you connected.
+
+### Fixed
+- **Numbered mixes are separate songs.** "Episode 101" and titles in other languages are no longer taken for another song, held back or marked "posted twice".
+- **When SoundCloud signs you out, the app says so** and offers "Sign in again", instead of "SoundCloud had a problem" and a green "connected".
+- **A post stops when SoundCloud signs you out or asks us to wait**, and says for how long, instead of sending every mix only to be refused.
+- **No double posts after a dropped connection.** "Try again" checks SoundCloud first.
+- **Tags like 80's and rock'n'roll come back as you typed them.**
+- **Small fixes:** removing your last folder no longer brings back the welcome every launch, Settings › Updates fits mid-size windows, cover tick boxes no longer sit on the catalogue number, Undo on an album puts the song back in its place, and the "Waveform" heading no longer runs into "From project".
+- **"Go public later" waits for your date.** A mix set to go public on a later date could go public within a minute of posting. It now stays private until the day and time you picked.
+- **Sign-in no longer says "connected" when it wasn't.** If you press Cancel on SoundCloud or the sign-in fails, the page now says so and tells you how to try again.
+
 ## 0.2.7 (8 October 2026)
 
 ### New

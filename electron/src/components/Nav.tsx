@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { LcBrand } from "./LcBrand";
 import { Icon, type IconName } from "./Icon";
 import { openPalette } from "./Palette";
@@ -17,11 +18,14 @@ const ITEMS: { key: Tab; label: string; icon: IconName }[] = [
   { key: "settings", label: "Settings", icon: "settings" },
 ];
 
-export function Nav({ tab, busy, onNavigate, account, tier, beta = false, onOpenRecent, openId }: {
+export function Nav({ tab, busy, onNavigate, account, tier, beta = false, onOpenRecent, openId, signIn }: {
   tab: Tab; busy: boolean; onNavigate: (t: Tab) => void;
   account: string | null; tier: string; beta?: boolean;
   onOpenRecent: (id: string) => void; openId?: string | null;  // the track open now
+  // SoundCloud stopped accepting the saved sign-in: say so and offer to sign in again.
+  signIn?: { signedOut: boolean; waiting: ReactNode; busy: boolean; start: () => void };
 }) {
+  const out = !!signIn?.signedOut;
   const plan = beta ? "free beta" : tier === "free" ? "free plan" : `${tier} plan`;
   return (
     <nav className="nav">
@@ -42,12 +46,20 @@ export function Nav({ tab, busy, onNavigate, account, tier, beta = false, onOpen
       <NavRecents onOpen={onOpenRecent} current={openId} />
       <div className="nav__spacer" />
       <NarrowWindowButton />
+      {out && signIn && (
+        <button type="button" className="nav__item nav__signin" onClick={signIn.start} disabled={signIn.busy}
+          title="SoundCloud signed you out. Sign in again to post and edit your tracks.">
+          <Icon name="alert" className="nav__icon" />
+          <span className="nav__label">{signIn.busy ? "Waiting for browser…" : "Sign in again"}</span>
+        </button>
+      )}
       <div className="nav__foot">
         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span className={`dot${account ? " dot--ok" : ""}`} />
-          {account ? "SoundCloud connected" : "Not connected"}
+          <span className={`dot${out ? " dot--warn" : account ? " dot--ok" : ""}`} />
+          {out ? "SoundCloud signed you out" : account ? "SoundCloud connected" : "Not connected"}
         </span>
         {account && <span className="faint">as {account}</span>}
+        {out && signIn?.waiting}
       </div>
     </nav>
   );

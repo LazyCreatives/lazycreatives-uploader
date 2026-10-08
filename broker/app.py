@@ -132,6 +132,12 @@ def create_app() -> FastAPI:
         if app_key and provided != app_key:
             raise HTTPException(status_code=401, detail="bad app key")
 
+    def _oauth_error(r) -> str:
+        try:
+            return str((r.json() or {}).get("error") or "")
+        except Exception:
+            return ""
+
     def _mint(payload: dict) -> dict:
         if not (client_id and client_secret):
             raise HTTPException(status_code=503, detail="broker not configured")
@@ -143,6 +149,13 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=502, detail="could not reach SoundCloud")
         if r.status_code == 401:
             raise HTTPException(status_code=401, detail="SoundCloud rejected the request")
+        if r.status_code == 400 and _oauth_error(r) == "invalid_grant":
+            # The refresh token (or code) is expired, revoked or already used: the app
+            # must ask the person to sign in again, not report a SoundCloud outage.
+            raise HTTPException(status_code=401, detail="sign-in expired")
+        if r.status_code == 429:
+            raise HTTPException(status_code=429, detail="SoundCloud asked us to wait",
+                                headers={"Retry-After": r.headers.get("Retry-After", "60")})
         if r.status_code >= 400:
             raise HTTPException(status_code=502, detail="SoundCloud token request failed")
         data = r.json()

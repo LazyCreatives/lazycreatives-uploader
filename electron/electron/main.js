@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, session } = require("electron");
 const path = require("path");
+const http = require("http");
 const fs = require("fs");
 const { startSidecar, stopSidecar, killGroup } = require("./sidecar");
 const { createTray } = require("./tray");
@@ -266,7 +267,45 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => { /* stay alive in tray */ });
 
+// Is a mix going up right now? Asked of the engine before quitting; a slow or missing
+// answer counts as no, so quitting never hangs.
+function uploading() {
+  if (!sidecar || sidecar.stopped) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const req = http.get({ host: "127.0.0.1", port: sidecar.port, path: "/api/busy", timeout: 1500,
+      headers: { "X-Auth-Token": sidecar.token } }, (res) => {
+      let body = "";
+      res.on("data", (c) => { body += c; });
+      res.on("end", () => { try { resolve(!!JSON.parse(body).uploading); } catch { resolve(false); } });
+    });
+    req.on("timeout", () => req.destroy());
+    req.on("error", () => resolve(false));
+  });
+}
+
+// Quitting in the middle of a post cuts the mix off, so ask first.
+let quitChecked = false;
+async function quitAfterAsking() {
+  if (await uploading()) {
+    const parent = win && !win.isDestroyed() && win.isVisible() ? win : undefined;
+    const { response } = await dialog.showMessageBox(parent, {
+      type: "warning",
+      buttons: ["Keep posting", "Quit anyway"], defaultId: 0, cancelId: 0,
+      message: "A mix is still going up. Quit anyway?",
+      detail: "Quitting stops it, and it won’t be on SoundCloud. You can post it again next time.",
+    });
+    if (response !== 1) { isQuitting = false; return; }
+  }
+  quitChecked = true;
+  app.quit();
+}
+
 app.on("before-quit", (e) => {
+  if (!quitChecked && sidecar && !sidecar.stopped && !stopping) {
+    e.preventDefault();
+    void quitAfterAsking();
+    return;
+  }
   isQuitting = true;
   if (sidecar && !sidecar.stopped && !stopping) {
     e.preventDefault();

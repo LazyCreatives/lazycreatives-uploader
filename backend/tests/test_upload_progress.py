@@ -82,8 +82,9 @@ def test_short_reason_is_plain_english():
     r = service.short_reason
     assert r(FileNotFoundError("x")) == "The file was moved or deleted."
     assert r(PermissionError("x")) == "Couldn't open the file."
-    assert r(soundcloud.RateLimitError("30")).startswith("SoundCloud is busy")
-    assert r(soundcloud.AuthError()) == "SoundCloud needs you to reconnect."
+    assert r(soundcloud.RateLimitError("300")) == "SoundCloud asked us to wait 5 minutes."
+    assert r(soundcloud.SignedOutError()) == "SoundCloud signed you out. Sign in again."
+    assert r(soundcloud.AuthError()) == "SoundCloud refused this account. Sign in again."
     assert r(requests.ConnectionError("boom")) == "Couldn't reach SoundCloud. Check your internet."
     assert r(requests.HTTPError("413", response=_Resp(413))) == "The file is too big for SoundCloud."
     assert r(requests.HTTPError("502", response=_Resp(502))) == "SoundCloud had a problem. Try again soon."

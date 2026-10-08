@@ -31,7 +31,7 @@ export function Folders({ sources, onChange }: {
             "-", { label: "Remove", onClick: () => remove(s), danger: true },
           ])}>
             <span className="faint" style={{ display: "flex" }}><Icon name="folder" /></span>
-            <div className="row__main pathline"><div className="row__title mono col-trunc" style={{ fontSize: 12.5, fontWeight: 400 }} title={s}>{s}</div>
+            <div className="row__main pathline"><div className="row__title mono col-trunc" style={{ fontSize: 12, fontWeight: 400 }} title={s}>{s}</div>
               <CopyButton text={s} what="folder path" size={13} /></div>
             <Button kind="quiet" sm onClick={() => remove(s)}>Remove</Button>
           </div>

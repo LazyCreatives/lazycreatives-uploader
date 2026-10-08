@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { makeApi, openExternal, pickImage, readImage, revealPath } from "../api";
 import { askConfirm, CopyButton, Exit, openMenu, type MenuItem } from "../components/Desktop";
 import { Rating, ratingMenu } from "../components/Marks";
@@ -10,7 +10,7 @@ import { Button, PageHeader, SubLine, ProBadge, fmtDuration, fmtCount, parseTags
 import { Icon } from "../components/Icon";
 import { Art, PlayButton, SongWave, useAudition, useSongLength, type SongMeta } from "../components/Player";
 import type { WaveMark } from "../components/Wave";
-import { GENRES, genreColor, useLook } from "../look";
+import { GENRES, genreColor, useGenreColors, useLook } from "../look";
 import { EmptyState } from "../components/SlothSpot";
 import {
   BPM_BANDS, FIRST_DESC, LOW_SCORE, NO_FILTERS, applyFilters, dawName, describeFilters, extraFilterCount, yearOf, isFiltered, isPrivate, pickerOptions,
@@ -77,13 +77,12 @@ export function mergeEnriched(prev: Track, next: Track): Track {
   return { ...next, dupe_group: prev.dupe_group, dupe_count: prev.dupe_count, dupe_keeper: prev.dupe_keeper };
 }
 
-// Surface auth/reconnect failures with a clearer call to action.
+// Surface sign-in failures with what to do. A sign-out also shows "Sign in again" in
+// the sidebar (api.ts tells the app).
 function friendlyError(msg: string): string {
   const m = msg.toLowerCase();
-  if (m.includes("reconnect") || m.includes("expired") || m.includes("401")
-      || m.includes("connect a soundcloud")) {
-    return "Your SoundCloud session needs reconnecting — open Settings to reconnect.";
-  }
+  if (m.includes("signed you out") || m.includes("sign in again")) return "SoundCloud signed you out. Sign in again from the sidebar.";
+  if (m.includes("connect a soundcloud")) return "Connect SoundCloud in Settings to see your tracks here.";
   return msg;
 }
 
@@ -136,10 +135,12 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   const setFilters = (patch: Partial<TrackFilters> | null) =>
     setFiltersState((f) => (patch ? { ...f, ...patch } : { ...NO_FILTERS }));
   useEffect(() => {
-    applyView = (f) => { setFiltersState(f); setSearch(f.q.trim()); };
+    applyView = (f) => { setFiltersState(f); };
     return () => { applyView = null; };
   }, []);
-  const [search, setSearch] = useState(() => kept.q.trim());
+  // filters.q is the search as it applies: the search box only hands it over after a
+  // pause in typing (SearchBox), so the list isn't worked out again on every key.
+  const search = filters.q.trim();
   const [sortKey, setSortKey] = useState<SortKey>(kept.sortKey);
   const [sortDesc, setSortDesc] = useState(kept.sortDesc);
   const [page, setPage] = useState(kept.page);
@@ -181,12 +182,6 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
     return () => { alive = false; };
   }, [cfg.default_artwork_path]);
 
-  // debounce search (~200ms)
-  useEffect(() => {
-    const id = window.setTimeout(() => setSearch(filters.q.trim()), 200);
-    return () => window.clearTimeout(id);
-  }, [filters.q]);
-
   // reset to first page whenever the filtered set changes (not on coming back to the page)
   const filterKey = JSON.stringify([{ ...filters, q: search }, sortKey, sortDesc, pageSize]);
   const lastFilterKey = useRef(filterKey);
@@ -197,7 +192,6 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   }, [filterKey]);
 
   // ---- filter + sort (client-side) ----
-  // The search box waits for a pause in typing; everything else applies at once.
   const active = useMemo(() => ({ ...filters, q: search }), [filters, search]);
   const rated = (tracks || []).map((t) => ratingOf(rateKey(t))).join();
   const filtered = useMemo(
@@ -400,7 +394,23 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
     finally { setBulkBusy(false); }
   }
 
-  function clearFilters() { setFilters(null); setSearch(""); }
+  function clearFilters() { setFilters(null); }
+
+  // What a row's buttons do, kept in one object that never changes, so a row only
+  // draws again when its own track or tick changes (TrackRow is memoised).
+  const latest = useRef({ onRowCheck, quickPrivacy, setEditing, deleteOne, trackMenu });
+  latest.current = { onRowCheck, quickPrivacy, setEditing, deleteOne, trackMenu };
+  const rowActions = useMemo<RowActions>(() => ({
+    check: (e, t) => latest.current.onRowCheck(e, t.id),
+    privacy: (t, next) => void latest.current.quickPrivacy(t, next),
+    edit: (t) => latest.current.setEditing(t),
+    remove: (t) => void latest.current.deleteOne(t),
+    menu: (e, t) => openMenu(e, latest.current.trackMenu(t)),
+  }), []);
+  // The columns view draws the first COLUMN_PAGE tracks and more on asking, so a big
+  // library doesn't freeze the window while thousands of buttons are made.
+  const [columnShown, setColumnShown] = useState(COLUMN_PAGE);
+  useEffect(() => { setColumnShown(COLUMN_PAGE); }, [filtered]);
 
   const friendly = error ? friendlyError(error) : null;
   const loading = tracks === null;
@@ -413,7 +423,18 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
           {`${fmtCount((tracks || []).length)} on SoundCloud`}
           {matchedCount ? ` · ${fmtCount(matchedCount)} linked to projects` : ""}
         </>}
-        actions={<Button kind="quiet" onClick={load}><Icon name="refresh" />Refresh</Button>} />
+        actions={<>
+          {/* how the whole page shows your tracks: rows, covers, or genre/year/track columns */}
+          {look === "crate" && !loading && (tracks || []).length > 0 && (
+            <div className="seg find__view" role="radiogroup" aria-label="Show as">
+              {([["list", "library", "Rows", "Rows"], ["covers", "image", "Covers", "Covers"], ["columns", "columns", "Columns", "Genre, year and track columns"]] as const).map(([k, icon, label, say]) => (
+                <button key={k} type="button" role="radio" aria-checked={view === k} title={say}
+                  className={`seg__opt${view === k ? " seg__opt--on" : ""}`} onClick={() => setView(k)}><Icon name={icon} size={14} />{label}</button>
+              ))}
+            </div>
+          )}
+          <Button kind="quiet" onClick={load}><Icon name="refresh" />Refresh</Button>
+        </>} />
 
       {friendly && <div className="banner banner--warn"><Icon name="alert" className="banner__icon" />{friendly}</div>}
 
@@ -421,15 +442,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
       {!loading && (tracks || []).length > 0 && (
         <div className="find">
           <div className="find__top">
-            <label className="find__search">
-              <Icon name="search" size={15} />
-              <input type="search" placeholder="Search tracks, projects, genres, tags…" value={filters.q}
-                aria-label="Search tracks" spellCheck={false} data-find
-                onChange={(e) => setFilters({ q: e.target.value })}
-                onKeyDown={(e) => { if (e.key === "Escape") setFilters({ q: "" }); }} />
-              {filters.q && <button type="button" className="find__x" aria-label="Clear search"
-                onClick={() => setFilters({ q: "" })}><Icon name="close" size={13} /></button>}
-            </label>
+            <SearchBox value={filters.q} onSearch={(q) => setFilters({ q })} />
             <div className="seg" role="group" aria-label="Privacy">
               {([["all", "All"], ["public", "Public"], ["private", "Private"]] as [PrivacyFilter, string][]).map(([k, label]) => (
                 <button key={k} type="button" className={`seg__opt${filters.privacy === k ? " seg__opt--on" : ""}`}
@@ -461,16 +474,6 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
               Filters{extraOn > 0 && <span className="find__n">{extraOn}</span>}
               <Icon name="chevronDown" size={13} className="up-tools__chev" />
             </button>
-            {look === "crate" && (
-              <div className="find__view">
-                <div className="seg seg--icons" role="radiogroup" aria-label="Show as">
-                  {([["list", "library", "Rows"], ["covers", "image", "Covers"], ["columns", "columns", "Genre, year, track columns"]] as const).map(([k, icon, label]) => (
-                    <button key={k} type="button" role="radio" aria-checked={view === k} title={label} aria-label={label}
-                      className={`seg__opt${view === k ? " seg__opt--on" : ""}`} onClick={() => setView(k)}><Icon name={icon} size={14} /></button>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
           {showFilters && <div className="find__row">
             {options.daws.length > 1 && (
@@ -541,7 +544,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
           </div>}
           <SmartBar scope="tracks" filters={filters} blank={NO_FILTERS} canSave={anyFilter}
             suggest={describeFilters} count={(f) => applyFilters(tracks || [], f).length}
-            onPick={(f) => { if (f) { setFilters(f); setSearch(f.q.trim()); } else clearFilters(); }} />
+            onPick={(f) => { if (f) setFilters(f); else clearFilters(); }} />
           {coverView && showFilters && (
             <FacetChips genres={browse.genres} years={browse.years} genre={filters.genre} year={filters.year}
               onGenre={(g) => setFilters({ genre: g })} onYear={(y) => setFilters({ year: y })} yearTitle="Posted in" />
@@ -602,10 +605,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
       {pageItems.length > 0 && coverView && <div className="sleeves track-sleeves">
         {pageItems.map((t) => (
           <TrackCard key={t.id} track={t} defaultArt={defaultArt}
-            selected={selected.has(t.id)}
-            onCheck={(e) => onRowCheck(e, t.id)}
-            onEdit={() => setEditing(t)}
-            onContextMenu={(e) => openMenu(e, trackMenu(t))} />
+            selected={selected.has(t.id)} actions={rowActions} />
         ))}
       </div>}
       {columns && (tracks || []).length > 0 && (
@@ -613,22 +613,17 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
           genre={filters.genre} year={filters.year} yearTitle="Year posted" noun={`Tracks (${fmtCount(filtered.length)})`}
           onGenre={(g) => setFilters({ genre: g, year: "" })} onYear={(y) => setFilters({ year: y })}>
           {filtered.length === 0 ? <p className="browse__empty">No tracks here. Pick another genre or year.</p>
-            : filtered.map((t) => {
-              const meta = songMeta(t, artFor(t, defaultArt).src);
-              return (
-                <button key={t.id} type="button" className="browse__item" data-nav-key={String(t.id)}
-                  onClick={() => setEditing(t)} onContextMenu={(e) => openMenu(e, trackMenu(t))}>
-                  <span className="stripe" style={{ background: genreColor(t.genre) }} />
-                  <Art meta={meta} size={28} />
-                  <span className="browse__itemtext">
-                    <span className="lib-name" title={t.title}>{t.title}</span>
-                    <span className="lib-sub">{[t.duration ? fmtDuration(t.duration) : "", t.playback_count != null ? `${t.playback_count.toLocaleString()} plays` : "", yearOf(t)].filter(Boolean).join(" · ")}</span>
-                  </span>
-                  <Rating id={rateKey(t)} name={t.title} size={11} readOnly />
-                  <span className={`dot ${isPrivate(t) ? "" : "dot--ok"}`} title={isPrivate(t) ? "Private" : "Public"} />
+            : <>
+              {filtered.slice(0, columnShown).map((t) => (
+                <ColumnItem key={t.id} track={t} defaultArt={defaultArt} actions={rowActions} />
+              ))}
+              {filtered.length > columnShown && (
+                <button type="button" className="browse__item browse__more" onClick={() => setColumnShown((n) => n + COLUMN_PAGE)}>
+                  Show {fmtCount(Math.min(COLUMN_PAGE, filtered.length - columnShown))} more
+                  <span className="faint"> of {fmtCount(filtered.length - columnShown)} left</span>
                 </button>
-              );
-            })}
+              )}
+            </>}
         </ColumnBrowse>
       )}
       {pageItems.length > 0 && look === "crate" && !columns && !coverView && <div className={`table table--crate rows--${rows}`}>
@@ -643,12 +638,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
         </div>
         {pageItems.map((t, i) => (
           <TrackRow key={t.id} track={t} index={i} defaultArt={defaultArt}
-            selected={selected.has(t.id)}
-            onCheck={(e) => onRowCheck(e, t.id)}
-            onQuickPrivacy={(next) => void quickPrivacy(t, next)}
-            onEdit={() => setEditing(t)}
-            onDelete={() => void deleteOne(t)}
-            onContextMenu={(e) => openMenu(e, trackMenu(t))} />
+            selected={selected.has(t.id)} actions={rowActions} />
         ))}
       </div>}
 
@@ -700,6 +690,35 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
           onConfirm={async () => { const res = await runBulkDelete(); if (res) setConfirmDelete(false); }} />
       )}</Exit>
     </div>
+  );
+}
+
+// The search box keeps what you type to itself and hands it to the list only after a
+// short pause in typing, so a big library isn't filtered and redrawn on every key.
+// Escape and the clear button apply at once.
+const SEARCH_PAUSE_MS = 220;
+function SearchBox({ value, onSearch }: { value: string; onSearch: (q: string) => void }) {
+  const [text, setText] = useState(value);
+  const sent = useRef(value);
+  const timer = useRef<number | null>(null);
+  // the search changed from outside (a smart crate, Clear search and filters)
+  useEffect(() => { if (value !== sent.current) { sent.current = value; setText(value); } }, [value]);
+  useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current); }, []);
+  const send = (q: string, now = false) => {
+    if (timer.current) window.clearTimeout(timer.current);
+    const go = () => { timer.current = null; if (q !== sent.current) { sent.current = q; onSearch(q); } };
+    if (now) go(); else timer.current = window.setTimeout(go, SEARCH_PAUSE_MS);
+  };
+  return (
+    <label className="find__search">
+      <Icon name="search" size={15} />
+      <input type="search" placeholder="Search tracks, projects, genres, tags…" value={text}
+        aria-label="Search tracks" spellCheck={false} data-find
+        onChange={(e) => { setText(e.target.value); send(e.target.value); }}
+        onKeyDown={(e) => { if (e.key === "Escape") { setText(""); send("", true); } }} />
+      {text && <button type="button" className="find__x" aria-label="Clear search"
+        onClick={() => { setText(""); send("", true); }}><Icon name="close" size={13} /></button>}
+    </label>
   );
 }
 
@@ -804,13 +823,48 @@ function artFor(t: Track, defaultArt: string | null): { src: string | null } {
   return { src: t.artwork_url || defaultArt || null };
 }
 
-function TrackRow({ track, index, defaultArt, selected, onCheck, onQuickPrivacy, onEdit, onDelete, onContextMenu }: {
-  track: Track; index: number; defaultArt: string | null; selected: boolean;
-  onCheck: (e: React.MouseEvent) => void;
-  onQuickPrivacy: (next: Sharing) => void;
-  onEdit: () => void; onDelete: () => void; onContextMenu: (e: React.MouseEvent) => void;
+// What a track row's controls do (the same object for every row, see rowActions).
+type RowActions = {
+  check: (e: React.MouseEvent, t: Track) => void;
+  privacy: (t: Track, next: Sharing) => void;
+  edit: (t: Track) => void;
+  remove: (t: Track) => void;
+  menu: (e: React.MouseEvent, t: Track) => void;
+};
+const COLUMN_PAGE = 200;
+
+// One track in the Genre > Year > Track columns.
+const ColumnItem = memo(function ColumnItem({ track: t, defaultArt, actions }: {
+  track: Track; defaultArt: string | null; actions: RowActions;
 }) {
+  useGenreColors();  // a crate colour picked elsewhere redraws the stripe
+  const meta = songMeta(t, artFor(t, defaultArt).src);
+  return (
+    <button type="button" className="browse__item" data-nav-key={String(t.id)}
+      onClick={() => actions.edit(t)} onContextMenu={(e) => actions.menu(e, t)}>
+      <span className="stripe" style={{ background: genreColor(t.genre) }} />
+      <Art meta={meta} size={28} />
+      <span className="browse__itemtext">
+        <span className="lib-name" title={t.title}>{t.title}</span>
+        <span className="lib-sub">{[t.duration ? fmtDuration(t.duration) : "", t.playback_count != null ? `${t.playback_count.toLocaleString()} plays` : "", yearOf(t)].filter(Boolean).join(" · ")}</span>
+      </span>
+      <Rating id={rateKey(t)} name={t.title} size={11} readOnly />
+      <span className={`dot ${isPrivate(t) ? "" : "dot--ok"}`} title={isPrivate(t) ? "Private" : "Public"} />
+    </button>
+  );
+});
+
+// Memoised: typing in the search box or ticking another row doesn't draw this one again.
+const TrackRow = memo(function TrackRow({ track, index, defaultArt, selected, actions }: {
+  track: Track; index: number; defaultArt: string | null; selected: boolean; actions: RowActions;
+}) {
+  useGenreColors();  // a crate colour picked elsewhere redraws the stripe
   const t = track;
+  const onCheck = (e: React.MouseEvent) => actions.check(e, t);
+  const onQuickPrivacy = (next: Sharing) => actions.privacy(t, next);
+  const onEdit = () => actions.edit(t);
+  const onDelete = () => actions.remove(t);
+  const onContextMenu = (e: React.MouseEvent) => actions.menu(e, t);
   const priv = isPrivate(t);
   const next: Sharing = priv ? "public" : "private";
   const art = artFor(t, defaultArt);
@@ -863,14 +917,17 @@ function TrackRow({ track, index, defaultArt, selected, onCheck, onQuickPrivacy,
       </span>
     </label>
   );
-}
+});
 
 // Sleeve look: one cover card per track. Clicking the card opens its details.
-function TrackCard({ track, defaultArt, selected, onCheck, onEdit, onContextMenu }: {
-  track: Track; defaultArt: string | null; selected: boolean;
-  onCheck: (e: React.MouseEvent) => void; onEdit: () => void; onContextMenu: (e: React.MouseEvent) => void;
+const TrackCard = memo(function TrackCard({ track, defaultArt, selected, actions }: {
+  track: Track; defaultArt: string | null; selected: boolean; actions: RowActions;
 }) {
+  useGenreColors();
   const t = track;
+  const onCheck = (e: React.MouseEvent) => actions.check(e, t);
+  const onEdit = () => actions.edit(t);
+  const onContextMenu = (e: React.MouseEvent) => actions.menu(e, t);
   const art = artFor(t, defaultArt);
   const meta = songMeta(t, art.src);
   const preview = useAudition(t.local_path, meta);
@@ -902,7 +959,7 @@ function TrackCard({ track, defaultArt, selected, onCheck, onEdit, onContextMenu
       </div>
     </div>
   );
-}
+});
 
 // Shared overlay shell: side-drawer on wide windows, centered modal on narrow ones.
 // `forceModal` always centers (used by the delete confirmation).
@@ -1127,7 +1184,6 @@ export function EditPanel({ track, defaultArt, onClose, onSaved }: {
 // The top of a track's page: its waveform with listeners' comments pinned where they
 // left them, and the numbers that matter. Sleeve prints it big, cover first.
 function TrackHero({ track, meta }: { track: Track; meta: SongMeta }) {
-  const [look] = useLook();
   const [comments, setComments] = useState<TrackComment[] | null>(null);
   useEffect(() => {
     let alive = true;
@@ -1141,7 +1197,7 @@ function TrackHero({ track, meta }: { track: Track; meta: SongMeta }) {
   const marks: WaveMark[] = pinned.map((c) => ({ at: c.t! / length, label: c.body, who: c.user, time: c.t!, kind: "comment" }));
   const n = comments?.length ?? 0;
   const latest = [...pinned].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? "")).slice(0, 3);
-  const wave = <SongWave path={track.local_path} scUrl={track.local_path ? null : track.waveform_url} meta={meta} height={look === "sleeve" ? 56 : 44} marks={marks} />;
+  const wave = <SongWave path={track.local_path} scUrl={track.local_path ? null : track.waveform_url} meta={meta} height={44} marks={marks} />;
   const figures: [string, string][] = [
     ["Plays", track.playback_count != null ? fmtCount(track.playback_count) : "–"],
     ["Length", length ? fmtDuration(length) : "–"],
@@ -1154,23 +1210,6 @@ function TrackHero({ track, meta }: { track: Track; meta: SongMeta }) {
       ))}
     </ol>
   );
-  if (look === "sleeve") {
-    return (
-      <section className="trackhero trackhero--sleeve">
-        <div className="trackhero__top">
-          <Art meta={meta} size={168} className="trackhero__art" />
-          <dl className="proj-spec">
-            {figures.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
-          </dl>
-        </div>
-        <div className="trackhero__wave">
-          {track.local_path && <PlayButton path={track.local_path} meta={meta} size={44} className="playbtn--big" />}
-          <div style={{ minWidth: 0 }}>{wave}</div>
-        </div>
-        {said}
-      </section>
-    );
-  }
   return (
     <section className="trackhero trackhero--crate">
       <div className="deckread">

@@ -21,19 +21,10 @@ from typing import Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
 from lazyupload import soundcloud
+from lazyupload.signin_page import connected_page, failed_page
 
 _SESSION_TIMEOUT = 300  # auto-give-up after 5 min so a stale server can't linger
 
-_DONE_HTML = (
-    "<!doctype html><meta charset=utf-8><title>Connected</title>"
-    "<body style='font-family:system-ui;background:#0A0B0D;color:#F3F4F6;"
-    "display:grid;place-items:center;height:100vh;margin:0'>"
-    "<div style='text-align:center'>"
-    "<div style='font-size:42px'>✔️</div>"
-    "<h2 style='color:#F5C451'>SoundCloud connected</h2>"
-    "<p style='color:#9AA1AB'>You can close this tab and return to LazyCreatives Uploader.</p>"
-    "</div></body>"
-)
 
 
 def _redirect_uri() -> str:
@@ -49,6 +40,8 @@ class SoundCloudConnectSession:
         self.status = "pending"          # pending | connected | failed
         self.auth_url: Optional[str] = None
         self.error: Optional[str] = None
+        self.username = ""             # shown on the browser page after sign-in
+        self.page_reason = ""          # plain words for the browser page when it fails
         self._server: Optional[HTTPServer] = None
         self._thread: Optional[threading.Thread] = None
         self._verifier = ""
@@ -108,20 +101,26 @@ class SoundCloudConnectSession:
                 code = (params.get("code") or [""])[0]
                 state = (params.get("state") or [""])[0]
                 err = (params.get("error") or [""])[0]
+                # Finish first, so the page tells the truth about how it went.
+                session._complete(code, state, err)
+                page = (connected_page(session.username) if session.status == "connected"
+                        else failed_page(session.page_reason))
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
-                self.wfile.write(_DONE_HTML.encode())
-                session._complete(code, state, err)
+                self.wfile.write(page.encode())
 
         return Handler
 
     def _complete(self, code: str, state: str, err: str) -> None:
         if err:
             self.status, self.error = "failed", f"SoundCloud declined: {err}"
+            self.page_reason = ("You pressed Cancel on SoundCloud's page." if err == "access_denied"
+                                else "SoundCloud turned the sign-in down.")
             return
         if not code or state != self._state:
             self.status, self.error = "failed", "Sign-in response didn't match — try again."
+            self.page_reason = "This sign-in didn't match the one Uploader started."
             return
         try:
             tokens = soundcloud.exchange_code(code, _redirect_uri(), self._verifier)
@@ -135,9 +134,11 @@ class SoundCloudConnectSession:
             except Exception:
                 pass  # the upload still works without the display name
             self._on_connected(tokens)
+            self.username = tokens.get("username") or ""
             self.status = "connected"
         except Exception as e:
             self.status, self.error = "failed", f"Couldn't complete sign-in: {e}"
+            self.page_reason = "SoundCloud didn't finish the sign-in."
 
     def cancel(self) -> None:
         if self.status == "pending":

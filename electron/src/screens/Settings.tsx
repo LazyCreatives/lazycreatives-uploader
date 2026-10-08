@@ -139,7 +139,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
               onClick={() => { setTrackRows(d.key); setHistoryRows(d.key); }}>{d.label}</button>
           ))}
         </div>
-        <label className="toolchk" style={{ marginTop: 18 }}>
+        <label className="toolchk toolchk--wrap" style={{ marginTop: 18 }}>
           <input type="checkbox" checked={preview} onChange={(e) => setPreview(e.target.checked)} />
           Preview on hover: point at a song in a list to hear a few seconds of it
         </label>
@@ -169,7 +169,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
         <Folders sources={draft.sources} onChange={(s) => set("sources", s)} />
         {bkFolders?.installed && (
           <>
-            <div className="toolchk" style={{ fontSize: 13.5, marginTop: 14 }}>
+            <div className="toolchk toolchk--wrap" style={{ fontSize: 13, marginTop: 14 }}>
               <input type="checkbox" id="bk-folders" checked={!!draft.watch_backups_folders}
                 onChange={(e) => set("watch_backups_folders", e.target.checked)} />
               <label htmlFor="bk-folders">Also look in the export folders Backups knows about</label>
@@ -186,7 +186,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
                 {bkExtra.map((f) => (
                   <div key={f} className="row" style={{ marginBottom: 0 }}>
                     <span className="faint" style={{ display: "flex" }}><Icon name="folder" /></span>
-                    <div className="row__main pathline"><div className="row__title mono col-trunc" style={{ fontSize: 12.5, fontWeight: 400 }} title={f}>{f}</div></div>
+                    <div className="row__main pathline"><div className="row__title mono col-trunc" style={{ fontSize: 12, fontWeight: 400 }} title={f}>{f}</div></div>
                     <span className="pill">from Backups</span>
                   </div>
                 ))}
@@ -194,7 +194,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
             )}
           </>
         )}
-        <div className="toolchk minlen" style={{ fontSize: 13.5, marginTop: 14 }}>
+        <div className="toolchk minlen" style={{ fontSize: 13, marginTop: 14 }}>
           <input type="checkbox" id="minlen-on" checked={(draft.min_length_seconds ?? 30) > 0}
             onChange={(e) => set("min_length_seconds", e.target.checked ? 30 : 0)} />
           <label htmlFor="minlen-on">Hide exports shorter than</label>
@@ -245,12 +245,12 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
         <label className="field"><span>Default description</span>
           <textarea value={draft.default_description}
             onChange={(e) => set("default_description", e.target.value)} /></label>
-        <label className="toolchk" style={{ fontSize: 13.5 }}>
+        <label className="toolchk toolchk--wrap" style={{ fontSize: 13 }}>
           <input type="checkbox" checked={draft.changelog_comments !== false}
             onChange={(e) => set("changelog_comments", e.target.checked)} />
           Comment a timestamped changelog when a draft is re-bounced
         </label>
-        <label className="toolchk" style={{ fontSize: 13.5, marginTop: 14 }}>
+        <label className="toolchk toolchk--wrap" style={{ fontSize: 13, marginTop: 14 }}>
           <input type="checkbox" checked={draft.cover_watermark !== false}
             onChange={(e) => set("cover_watermark", e.target.checked)} />
           Add a small LazyCreatives watermark to generated waveform covers
@@ -315,7 +315,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
             onChange={(e) => set("auto_upload_sharing", e.target.value as Sharing)}>
             <option value="private">Private (recommended)</option><option value="public">Public</option>
           </select></label>
-        <label className="toolchk" style={{ fontSize: 13.5, marginTop: 12 }}>
+        <label className="toolchk toolchk--wrap" style={{ fontSize: 13, marginTop: 12 }}>
           <input type="checkbox" checked={draft.auto_cover ?? false} disabled={!canAuto}
             onChange={(e) => set("auto_cover", e.target.checked)} />
           Give automatic posts a waveform cover
@@ -324,7 +324,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
           Songs posted by the folder check or as drafts get a cover drawn from the song itself, in your waveform
           colour. Off unless you tick it. Songs you post from Upload keep the cover you see there.
         </p>
-        <label className="toolchk" style={{ fontSize: 13.5, marginTop: 12 }}>
+        <label className="toolchk toolchk--wrap" style={{ fontSize: 13, marginTop: 12 }}>
           <input type="checkbox" checked={draft.auto_new_versions ?? true} disabled={!canAuto}
             onChange={(e) => set("auto_new_versions", e.target.checked)} />
           Post new versions of private songs by themselves
@@ -339,11 +339,11 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
 
       <div className="card">
         <h2>App</h2>
-        <label className="toolchk" style={{ fontSize: 13.5 }}>
+        <label className="toolchk toolchk--wrap" style={{ fontSize: 13 }}>
           <input type="checkbox" checked={atLogin} onChange={(e) => toggleLogin(e.target.checked)} />
           Open Uploader when the computer starts
         </label>
-        <label className="toolchk" style={{ fontSize: 13.5, marginTop: 8 }}>
+        <label className="toolchk toolchk--wrap" style={{ fontSize: 13, marginTop: 8 }}>
           <input type="checkbox" checked={pauseMin} onChange={(e) => { keep(PAUSE_ON_MINIMIZE, e.target.checked); setPauseMin(e.target.checked); }} />
           Pause the music when the window is minimized
         </label>
@@ -355,7 +355,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
           Uploader posts your mixes to SoundCloud without doubles and lets you manage every track from one place.
           It only reads your audio files; it never changes them.
         </p>
-        <p className="faint" style={{ margin: 0, fontSize: 12.5 }}>Lazy Creatives · Looks lazy. Works obsessively.</p>
+        <p className="faint" style={{ margin: 0, fontSize: 12 }}>Lazy Creatives · Looks lazy. Works obsessively.</p>
       </div>
 
       <div className="card">

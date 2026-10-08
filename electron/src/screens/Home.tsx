@@ -1,18 +1,12 @@
 import { useEffect, useState } from "react";
-import { makeApi, openExternal } from "../api";
+import { makeApi } from "../api";
 import type { Account, Mix, Overview, UploadRow } from "../types";
-import { Button, fmtBytes, fmtCount, fmtWhen, ProBadge } from "../components/ui";
+import { Button, fmtCount, fmtWhen, ProBadge } from "../components/ui";
 import { ConnectPanel } from "../components/Connect";
 import { Icon } from "../components/Icon";
 import { UploadTable } from "./History";
-import { Cover } from "../components/Cover";
 import { Rolling } from "../components/Rolling";
-import { PlayButton } from "../components/Player";
 import { EmptyState } from "../components/SlothSpot";
-import { useLook } from "../look";
-import { rowKey } from "../components/a11y";
-import { openMenu } from "../components/Desktop";
-import { copyText } from "../desktop";
 import { tally, type CollectionData } from "../components/Collection";
 import { genreColor } from "../look";
 import { NO_FILTERS, yearOf, type TrackFilters } from "../trackFilter";
@@ -35,14 +29,22 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
   onTracks?: (f: Partial<TrackFilters>) => void;   // Your tracks showing one genre or year
   onOpenTrack?: (id: string) => void;
 }) {
-  const [look] = useLook();
   const [ov, setOv] = useState<Overview | null>(null);
   const [recent, setRecent] = useState<UploadRow[] | null>(null);
   const [mixes, setMixes] = useState<Mix[] | null>(null);
   useEffect(() => {
     api.overview().then(setOv).catch(() => setOv(null));
-    api.history(6).then(setRecent).catch(() => setRecent([]));
+    api.history(3).then(setRecent).catch(() => setRecent([]));
     api.scan().then(setMixes).catch(() => setMixes(null));  // same list as the Upload page
+  }, [account]);
+  // Plays come from SoundCloud itself, so only once an account is connected.
+  const [plays, setPlays] = useState<number | null>(null);
+  useEffect(() => {
+    if (!account.connected) { setPlays(null); return; }
+    let live = true;
+    api.listTracks().then((t) => { if (live) setPlays(t.reduce((n, x) => n + (x.playback_count || 0), 0)); })
+      .catch(() => { if (live) setPlays(null); });
+    return () => { live = false; };
   }, [account]);
   const waiting = waitingMixes(mixes);
   const ready = account.connected && waiting.count > 0;
@@ -67,7 +69,6 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
     ov?.scheduled_count ? `${fmtCount(ov.scheduled_count)} waiting to go public` : "",
     ov?.schedule.enabled ? `auto-upload every ${ov.schedule.interval_minutes} min` : "",
   ].filter(Boolean).join(" · ");
-  const posts = (recent ?? []).filter((r) => r.status === "uploaded");
   const subText = ready && waiting.newest
     ? `Newest is ${waiting.newest.name}, exported ${fmtWhen(new Date(waiting.newest.mtime * 1000).toISOString())}.`
     : "Drop finished mixes in your watched folder and post them in one go. The same mix is never posted twice.";
@@ -79,64 +80,6 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
       action={ready ? <Button sm onClick={onUpload}>Post your first mix</Button> : undefined}>
       {ready ? readyInFolder(waiting.count) : "Export a mix into your folder and it shows up here, ready to post in one click."}
     </EmptyState></div>
-  );
-
-  if (look === "sleeve") return (
-    <div>
-      {demo}
-      <header className="up-hero">
-        <div className="up-hero__text">
-          <h1>{headline}</h1>
-          <p className="sub">{subText}</p>
-          {schedLine && <p className="statusline">{schedLine}</p>}
-          <div>{mainButton}</div>
-        </div>
-        <dl className="up-hero__stats">
-          <div><dt>Posted</dt><dd>{ov ? <Rolling value={posted} /> : "—"}<span>{ov ? fmtBytes(ov.uploaded_bytes) : ""}</span></dd></div>
-          <div><dt>Ready to post</dt><dd>{mixes ? <Rolling value={waiting.count} /> : "—"}<span>in your folders</span></dd></div>
-          {!!ov?.error_count && <div><dt>Failed</dt><dd className="warn-text"><Rolling value={ov.error_count} /><span>see History</span></dd></div>}
-        </dl>
-      </header>
-
-      {!account.connected && (
-        <section className="card section">
-          <h2>Connect your SoundCloud</h2>
-          <ConnectPanel account={account} onChange={onAccount} />
-        </section>
-      )}
-
-      <section className="section">
-        <div className="section__head">
-          <h2>Latest uploads</h2>
-          {onHistory && recent && recent.length > 0 &&
-            <button className="linkbtn" onClick={onHistory}>See all in History</button>}
-        </div>
-        {recent && posts.length === 0
-          ? emptyBox
-          : <div className="up-shelf">
-              {posts.slice(0, 6).map((r) => (
-                <div key={r.id} className="sleeve" role={r.permalink_url ? "button" : undefined} tabIndex={r.permalink_url ? 0 : undefined}
-                  onClick={() => r.permalink_url && openExternal(r.permalink_url)}
-                  onKeyDown={rowKey(() => { if (r.permalink_url) openExternal(r.permalink_url); })}
-                  onContextMenu={(e) => openMenu(e, [
-                    { label: "Open on SoundCloud", onClick: () => { if (r.permalink_url) openExternal(r.permalink_url); }, disabled: !r.permalink_url },
-                    { label: "Copy link", onClick: () => { if (r.permalink_url) copyText(r.permalink_url); }, disabled: !r.permalink_url },
-                    ...(onHistory ? ["-" as const, { label: "See all in History", onClick: onHistory }] : []),
-                  ])}>
-                  <div className="sleeve__art">
-                    <Cover name={r.project_match || r.title} genre={r.project_genre} />
-                    {r.sharing === "private" && <span className="sleeve__badge"><span className="dot dot--warn" />Private</span>}
-                    <PlayButton path={r.file_path} meta={{ title: r.title, sub: r.project_match ? `From ${r.project_match}` : `Posted ${fmtWhen(r.timestamp)}`, cover: r.project_match || r.title, genre: r.project_genre }} size={34} className="sleeve__play" />
-                  </div>
-                  <div className="sleeve__meta">
-                    <div className="sleeve__name" title={r.title}>{r.title}</div>
-                    <div className="sleeve__sub">Posted {fmtWhen(r.timestamp)}</div>
-                  </div>
-                </div>
-              ))}
-            </div>}
-      </section>
-    </div>
   );
 
   return (
@@ -153,6 +96,13 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
         </div>
       </header>
 
+      <HomeDeck figures={[
+        { label: "Ready to post", value: mixes ? waiting.count : null },
+        { label: "Posted", value: ov ? posted : null },
+        { label: "Plays", value: plays },
+        { label: "Failed", value: ov ? ov.error_count : null, bad: !!ov?.error_count },
+      ]} />
+
       {!account.connected && (
         <section className="card section">
           <h2>Connect your SoundCloud</h2>
@@ -168,7 +118,7 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
         </div>
         {recent && recent.length === 0
           ? emptyBox
-          : <UploadTable rows={(recent ?? []).slice(0, 5)} />}
+          : <UploadTable rows={(recent ?? []).slice(0, 3)} />}
       </section>
 
       {ov && ov.tier === "free" && !ov.beta && (
@@ -179,6 +129,22 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
         </div>
       )}
     </div>
+  );
+}
+
+// The deck readout under the headline: four big numbers in an inset screen that roll
+// to their new value when something changes. A dash while a number is still loading
+// (or, for Plays, while SoundCloud isn't connected).
+function HomeDeck({ figures }: { figures: { label: string; value: number | null; bad?: boolean }[] }) {
+  return (
+    <dl className="deckread home-deck">
+      {figures.map((f) => (
+        <div key={f.label} className={`deckread__cell${f.bad ? " deckread__cell--bad" : ""}${f.value === 0 ? " deckread__cell--zero" : ""}`}>
+          <dt>{f.label}</dt>
+          <dd>{f.value === null ? "—" : <Rolling value={f.value} />}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 

@@ -140,7 +140,7 @@ export function Companion() {
               <span className={look === "crate" ? "cw-cols__main" : "cw-card__main"}>
                 <span className={`col-trunc ${look === "crate" ? "cw-cols__name" : "cw-card__name"}`} title={q.name}>{q.name}</span>
                 {q.phase === "uploading"
-                  ? <span className="cw-mini" role="progressbar" aria-valuenow={q.pct} aria-valuemin={0} aria-valuemax={100}><i style={{ ["--pct" as any]: q.pct }} /></span>
+                  ? <span className="cw-mini" role="progressbar" aria-valuenow={q.pct} aria-valuemin={0} aria-valuemax={100}><i className="cw-mini__fill" style={{ ["--pct" as any]: q.pct }} /></span>
                   : <span className={look === "crate" ? "cw-cols__when" : "cw-card__when"} title={q.note}>{q.note}</span>}
               </span>
               <span className={`cw-state cw-tone--${tone}`}><span className={`dot ${dot}`} />{word}</span>

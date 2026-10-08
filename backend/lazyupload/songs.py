@@ -5,7 +5,8 @@ one row per mix with all its formats, and so nothing is posted to SoundCloud twi
 
 Two words used throughout:
 - a SONG is everything sharing a name once version words, dates and tempo are taken
-  off (``projectmeta.normalize``): "Heavy", "Heavy v2" and "Heavy_master" are one song.
+  off (``song_key``): "Heavy", "Heavy v2" and "Heavy_master" are one song, while
+  "Episode 100" and "Episode 101" are two.
 - a MIX is one render of that song. Files of the same song whose lengths agree are the
   same mix in different formats; a different length means a different version.
 
@@ -15,6 +16,7 @@ already on SoundCloud. Files are only read, never changed.
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import Path
 
 from lazyupload import projectmeta
@@ -30,15 +32,42 @@ _LOSSLESS_FORMATS = {"wav", "wave", "aif", "aiff", "flac", "alac"}
 
 # Render words in brackets ("Heavy (Master)", "Heavy [Final Mix]") name the same song.
 # Taken off here rather than in projectmeta.normalize, which must stay identical to
-# Backups'. Remixes, VIPs and extended mixes stay songs of their own.
+# Backups' (it matches mixes to Backups projects; song_key only groups songs here).
+# Remixes, VIPs and extended mixes stay songs of their own.
 _BRACKET_RENDER = re.compile(
     r"[\[(]\s*(?:(?:final|master(?:ed)?|mix(?:down)?|render|bounce|export|wip|draft)\s*)*"
     r"v?\d*\s*[\])]", re.I)
 
 
+# A number that is a render count, not part of the title: after an underscore
+# ("Heavy_2"), after "v" ("Heavy v2") or after a render word ("Heavy final 2").
+# A bare number after a space is part of the title: "Episode 101" is not "Episode 100".
+_UNDERSCORE_NUM = re.compile(r"_+v?(\d{1,3})(?=(?:\.[a-z0-9]{2,4})?$)", re.I)
+_RENDER_WORDS = re.compile(
+    r"[\s-]+(?:v\d+|(?:master(?:ed)?|final|mix(?:down)?|render|bounce|export|wip|draft)"
+    r"(?:\s*v?\d+)?)\b")
+
+
+def _fold(s: str) -> str:
+    """Accents folded ("Áurea" -> "aurea"), letters of every script kept ("深夜"),
+    punctuation, symbols and emoji turned into spaces, leading zeros dropped ("03" -> "3")."""
+    s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+    s = re.sub(r"[\W_]+", " ", s.casefold()).strip()
+    return re.sub(r"\b0+(\d)", r"\1", s)
+
+
 def song_key(name: str) -> str:
-    """The song a file or title belongs to. Never empty for a non-empty name."""
-    key = projectmeta.normalize(_BRACKET_RENDER.sub(" ", name or ""))
+    """The song a file or title belongs to. Never empty for a non-empty name.
+
+    Like ``projectmeta.normalize`` (dates, tempo, key and render words come off), but a
+    number in the title stays: "Episode 100" and "Episode 101" are two songs, while
+    "Heavy v2", "Heavy_2" and "Heavy final 2" are versions of "Heavy". Letters of any
+    script stay, so "深夜 Tape 814" and "Tape 深夜 930" are two songs too."""
+    s = _BRACKET_RENDER.sub(" ", name or "")
+    s = _UNDERSCORE_NUM.sub(r" v\1", s)
+    s = projectmeta._undecorate(s.lower().strip())
+    s = _RENDER_WORDS.sub(" ", s)
+    key = _fold(s)
     return key or (name or "").strip().lower()
 
 

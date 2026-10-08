@@ -67,10 +67,14 @@ export interface AccountSummary {
   avatar_url?: string | null;
   mock: boolean;
   active: boolean;
+  signed_out?: boolean;  // SoundCloud stopped accepting this account's saved sign-in
 }
 
 export interface Account {
   connected: boolean;
+  // The saved sign-in stopped working (expired, or access removed on SoundCloud):
+  // the sidebar says so and offers "Sign in again".
+  signed_out?: boolean;
   account: string | null;
   avatar: string | null;     // active account's SoundCloud profile picture
   accounts: AccountSummary[];
@@ -151,8 +155,12 @@ export type ProgressEvent =
   | { type: "track_done"; index: number; name: string; path?: string; permalink_url: string | null }
   | { type: "track_skipped"; index: number; name: string; path?: string; reason: string; note?: string; permalink_url?: string | null }
   // `error` is the full message (kept in History); `reason` is a few plain words for the row.
-  | { type: "track_error"; index: number; name: string; path?: string; error: string; reason?: string }
-  | { type: "upload_done"; ok_count: number; error_count: number; skipped_count: number; cancelled?: boolean };
+  // `stopped`: Stop was pressed while this mix was going up (not a failure)
+  | { type: "track_error"; index: number; name: string; path?: string; error: string; reason?: string; stopped?: boolean }
+  // `stopped`: the post stopped early because SoundCloud signed you out or asked us to wait;
+  // `stop_note` says so in plain words and `not_sent` mixes were never sent.
+  | { type: "upload_done"; ok_count: number; error_count: number; skipped_count: number; cancelled?: boolean;
+      stopped?: "signed_out" | "refused" | "rate_limit"; stop_note?: string; wait_seconds?: number | null; not_sent?: number };
 
 export interface Track {
   id: number;

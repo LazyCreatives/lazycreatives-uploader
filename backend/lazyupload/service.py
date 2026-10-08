@@ -149,9 +149,24 @@ def clear_account(catalog: Catalog) -> None:
 
 def connected(catalog: Catalog) -> bool:
     acct = active_account(catalog) or {}
+    if acct.get("signed_out"):
+        return False  # SoundCloud refused the saved sign-in: only signing in again helps
     if soundcloud.use_mock():
         return bool(acct)  # mock still requires an explicit connect
     return bool(acct.get("access_token"))
+
+
+def signed_out(catalog: Catalog) -> bool:
+    """The active account's saved sign-in stopped working (expired or revoked)."""
+    return bool((active_account(catalog) or {}).get("signed_out"))
+
+
+def mark_signed_out(catalog: Catalog) -> None:
+    """Note that SoundCloud refused the active account's sign-in, so the sidebar stops
+    saying "connected" and the app offers "Sign in again". Signing in again replaces
+    the account (add_account), which clears this."""
+    if active_account(catalog) and not signed_out(catalog):
+        _update_active_tokens(catalog, {"signed_out": True})
 
 
 def account_label(catalog: Catalog) -> str | None:
@@ -182,7 +197,8 @@ def accounts_public(catalog: Catalog) -> list[dict]:
     aid = (active_account(catalog) or {}).get("id")
     return [{"id": a.get("id"), "username": a.get("username") or "SoundCloud",
              "avatar_url": a.get("avatar_url"),
-             "mock": a.get("mock", False), "active": a.get("id") == aid}
+             "mock": a.get("mock", False), "active": a.get("id") == aid,
+             "signed_out": bool(a.get("signed_out"))}
             for a in get_accounts(catalog)]
 
 
@@ -213,8 +229,44 @@ def client_for(catalog: Catalog):
     def on_tokens(new: dict):
         _update_active_tokens(catalog, new)
 
-    return soundcloud.get_client(tokens, on_tokens, store=_MockStore(catalog),
-                                 playlist_store=_MockStore(catalog, "mock_playlists"))
+    client = soundcloud.get_client(tokens, on_tokens, store=_MockStore(catalog),
+                                   playlist_store=_MockStore(catalog, "mock_playlists"))
+    return _SignInWatch(client, lambda: mark_signed_out(catalog))
+
+
+class _SignInWatch:
+    """Wraps a SoundCloud client. When SoundCloud refuses the sign-in (401), it gets a
+    new access token once and tries again; when that fails too, the saved sign-in is
+    dead, so the account is marked signed out (the app then asks to sign in again)."""
+
+    def __init__(self, client, on_signed_out):
+        self._client = client
+        self._on_signed_out = on_signed_out
+
+    def __getattr__(self, name):
+        attr = getattr(self._client, name)
+        if not callable(attr) or name.startswith("_") or name == "renew":
+            return attr
+
+        def call(*a, **kw):
+            try:
+                return attr(*a, **kw)
+            except soundcloud.SignedOutError:
+                renew = getattr(self._client, "renew", None)
+                if renew is None:
+                    self._on_signed_out()
+                    raise
+                try:
+                    renew()
+                except soundcloud.SignedOutError:
+                    self._on_signed_out()
+                    raise
+                try:
+                    return attr(*a, **kw)
+                except soundcloud.SignedOutError:
+                    self._on_signed_out()
+                    raise
+        return call
 
 
 # ---- manage existing uploads ------------------------------------------------
@@ -537,7 +589,7 @@ def _bulk(catalog: Catalog, ids: list[int], op) -> list[dict]:
             results.append({"id": tid, "ok": False, "error": str(e)})
             for rest in ids[i + 1:]:
                 results.append({"id": rest, "ok": False,
-                                "error": "stopped — account needs reconnecting"})
+                                "error": "Not done: SoundCloud signed you out. Sign in again."})
             break
         except soundcloud.RateLimitError as e:
             time.sleep(_retry_delay(e.retry_after))
@@ -725,19 +777,31 @@ def pending_releases(catalog: Catalog) -> list[dict]:
     return catalog.get_setting(_RELEASES_KEY) or []
 
 
+def parse_release_at(value: str) -> datetime:
+    """Read a release time as this computer's local time, without a time zone.
+    The app sends UTC ("...Z"); older entries and tests are plain local times.
+    Raises ValueError when it can't be read."""
+    when = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    if when.tzinfo is not None:
+        when = when.astimezone().replace(tzinfo=None)
+    return when
+
+
 def process_due_releases(catalog: Catalog, now: datetime | None = None) -> list[dict]:
     """Flip any releases whose time has come to public. Returns the ones flipped;
     failures are kept to retry on the next tick."""
     now = now or datetime.now()
+    if now.tzinfo is not None:
+        now = now.astimezone().replace(tzinfo=None)
     pending = catalog.get_setting(_RELEASES_KEY) or []
     if not pending:
         return []
     remaining, flipped = [], []
     for p in pending:
         try:
-            due = datetime.fromisoformat(p["release_at"]) <= now
+            due = parse_release_at(p["release_at"]) <= now
         except (ValueError, KeyError, TypeError):
-            due = True  # malformed -> release now rather than getting stuck
+            due = False  # unreadable -> stay private; never release early
         if not due:
             remaining.append(p)
             continue
@@ -972,9 +1036,11 @@ def short_reason(exc: BaseException) -> str:
     if isinstance(exc, PermissionError):
         return "Couldn't open the file."
     if isinstance(exc, soundcloud.RateLimitError):
-        return "SoundCloud is busy. Wait a minute and try again."
+        return str(exc)  # "SoundCloud asked us to wait 3 minutes." with SoundCloud's number
     if isinstance(exc, soundcloud.AuthError):
-        return "SoundCloud needs you to reconnect."
+        return str(exc)  # "SoundCloud signed you out. Sign in again."
+    if isinstance(exc, UploadStopped):
+        return "Stopped. It wasn't posted."
     try:
         import requests
         if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
@@ -1036,21 +1102,73 @@ def _with_local_length(p: dict) -> dict:
     return {**p, "duration": d} if d is not None else p
 
 
+class UploadStopped(Exception):
+    """The person pressed Stop while a mix was going up: the transfer is cut off."""
+
+
+# A post whose answer never came back (the connection dropped as SoundCloud was taking
+# the file) may well be on SoundCloud. Each is noted here by the file's hash, and the
+# next post of that file first asks SoundCloud whether it already went up.
+_UNSURE_KEY = "unsure_posts"
+
+
+def _unsure(catalog: Catalog) -> dict:
+    raw = catalog.get_setting(_UNSURE_KEY) or {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _note_unsure(catalog: Catalog, h: str, title: str, since: float) -> None:
+    saved = _unsure(catalog)
+    saved[h] = {"title": title, "since": since,
+                "account": (active_account(catalog) or {}).get("id")}
+    catalog.set_setting(_UNSURE_KEY, saved)
+
+
+def _drop_unsure(catalog: Catalog, h: str) -> None:
+    saved = _unsure(catalog)
+    if saved.pop(h, None) is not None:
+        catalog.set_setting(_UNSURE_KEY, saved)
+
+
+def _went_up_last_time(catalog: Catalog, client, h: str) -> dict | None:
+    """The track an earlier, unanswered post of this file made, or None when it never
+    arrived. Raises when SoundCloud can't be asked, so the mix is never sent again
+    while it might already be there."""
+    entry = _unsure(catalog).get(h)
+    if not entry or entry.get("account") != (active_account(catalog) or {}).get("id"):
+        return None
+    finder = getattr(client, "find_posted", None)
+    if finder is None:
+        return None
+    found = finder(entry.get("title") or "", float(entry.get("since") or 0))
+    if found is None:
+        _drop_unsure(catalog, h)
+    return found
+
+
+def _is_connection_drop(exc: BaseException) -> bool:
+    import requests
+    return isinstance(exc, (requests.ConnectionError, requests.Timeout))
+
+
 def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None,
                progress=None, cancel=None, force: bool = False,
-               release_at: str | None = None) -> dict:
+               release_at: str | None = None, abort=None) -> dict:
     """Upload each item to SoundCloud, skipping anything already published (by hash).
 
     `items`  : [{path, title?, description?, sharing?, genre?, tags?}, ...]
     `defaults`: fallback metadata from config (sharing/genre/tags/title_template).
     `cancel` : a callable returning True to stop between tracks.
+    `abort`  : a callable returning True to stop now, cutting off the mix going up.
     `release_at`: if set, each track is uploaded PRIVATE and a pending release is
                   recorded to flip it public at that ISO time (scheduled release).
     Returns a summary dict; emits live progress events through `progress`.
     """
     global _uploading
     defaults = defaults or {}
-    cancel = cancel or (lambda: False)
+    abort = abort or (lambda: False)
+    _cancel = cancel or (lambda: False)
+    cancel = lambda: _cancel() or abort()  # noqa: E731
 
     def emit(ev):
         if progress:
@@ -1061,6 +1179,7 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
     results: list[UploadResult] = []
     ok = skipped = errors = 0
     cancelled = False
+    stop: dict | None = None  # SoundCloud refused the sign-in or asked us to wait
     try:
         if not connected(catalog):
             emit({"type": "upload_error", "error": "not_connected"})
@@ -1081,9 +1200,11 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
             name = item.get("name") or Path(path).stem
             emit({"type": "track_start", "index": i, "name": name, "path": path,
                   "total": total})
+            sending = None  # (title, start time) once the file is going to SoundCloud
+            h = item.get("file_hash")
             try:
                 size = Path(path).stat().st_size
-                h = item.get("file_hash") or _hashed(catalog, path, size, Path(path).stat().st_mtime)
+                h = h or _hashed(catalog, path, size, Path(path).stat().st_mtime)
                 with _post_lock:
                     # Check the catalog again right before sending: another run may
                     # have posted this mix since this run started.
@@ -1109,8 +1230,30 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                     meta = _meta_for(item, defaults)
                     if release_at:
                         meta.sharing = "private"  # publish privately, flip public later
+                    # The last post of this very file lost its answer: it may be up.
+                    earlier = None if force else _went_up_last_time(catalog, client, h)
+                    if earlier is not None:
+                        url = earlier.get("permalink_url")
+                        catalog.record_upload(
+                            title=earlier.get("title") or meta.title, file_path=path,
+                            file_hash=h, size=size, sharing=earlier.get("sharing") or meta.sharing,
+                            status="uploaded", timestamp=default_timestamp(),
+                            sc_track_id=earlier.get("id"), permalink_url=url,
+                            account=account_label(catalog))
+                        _drop_unsure(catalog, h)
+                        uploaded[h] = {"permalink_url": url, "title": earlier.get("title")}
+                        skipped += 1
+                        note = "It went up last time, before the connection dropped."
+                        results.append(UploadResult(name=name, status="skipped", file_hash=h,
+                                                    sc_track_id=earlier.get("id"),
+                                                    permalink_url=url, error=note))
+                        emit({"type": "track_skipped", "index": i, "name": name, "path": path,
+                              "reason": "already_up", "note": note, "permalink_url": url})
+                        continue
 
                     def on_prog(sent, tot, _i=i, _n=name, _p=path):
+                        if abort():
+                            raise UploadStopped()
                         emit({"type": "track_progress", "index": _i, "name": _n, "path": _p,
                               "sent": sent, "size": tot})
 
@@ -1120,7 +1263,10 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                     with tempfile.TemporaryDirectory(prefix="lazyup-cover-") as tmp:
                         if not art and item.get("auto_cover"):
                             art = auto_cover_file(catalog, path, meta.title, tmp)
+                        sending = (meta.title, time.time())
                         track = client.upload(path, meta, on_progress=on_prog, artwork_path=art)
+                    if h:
+                        _drop_unsure(catalog, h)
                     tid = track.get("id")
                     url = track.get("permalink_url")
                     if release_at and tid is not None:
@@ -1153,9 +1299,20 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                         file_into_playlist(catalog, tid, meta.genre, meta.sharing)
                 emit({"type": "track_done", "index": i, "name": name, "path": path,
                       "permalink_url": url})
+            except UploadStopped as e:
+                # Stopped by hand mid-transfer: not a failure, and nothing is written
+                # to History. SoundCloud drops a transfer cut off half-way.
+                cancelled = True
+                results.append(UploadResult(name=name, status="error", error=str(e) or "stopped"))
+                emit({"type": "track_error", "index": i, "name": name, "path": path,
+                      "error": "Stopped before it finished.", "reason": short_reason(e),
+                      "stopped": True})
+                break
             except Exception as e:  # one bad track must not abort the batch
                 errors += 1
                 msg = str(e)[:300]
+                if sending and h and _is_connection_drop(e):
+                    _note_unsure(catalog, h, *sending)  # it may be up; check before sending again
                 catalog.record_upload(
                     title=name, file_path=path, file_hash=item.get("file_hash"),
                     size=item.get("size", 0), sharing=defaults.get("sharing", "public"),
@@ -1164,10 +1321,29 @@ def run_upload(catalog: Catalog, items: list[dict], defaults: dict | None = None
                 results.append(UploadResult(name=name, status="error", error=msg))
                 emit({"type": "track_error", "index": i, "name": name, "path": path,
                       "error": msg, "reason": short_reason(e)})
-        emit({"type": "upload_done", "ok_count": ok, "error_count": errors,
-              "skipped_count": skipped, "cancelled": cancelled})
-        return {"ok_count": ok, "error_count": errors, "skipped_count": skipped,
-                "cancelled": cancelled, "results": [r.__dict__ for r in results]}
+                # Signed out or asked to wait: every other mix would be sent in full only
+                # to be refused the same way, so stop here (like the bulk edit does).
+                if isinstance(e, soundcloud.RateLimitError):
+                    stop = {"kind": "rate_limit", "note": short_reason(e),
+                            "wait_seconds": e.wait_seconds}
+                elif isinstance(e, soundcloud.AuthError):
+                    stop = {"kind": "signed_out" if isinstance(e, soundcloud.SignedOutError)
+                            else "refused", "note": short_reason(e), "wait_seconds": None}
+                if stop:
+                    break
+        not_sent = len(items) - len(results) if (stop or cancelled) else 0
+        done = {"type": "upload_done", "ok_count": ok, "error_count": errors,
+                "skipped_count": skipped, "cancelled": cancelled}
+        if stop:
+            done.update(stopped=stop["kind"], stop_note=stop["note"],
+                        wait_seconds=stop["wait_seconds"], not_sent=not_sent)
+        emit(done)
+        out = {"ok_count": ok, "error_count": errors, "skipped_count": skipped,
+               "cancelled": cancelled, "results": [r.__dict__ for r in results]}
+        if stop:
+            out.update(stopped=stop["kind"], stop_note=stop["note"],
+                       wait_seconds=stop["wait_seconds"], not_sent=not_sent)
+        return out
     finally:
         with _upload_lock:
             _uploading -= 1
@@ -1351,7 +1527,8 @@ _WIP_TAG = "[WIP]"
 
 
 def _wip_norm(name: str) -> str:
-    return projectmeta.normalize(name)
+    # The song key, so "Episode 101" never replaces a WIP "Episode 100".
+    return songs.song_key(name)
 
 
 def wip_tag_title(title: str) -> str:
@@ -1387,7 +1564,15 @@ def _changelog_comment(history: list[str]) -> str:
 
 def get_wip(catalog: Catalog) -> dict:
     raw = catalog.get_setting(_WIP_KEY) or {}
-    return raw if isinstance(raw, dict) else {}
+    if not isinstance(raw, dict):
+        return {}
+    # Keyed by the current song key of the name the user marked, so entries saved by an
+    # older version (which dropped trailing numbers) still match the right song.
+    out: dict = {}
+    for k, e in raw.items():
+        name = e.get("name") if isinstance(e, dict) else None
+        out.setdefault(_wip_norm(name) if name else k, e)
+    return out
 
 
 def _save_wip(catalog: Catalog, wip: dict) -> None:

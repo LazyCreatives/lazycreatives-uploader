@@ -16,12 +16,18 @@ difference. They catch layout and styling changes you did not mean to make.
    Python, and all app data goes into the scratch folder.
 4. Take a picture of the first-run welcome, then set the app up (connect the demo
    account, watch the mixes folder, post six mixes, make one private) and take pictures
-   of **Home**, **Upload**, **Your tracks**, **History** and **Settings**.
-5. Do all of that in both looks, **crate** and **sleeve**. The look is set the same
-   way the app keeps it: `lc-look` in the page's localStorage (see `src/look.ts`).
+   of **Home**, **Upload**, **Your tracks** (rows and Covers), **History** and **Settings**.
+5. Then: those five screens again in **light** mode, **Upload** and **Your tracks** in
+   the **narrow window** (760 px wide, the smallest the window goes; the narrow layout
+   starts at 1099 px), and last **Albums**: the list and one open album (two albums
+   made through the API from the mixes).
+6. Uploader has one look, **crate**. The look and light/dark are set the same way the
+   app keeps them: `lc-look` and `lc-theme` in the page's localStorage (see `src/look.ts`).
 
 Things that change from run to run are covered with a solid box before the picture
 is taken: dates and times, "posted" times, waveforms and meters, and folder paths. Animations are switched off for the picture.
+For the album pictures the page's clock is stopped at 1 Oct 2026 (Playwright's
+`page.clock`), so "44 days to go" and the release date never change.
 
 The pictures are of the page inside the window only. Native window parts do **not**
 appear: no title bar or its buttons, no window frame or shadow, no Mica (Windows) or

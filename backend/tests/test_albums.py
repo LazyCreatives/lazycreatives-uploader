@@ -144,3 +144,34 @@ def test_project_and_backup_state_come_from_backups(tmp_path):
     assert a["needs"] == ["Project changed since export"] and a["is_ready"] is False
     assert b["project_id"] is None and b["is_ready"] is True
     judge_album(album, tmp_path / "no-backups.db")  # Backups not installed: no crash
+
+
+def test_song_keeps_the_genre_it_was_added_with(client):
+    """The album's stripe is coloured by its songs' genre, sent along when a song is added."""
+    paths = sorted(str(p) for p in client.mixes_dir.glob("*.wav") if " - " not in p.name and "click" not in p.name)
+    a = client.post("/api/albums", json={"title": "Tapes"}).json()
+    a = client.post(f"/api/albums/{a['id']}/songs", json={"songs": [
+        {"path": paths[0], "genre": "Dub"}, {"path": paths[1]}]}).json()
+    assert [s["genre"] for s in a["songs"]] == ["Dub", ""]
+
+
+def test_old_album_list_gains_genre(tmp_path):
+    """A list made before songs kept a genre still opens, and its songs have none."""
+    import sqlite3
+    db = tmp_path / "albums.db"
+    con = sqlite3.connect(db)
+    con.executescript("""
+      CREATE TABLE albums (id TEXT PRIMARY KEY, title TEXT NOT NULL, release_date TEXT NOT NULL DEFAULT '',
+        crossfade REAL NOT NULL DEFAULT 0, created_at REAL NOT NULL, updated_at REAL NOT NULL);
+      CREATE TABLE album_songs (album_id TEXT NOT NULL, pos INTEGER NOT NULL, path TEXT NOT NULL,
+        title TEXT NOT NULL, project TEXT NOT NULL DEFAULT '', gapless_after INTEGER NOT NULL DEFAULT 0,
+        ready INTEGER, added_at REAL NOT NULL, PRIMARY KEY (album_id, path));
+      INSERT INTO albums VALUES ('a1', 'Old', '', 0, 1, 1);
+      INSERT INTO album_songs VALUES ('a1', 0, '/x/Old song.wav', 'Old song', '', 0, NULL, 1);
+    """)
+    con.commit()
+    con.close()
+    store = Albums(db)
+    assert store.all()[0]["songs"][0]["genre"] == ""
+    store.add_songs("a1", [{"path": "/x/New.wav", "genre": "Grime"}])
+    assert [s["genre"] for s in store.all()[0]["songs"]] == ["", "Grime"]

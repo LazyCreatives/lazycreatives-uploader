@@ -25,6 +25,8 @@ for pkg in ("uvicorn", "fastapi", "starlette", "apscheduler", "websockets", "pyd
 
 # Cover-art lettering font (Inter Bold) + its licence, next to coverart.py.
 datas += [("lazyupload/fonts", "lazyupload/fonts")]
+# Fonts and sloth for the page the browser shows after SoundCloud sign-in.
+datas += [("lazyupload/web", "lazyupload/web")]
 
 if sys.platform.startswith("linux"):
     # keyring finds its Secret Service backends through package metadata. Linux only:

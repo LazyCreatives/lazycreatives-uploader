@@ -110,14 +110,6 @@ export function moveItem<T>(list: T[], from: number, to: number): T[] {
   return out;
 }
 
-// Sleeve look numbers a playlist like the back of a record: side A, then side B
-// from the halfway point (A1 A2 A3 / B1 B2). Very long playlists stay A1..An.
-export function sideLabel(i: number, n: number): string {
-  if (n < 4 || n > 24) return `${i + 1}`;
-  const half = Math.ceil(n / 2);
-  return i < half ? `A${i + 1}` : `B${i - half + 1}`;
-}
-
 // "48 min", "1 hr 12 min", "" for nothing.
 export function fmtLength(seconds: number | null | undefined): string {
   const s = Math.round(seconds ?? 0);

@@ -49,17 +49,54 @@ class SoundCloudError(Exception):
     """Base for friendly, user-facing SoundCloud failures."""
 
 
+def wait_seconds(retry_after) -> int | None:
+    """SoundCloud's Retry-After as whole seconds: it is either a number of seconds or
+    an HTTP date. None when missing or unreadable."""
+    if retry_after is None or str(retry_after).strip() == "":
+        return None
+    raw = str(retry_after).strip()
+    try:
+        return max(0, int(float(raw) + 0.999))
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        when = parsedate_to_datetime(raw)
+        return max(0, int(when.timestamp() - time.time() + 0.999))
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+
+
+def wait_words(seconds: int | None) -> str:
+    """'SoundCloud asked us to wait 3 minutes.' with the real number, in minutes up to
+    two hours and in hours after that."""
+    if seconds is None:
+        return "SoundCloud asked us to slow down. Try again in a few minutes."
+    minutes = max(1, -(-int(seconds) // 60))
+    if minutes < 120:
+        return f"SoundCloud asked us to wait {minutes} minute{'s' if minutes != 1 else ''}."
+    hours = -(-minutes // 60)
+    return f"SoundCloud asked us to wait about {hours} hours."
+
+
 class RateLimitError(SoundCloudError):
     def __init__(self, retry_after: str | None = None):
         self.retry_after = retry_after
-        hint = f" Try again in {retry_after}s." if retry_after else " Try again shortly."
-        super().__init__("SoundCloud is rate-limiting uploads." + hint)
+        self.wait_seconds = wait_seconds(retry_after)
+        super().__init__(wait_words(self.wait_seconds))
 
 
 class AuthError(SoundCloudError):
-    """The account's authorization was rejected — it needs reconnecting."""
+    """SoundCloud refused the account (403): it may need signing in again."""
+    def __init__(self, message: str = "SoundCloud refused this account. Sign in again."):
+        super().__init__(message)
+
+
+class SignedOutError(AuthError):
+    """The saved sign-in no longer works: it expired, was revoked (password changed,
+    app access removed) or its single-use refresh was lost. Only signing in again helps."""
     def __init__(self):
-        super().__init__("SoundCloud rejected the account — please reconnect it.")
+        super().__init__("SoundCloud signed you out. Sign in again.")
 
 
 def _raise_for_status(r) -> None:
@@ -67,7 +104,9 @@ def _raise_for_status(r) -> None:
     the provider's error_description so OAuth failures are diagnosable, not opaque."""
     if r.status_code == 429:
         raise RateLimitError(r.headers.get("Retry-After"))
-    if r.status_code in (401, 403):
+    if r.status_code == 401:
+        raise SignedOutError()
+    if r.status_code == 403:
         raise AuthError()
     if r.status_code >= 400:
         detail = ""
@@ -225,15 +264,39 @@ def exchange_code(code: str, redirect_uri: str, code_verifier: str) -> dict:
     }))
 
 
+def _refusal_means_signed_out(exc: requests.HTTPError) -> bool:
+    """Did SoundCloud refuse the refresh token itself (expired, revoked, already used)?
+    SoundCloud answers that with 400 invalid_grant. The broker deployed before Oct 2026
+    hands any SoundCloud refusal back as 502 "SoundCloud token request failed" (a broker
+    that can't reach SoundCloud says "could not reach SoundCloud" instead, which is an
+    outage, not a sign-out); newer brokers pass invalid_grant on as 401."""
+    r = getattr(exc, "response", None)
+    code = getattr(r, "status_code", None)
+    if code == 400:
+        return True
+    if code == 502:
+        try:
+            detail = str((r.json() or {}).get("detail") or "")
+        except Exception:
+            detail = r.text or ""
+        return "token request failed" in detail.lower()
+    return False
+
+
 def refresh_tokens(refresh_token: str) -> dict:
-    if _use_broker():
-        return _normalize(_broker_post("/refresh", {"refresh_token": refresh_token}))
-    return _normalize(_direct_token({
-        "grant_type": "refresh_token",
-        "client_id": _client_id(),
-        "client_secret": _client_secret(),
-        "refresh_token": refresh_token,
-    }))
+    try:
+        if _use_broker():
+            return _normalize(_broker_post("/refresh", {"refresh_token": refresh_token}))
+        return _normalize(_direct_token({
+            "grant_type": "refresh_token",
+            "client_id": _client_id(),
+            "client_secret": _client_secret(),
+            "refresh_token": refresh_token,
+        }))
+    except requests.HTTPError as e:
+        if _refusal_means_signed_out(e):
+            raise SignedOutError() from e
+        raise
 
 
 # ---- file wrapper for real upload progress ----------------------------------
@@ -270,19 +333,31 @@ class _ProgressFile:
         self._f.close()
 
 
+def _clean_tag(t: str) -> str:
+    # SoundCloud quotes multi-word tags with double quotes, so a double quote can't be
+    # part of a tag ("12\" vinyl" would split). Apostrophes are fine: 80's, rock'n'roll.
+    return " ".join((t or "").replace('"', " ").split())
+
+
 def _tag_list(tags: list[str]) -> str:
     # SoundCloud tag_list is space-separated; multi-word tags must be quoted.
-    return " ".join(f'"{t}"' if " " in t else t for t in tags if t)
+    clean = [_clean_tag(t) for t in tags]
+    return " ".join(f'"{t}"' if " " in t else t for t in clean if t)
+
+
+_TAG_TOKEN = re.compile(r'"([^"]*)"|(\S+)')
 
 
 def _parse_tag_list(raw: str) -> list[str]:
-    """Inverse of _tag_list — split a SoundCloud tag_list back into tags, honouring
-    the quoting of multi-word tags."""
-    import shlex
-    try:
-        return [t for t in shlex.split(raw or "") if t]
-    except ValueError:
-        return [t for t in (raw or "").split() if t]
+    """Inverse of _tag_list: split a SoundCloud tag_list back into tags. Only double
+    quotes group words (that is how SoundCloud quotes them), so 80's and rock'n'roll
+    come back as typed."""
+    out = []
+    for quoted, bare in _TAG_TOKEN.findall(raw or ""):
+        t = (quoted if quoted else bare.replace('"', "")).strip()
+        if t:
+            out.append(t)
+    return out
 
 
 def _iso_created_at(raw) -> str | None:
@@ -440,12 +515,18 @@ class SoundCloudClient:
         if time.time() >= float(self.tokens.get("expires_at", 0)):
             rt = self.tokens.get("refresh_token")
             if not rt:
-                raise RuntimeError("SoundCloud session expired — reconnect your account.")
+                raise SignedOutError()
             fresh = refresh_tokens(rt)
             # Keep any fields the refresh response omits (e.g. username we stored).
             self.tokens = {**self.tokens, **fresh}
             self._save()
         return self.tokens["access_token"]
+
+    def renew(self) -> None:
+        """Get a new access token now (after SoundCloud refused the current one).
+        Raises SignedOutError when the saved sign-in no longer works."""
+        self.tokens["expires_at"] = 0
+        self._access_token()
 
     def _headers(self) -> dict:
         return {"Authorization": f"OAuth {self._access_token()}", "Accept": "application/json"}
@@ -499,14 +580,20 @@ class SoundCloudClient:
 
     def _just_posted(self, title: str, since: float) -> dict | None:
         """The newest track on the account with this title, created since `since`
-        (a few minutes' slack for clock drift), or None."""
+        (a few minutes' slack for clock drift), or None (also when SoundCloud can't
+        be asked right now)."""
         try:
-            r = requests.get(f"{API_BASE}/me/tracks", headers=self._headers(),
-                             params={"limit": 20}, timeout=30)
-            _raise_for_status(r)
-            body = r.json()
+            return self.find_posted(title, since)
         except Exception:
             return None
+
+    def find_posted(self, title: str, since: float) -> dict | None:
+        """Like _just_posted, but raises when SoundCloud can't be asked, so a caller
+        never takes "couldn't look" for "it isn't there"."""
+        r = requests.get(f"{API_BASE}/me/tracks", headers=self._headers(),
+                         params={"limit": 50}, timeout=30)
+        _raise_for_status(r)
+        body = r.json()
         items = body.get("collection", []) if isinstance(body, dict) else body
         for raw in items or []:
             if (raw.get("title") or "") != title:
@@ -790,6 +877,10 @@ class MockSoundCloudClient:
 
     def list_tracks(self, limit: int = 200) -> list[dict]:
         return [normalize_track(t) for t in self._load()[:limit]]
+
+    def find_posted(self, title: str, since: float) -> dict | None:
+        # demo tracks have no upload time: the newest with this title
+        return next((dict(t) for t in self._load()[:50] if (t.get("title") or "") == title), None)
 
     def update_track(self, track_id: int, fields: dict) -> dict:
         lib = self._load()

@@ -10,19 +10,18 @@ import { NoteOpened } from "../components/Recents";
 import { EditPanel, Overlay } from "./Manage";
 import { PlaylistArt, playlistLine } from "../components/PlaylistPick";
 import { rowKey } from "../components/a11y";
-import { GENRES, genreColor, useLook } from "../look";
+import { GENRES, genreColor } from "../look";
 import { fuzzyScore } from "../fuzzy";
 import {
   createPlaylist, deletePlaylist, detailChanges, fmtLength, joinTrack, mainGenre, moveItem, savePlaylist, setPlaylistCover,
-  showOrder, sideLabel, usePlaylists,
+  showOrder, usePlaylists,
 } from "../playlists";
 import type { Playlist, PlaylistTrack, Sharing, Track } from "../types";
 import "../playlists.css";
 
 // Playlists: your SoundCloud playlists ("sets"). Make one, add tracks from Your tracks,
 // drag them into order, take them out. Every change goes to SoundCloud straight away.
-// Crate shows rows in columns; Sleeve shows covers, and a playlist's page reads like
-// the back of a record sleeve (side A, side B).
+// Playlists and their tracks show as rows in columns.
 
 const api = makeApi();
 
@@ -78,12 +77,11 @@ function PlaylistList({ list, error, reload, composing, onOpen, onCompose, onCom
   list: Playlist[] | null; error: string | null; reload: () => Promise<void>; composing: boolean;
   onOpen: (id: number) => void; onCompose: () => void; onComposed: () => void;
 }) {
-  const [look] = useLook();
   const empty = list !== null && list.length === 0;
   return (
     <div>
       <PageHeader title="Playlists"
-        sub={look === "sleeve" ? "Your SoundCloud playlists, a sleeve each." : "Your SoundCloud playlists. Tracks keep the order you give them."}
+        sub="Your SoundCloud playlists. Tracks keep the order you give them."
         actions={<>
           <Button kind="quiet" onClick={() => void reload()}><Icon name="refresh" />Refresh</Button>
           {!composing && !empty && <Button kind="primary" onClick={onCompose}><Icon name="plus" />New playlist</Button>}
@@ -91,9 +89,7 @@ function PlaylistList({ list, error, reload, composing, onOpen, onCompose, onCom
       {error && <div className="mng-err" style={{ marginBottom: 12 }}><Icon name="alert" />{error}</div>}
       {(composing || empty) && <Composer first={empty} onMade={(p) => { onComposed(); onOpen(p.id); }} onCancel={empty ? undefined : onComposed} />}
       {list === null && <div className="table"><div className="row faint pl-wait">Getting your playlists from SoundCloud…</div></div>}
-      {list && list.length > 0 && (look === "sleeve"
-        ? <div className="sleeves">{list.map((p) => <PlaylistSleeve key={p.id} p={p} onOpen={() => onOpen(p.id)} />)}</div>
-        : (
+      {list && list.length > 0 && (
           <div className="table table--crate">
             <div className="row cols cols-head pl-cols">
               <span /><span /><span>Playlist</span><span className="col-num">Tracks</span>
@@ -101,7 +97,7 @@ function PlaylistList({ list, error, reload, composing, onOpen, onCompose, onCom
             </div>
             {list.map((p) => <PlaylistRow key={p.id} p={p} onOpen={() => onOpen(p.id)} />)}
           </div>
-        ))}
+      )}
     </div>
   );
 }
@@ -150,25 +146,6 @@ function PlaylistRow({ p, onOpen }: { p: Playlist; onOpen: () => void }) {
   );
 }
 
-function PlaylistSleeve({ p, onOpen }: { p: Playlist; onOpen: () => void }) {
-  return (
-    <div className="sleeve pl-sleeve" role="button" tabIndex={0} onClick={onOpen} onKeyDown={rowKey(onOpen)}
-      onContextMenu={(e) => openMenu(e, listMenu(p, onOpen))}>
-      <div className="sleeve__art">
-        <PlaylistArt p={p} />
-        <span className="sleeve__badge">
-          <span className={`dot ${p.sharing === "private" ? "dot--warn" : "dot--ok"}`} />
-          {p.sharing === "private" ? "Private" : "Public"}
-        </span>
-      </div>
-      <div className="sleeve__meta">
-        <div className="sleeve__name" title={p.title}>{p.title}</div>
-        <div className="sleeve__sub">{playlistLine(p, false) || "Empty so far"}</div>
-      </div>
-    </div>
-  );
-}
-
 // Name a new playlist, choose who can see it. Tracks come after, on its page.
 function Composer({ first, onMade, onCancel }: { first: boolean; onMade: (p: Playlist) => void; onCancel?: () => void }) {
   const [name, setName] = useState("");
@@ -211,7 +188,6 @@ type Row = PlaylistTrack & Partial<Track>;
 function PlaylistPage({ p, yours, byId, onBack, onOpenTrack }: {
   p: Playlist; yours: Track[] | null; byId: Map<number, Track>; onBack: () => void; onOpenTrack: (id: string) => void;
 }) {
-  const [look] = useLook();
   const [saving, setSaving] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -247,10 +223,10 @@ function PlaylistPage({ p, yours, byId, onBack, onOpenTrack }: {
   ];
 
   return (
-    <div className={`plpage plpage--${look}`}>
+    <div className="plpage plpage--crate">
       <button type="button" className="linkbtn plpage__back" onClick={onBack}><Icon name="arrowLeft" size={14} />Playlists</button>
       <header className="plpage__head">
-        <PlaylistArt p={p} size={look === "sleeve" ? 184 : 96} className="plpage__art" />
+        <PlaylistArt p={p} size={96} className="plpage__art" />
         <div className="plpage__info">
           <div className="eyebrow">Playlist{p.sharing === "private" ? " · Private" : ""}</div>
           {renaming
@@ -285,7 +261,7 @@ function PlaylistPage({ p, yours, byId, onBack, onOpenTrack }: {
       </header>
 
       {rows.length > 0
-        ? <TrackList rows={rows} look={look} genre={genre} onOrder={setOrder} onRemove={remove}
+        ? <TrackList rows={rows} genre={genre} onOrder={setOrder} onRemove={remove}
             canOpen={(id) => byId.has(id)} onOpen={(id) => onOpenTrack(String(id))} />
         : !adding && <div className="table"><EmptyState pose="napping" title="Nothing in it yet" say="Plenty of room.">
             Press Add tracks, or tick tracks in Your tracks and choose Add to playlist.
@@ -436,8 +412,8 @@ export function clickOpensRow(target: EventTarget | null, row: Element): boolean
 // The tracks in order. Click a row (or press Enter on it) to open the track's page.
 // Drag a row by its grip (or anywhere) to move it; Alt+Up/Down moves the focused row;
 // right-click has Move to top/bottom and Take out.
-function TrackList({ rows, look, genre, onOrder, onRemove, canOpen, onOpen }: {
-  rows: Row[]; look: string; genre: string | null; onOrder: (ids: number[]) => void; onRemove: (id: number) => void;
+function TrackList({ rows, genre, onOrder, onRemove, canOpen, onOpen }: {
+  rows: Row[]; genre: string | null; onOrder: (ids: number[]) => void; onRemove: (id: number) => void;
   canOpen: (id: number) => boolean; onOpen: (id: number) => void;
 }) {
   const ids = rows.map((r) => r.id);
@@ -447,19 +423,13 @@ function TrackList({ rows, look, genre, onOrder, onRemove, canOpen, onOpen }: {
   const move = (from: number, to: number) => { if (from !== to) onOrder(moveItem(ids, from, to)); };
   const focusRow = (i: number) => requestAnimationFrame(() =>
     listRef.current?.querySelectorAll<HTMLElement>("[data-pl-row]")[i]?.focus());
-  const sleeve = look === "sleeve";
-  const total = rows.reduce((s, r) => s + (r.duration ?? 0), 0);
-  const half = Math.ceil(rows.length / 2);
-  const sides = sleeve && rows.length >= 4 && rows.length <= 24;
 
   return (
-    <div ref={listRef} className={sleeve ? "pl-back" : "table table--crate"} style={{ ["--genre" as string]: genreColor(genre) }}>
-      {!sleeve && (
-        <div className="row cols cols-head pl-track-cols">
-          <span /><span className="col-num">#</span><span /><span /><span>Track</span><span>Genre</span>
-          <span className="col-num">Length</span><span>Privacy</span><span />
-        </div>
-      )}
+    <div ref={listRef} className="table table--crate" style={{ ["--genre" as string]: genreColor(genre) }}>
+      <div className="row cols cols-head pl-track-cols">
+        <span /><span className="col-num">#</span><span /><span /><span>Track</span><span>Genre</span>
+        <span className="col-num">Length</span><span>Privacy</span><span />
+      </div>
       {rows.map((t, i) => {
         const meta = { title: t.title, sub: t.project_match ? `From ${t.project_match}` : t.user ? `by ${t.user}` : t.genre || "",
           art: t.artwork_url, cover: t.project_match || t.title, genre: t.project_match ? t.project_genre : t.genre };
@@ -475,11 +445,9 @@ function TrackList({ rows, look, genre, onOrder, onRemove, canOpen, onOpen }: {
           "-",
           { label: "Take out of this playlist", danger: true, onClick: () => onRemove(t.id) },
         ];
-        const cls = [sleeve ? "pl-back__row" : "row cols pl-track-cols", "pl-drag",
+        const cls = ["row cols pl-track-cols", "pl-drag",
           opens ? "pl-open" : "", drag === i ? "pl-drag--lifted" : "", over === i && drag !== null && drag !== i ? (drag < i ? "pl-drag--below" : "pl-drag--above") : ""].join(" ");
         return (<div key={t.id}>
-          {sides && i === 0 && <div className="pl-back__side">Side A</div>}
-          {sides && i === half && <div className="pl-back__side">Side B</div>}
           <div className={cls} data-pl-row tabIndex={0} draggable
             aria-label={`${i + 1}. ${t.title}.${opens ? " Enter opens it." : ""} Alt and arrow keys move it.`}
             onClick={opens ? (e) => { if (clickOpensRow(e.target, e.currentTarget)) onOpen(t.id); } : undefined}
@@ -495,14 +463,7 @@ function TrackList({ rows, look, genre, onOrder, onRemove, canOpen, onOpen }: {
               else if (opens && e.key === "Enter" && e.target === e.currentTarget) { e.preventDefault(); onOpen(t.id); }
             }}
             onContextMenu={(e) => openMenu(e, menu)}>
-            {sleeve ? <>
-              <span className="pl-back__no">{sideLabel(i, rows.length)}</span>
-              <span className="pl-back__title col-trunc" title={t.title}>{t.title}{t.user && !t.project_match && !t.local_path && t.user !== "" ? <em> · {t.user}</em> : null}</span>
-              <span className="pl-back__dots" aria-hidden />
-              <span className="pl-back__len">{t.duration ? fmtDuration(t.duration) : "—"}</span>
-              <button type="button" className="iconbtn pl-x" aria-label={`Take ${t.title} out`} title="Take out"
-                onClick={() => onRemove(t.id)}><Icon name="close" size={13} /></button>
-            </> : <>
+            <>
               <span className="pl-grip" aria-hidden title="Drag to move"><Icon name="rows" size={14} /></span>
               <span className="col-num faint">{i + 1}</span>
               {t.local_path ? <PlayButton path={t.local_path} meta={meta} size={28} /> : <span />}
@@ -520,11 +481,10 @@ function TrackList({ rows, look, genre, onOrder, onRemove, canOpen, onOpen }: {
                 <button type="button" className="iconbtn" aria-label={`Take ${t.title} out`} title="Take out of this playlist"
                   onClick={() => onRemove(t.id)}><Icon name="close" /></button>
               </span>
-            </>}
+            </>
           </div>
         </div>);
       })}
-      {sleeve && <div className="pl-back__total"><span>Total time</span><span className="pl-back__dots" aria-hidden /><span>{fmtLength(total) || "—"}</span></div>}
     </div>
   );
 }

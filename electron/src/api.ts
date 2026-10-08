@@ -4,6 +4,7 @@ import type {
 } from "./types";
 import type { CoverSource } from "./coverArt";
 import type { Album, AlbumCandidate, AlbumSongChange } from "./albums";
+import { plainProblem } from "./plainProblem";
 
 function base() {
   const port = (window as any).lazyupload?.port ?? "8754";
@@ -13,16 +14,30 @@ function token() {
   return (window as any).lazyupload?.token ?? "";
 }
 
+// What the engine says when SoundCloud stops accepting the saved sign-in. Any screen
+// that hears it tells the app, which then shows "Sign in again" in the sidebar.
+export const SIGNED_OUT = "SoundCloud signed you out.";
+export const SIGNED_OUT_EVENT = "lc:signed-out";
+export function noteSignedOut() {
+  try { window.dispatchEvent(new Event(SIGNED_OUT_EVENT)); } catch { /* no window in tests */ }
+}
+
 async function req(method: string, path: string, body?: unknown) {
-  const res = await fetch(base() + path, {
-    method,
-    headers: { "Content-Type": "application/json", "X-Auth-Token": token() },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(base() + path, {
+      method,
+      headers: { "Content-Type": "application/json", "X-Auth-Token": token() },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    throw new Error(plainProblem(null, 0)); // the engine didn't answer
+  }
   if (!res.ok) {
-    let detail = `${res.status}`;
-    try { detail = (await res.json()).detail ?? detail; } catch { /* ignore */ }
-    throw new Error(detail);
+    let detail: unknown = null;
+    try { detail = (await res.json()).detail; } catch { /* ignore */ }
+    if (typeof detail === "string" && detail.startsWith(SIGNED_OUT)) noteSignedOut();
+    throw new Error(plainProblem(detail, res.status));
   }
   return res.json();
 }
@@ -40,7 +55,7 @@ export function makeApi() {
       return req("PUT", `/api/albums/${id}`, change);
     },
     async deleteAlbum(id: string): Promise<{ ok: boolean }> { return req("DELETE", `/api/albums/${id}`); },
-    async addAlbumSongs(id: string, songs: { path: string; title?: string; project?: string }[]): Promise<Album> {
+    async addAlbumSongs(id: string, songs: { path: string; title?: string; project?: string; genre?: string }[]): Promise<Album> {
       return req("POST", `/api/albums/${id}/songs`, { songs });
     },
     async orderAlbum(id: string, paths: string[]): Promise<Album> { return req("PUT", `/api/albums/${id}/order`, { paths }); },
@@ -60,6 +75,7 @@ export function makeApi() {
     async connectStatus(id: string): Promise<{ status: "pending" | "connected" | "failed"; account: string | null; error: string | null }> {
       return req("GET", `/api/connect/${id}`);
     },
+    async connectCancel(id: string): Promise<{ status: string }> { return req("POST", `/api/connect/${id}/cancel`); },
     async activateAccount(id: string): Promise<Account> { return req("POST", "/api/accounts/activate", { id }); },
     async disconnect(id?: string): Promise<Account> { return req("POST", "/api/disconnect", { id: id ?? null }); },
     async scan(sources?: string[]): Promise<Mix[]> {
@@ -82,7 +98,10 @@ export function makeApi() {
       return req("POST", "/api/versions/update", { path });
     },
     async jobStatus(id: string): Promise<JobStatus> { return req("GET", `/api/jobs/${id}`); },
-    async cancelJob(id: string): Promise<{ cancelling: boolean }> { return req("POST", `/api/jobs/${id}/cancel`); },
+    // `now` cuts off the mix going up; without it the post stops after that mix.
+    async cancelJob(id: string, now = false): Promise<{ cancelling: boolean }> {
+      return req("POST", `/api/jobs/${id}/cancel${now ? "?now=true" : ""}`);
+    },
     async overview(): Promise<Overview> { return req("GET", "/api/overview"); },
     async history(limit = 50): Promise<UploadRow[]> {
       return (await req("GET", `/api/history?limit=${limit}`)).uploads;

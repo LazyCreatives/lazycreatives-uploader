@@ -86,3 +86,28 @@ def test_requests_logged_without_secrets(monkeypatch, caplog):
     line = caplog.text
     assert "POST /refresh 200" in line and "caller=" in line
     assert "SECRET-RT" not in line and "9.9.9.9" not in line
+
+
+@responses.activate
+def test_a_dead_refresh_token_is_passed_on_as_401(monkeypatch):
+    """SoundCloud's invalid_grant means "sign in again", not an outage (502)."""
+    c = _client(monkeypatch)
+    responses.add(responses.POST, SC_TOKEN_URL, json={"error": "invalid_grant"}, status=400)
+    r = c.post("/refresh", headers={"X-App-Key": "appkey"}, json={"refresh_token": "used"})
+    assert r.status_code == 401
+
+
+@responses.activate
+def test_other_soundcloud_refusals_stay_502(monkeypatch):
+    c = _client(monkeypatch)
+    responses.add(responses.POST, SC_TOKEN_URL, json={"error": "server_error"}, status=500)
+    r = c.post("/refresh", headers={"X-App-Key": "appkey"}, json={"refresh_token": "rt"})
+    assert r.status_code == 502
+
+
+@responses.activate
+def test_soundcloud_asking_to_wait_is_passed_on(monkeypatch):
+    c = _client(monkeypatch)
+    responses.add(responses.POST, SC_TOKEN_URL, json={}, status=429, headers={"Retry-After": "120"})
+    r = c.post("/refresh", headers={"X-App-Key": "appkey"}, json={"refresh_token": "rt"})
+    assert r.status_code == 429 and r.headers["Retry-After"] == "120"

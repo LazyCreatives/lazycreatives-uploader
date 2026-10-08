@@ -19,6 +19,11 @@ export interface UploadState {
   current: string | null; sent: number; size: number; cancelled: boolean;
   lastUrl: string | null;
   items: Record<string, ItemState>;  // keyed by file path (or name, from an older sidecar)
+  // The post stopped early: SoundCloud signed you out, refused the account or asked us
+  // to wait. `stopNote` says so in plain words; `notSent` mixes were never sent.
+  stopped?: "signed_out" | "refused" | "rate_limit" | null;
+  stopNote?: string | null;
+  notSent?: number;
 }
 
 const initialScan: ScanState = { active: false, done: 0, total: 0 };
@@ -58,6 +63,11 @@ export function foldUpload(u: UploadState, ev: ProgressEvent): UploadState {
       return { ...u, skipped: u.skipped + 1,
         items: setItem({ phase: "skipped", reason: ev.note || ev.reason, url: ev.permalink_url ?? null }) };
     case "track_error":
+      if (ev.stopped) {  // Stop pressed while it was going up: back to how it was, not a failure
+        const items = { ...u.items };
+        delete items[key];
+        return { ...u, current: null, sent: 0, size: 0, items };
+      }
       return { ...u, errors: u.errors + 1,
         items: setItem({ phase: "failed", reason: ev.reason || "Something went wrong.", error: ev.error }) };
     case "upload_done": {
@@ -67,6 +77,7 @@ export function foldUpload(u: UploadState, ev: ProgressEvent): UploadState {
         ...u, active: false, done: true, current: null,
         completed: ev.ok_count, errors: ev.error_count, skipped: ev.skipped_count,
         cancelled: !!ev.cancelled, items,
+        stopped: ev.stopped ?? null, stopNote: ev.stop_note ?? null, notSent: ev.not_sent ?? 0,
       };
     }
     default:

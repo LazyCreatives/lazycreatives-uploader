@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { makeApi } from "../api";
 import { coverColor } from "../look";
 import { Cover } from "./Cover";
@@ -7,6 +7,7 @@ import { Wave, type WaveMark } from "./Wave";
 import { AUDITION_DELAY, AUDITION_FROM, auditionOn, bindAuditionKeys, useAuditionMode } from "../audition";
 import { Meter, listenTo } from "./Meter";
 import { onWindowMinimized, pausesOnMinimize } from "../desktop";
+import { toastWarn } from "./Desktop";
 
 const api = makeApi();
 
@@ -61,6 +62,21 @@ function make(): HTMLAudioElement {
       if (wanted) a.play().catch(() => {}); else a.load();
       return;
     }
+    // Playing an album: a song that can't play (say, on a drive that isn't plugged
+    // in) is skipped with a short note, so the album carries on and no row is left
+    // showing Pause for a song that never started.
+    const run = album;
+    if (run && run.songs[run.at]?.path === state.path) {
+      const gone = run.songs[run.at];
+      const nextAt = run.songs.findIndex((x, i) => i > run.at && x.path !== gone.path);
+      if (nextAt > 0) {
+        toastWarn(`Skipped ${gone.meta.title}: its file couldn't be played. Is it on a drive that isn't plugged in?`);
+        window.setTimeout(() => { if (album === run) playAlbum(run.key, run.songs, nextAt, run.fade); }, 0);
+        return;
+      }
+      leaveAlbum();
+    }
+    wanted = false;
     set({ playing: false, error: "Couldn't play this file" });
   });
   return a;
@@ -450,15 +466,26 @@ export function useSongLength(path: string | null | undefined): number {
 
 // A mix's waveform. With a local file you can click it to play from that point;
 // a SoundCloud-only track just shows its shape.
-export function SongWave({ path, scUrl, meta, height = 26, marks }: {
+// `upload` (Upload page): while the mix goes up, its waveform fills with Sloth Blue from
+// the left as the bytes go, in place of a separate progress bar. The blue copy of the
+// wave sits on top, cut off where the upload has got to; screen readers get a progressbar.
+export function SongWave({ path, scUrl, meta, height = 26, marks, upload }: {
   path?: string | null; scUrl?: string | null; meta: SongMeta; height?: number; marks?: WaveMark[];
+  upload?: { fraction: number; label: string };
 }) {
   const { ref, peaks } = usePeaks({ path, scUrl });
   const { played } = usePlayer(path);
+  const pct = upload ? Math.round(Math.max(0, Math.min(1, upload.fraction)) * 100) : 0;
   return (
-    <div ref={ref} className="songwave" onClick={(e) => { if (path) e.stopPropagation(); }}>
+    <div ref={ref} className={`songwave${upload ? " songwave--up" : ""}`} onClick={(e) => { if (path) e.stopPropagation(); }}>
       <Wave peaks={peaks} color={coverColor(meta.genre, meta.cover || meta.title)} played={played} height={height} marks={marks}
         onSeek={path ? (f) => { if (state.path !== path || state.auditioning) toggle(path, meta); setTimeout(() => seek(f), 60); } : undefined} />
+      {upload && (
+        <span className="songwave__up" role="progressbar" aria-label={upload.label}
+          aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} style={{ "--pct": pct } as CSSProperties}>
+          <Wave peaks={peaks} color="currentColor" height={height} />
+        </span>
+      )}
     </div>
   );
 }

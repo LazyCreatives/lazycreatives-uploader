@@ -45,19 +45,19 @@
 .mng-tagchip {
   border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--accent);
   border-radius: 999px; padding: 3px 9px; font: inherit; font-size: 12px; font-weight: 600;
-  cursor: pointer; transition: background .14s, border-color .14s;
+  cursor: pointer; transition: background var(--dur-quick) var(--ease-lazy), border-color var(--dur-quick) var(--ease-lazy);
 }
 .mng-tagchip:hover { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 
 /* ---- pagination ---- */
 .mng-pager { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; margin: 16px 0 4px; }
-.mng-pager__label { color: var(--text-dim); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.mng-pager__label { color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
 .mng-pager__nav { display: flex; align-items: center; gap: 14px; }
 
 /* ---- overlay scrim (shared by drawer + modal) ---- */
 .mng-scrim {
   position: fixed; inset: 0; z-index: 80; background: rgb(var(--scrim-rgb) / calc(0.6 * var(--scrim-k)));
-  display: flex; animation: mngScrimIn .18s ease both;
+  display: flex; animation: mngScrimIn var(--dur-base) var(--ease-glide) both;
 }
 @keyframes mngScrimIn { from { opacity: 0; } to { opacity: 1; } }
 
@@ -67,7 +67,7 @@
   border-radius: 0; border-right: none; border-top: none; border-bottom: none;
   border-left: 1px solid var(--border-strong); box-shadow: var(--shadow-pop);
   display: flex; flex-direction: column; overflow: hidden;
-  animation: mngDrawerIn .26s var(--ease-glide) both;
+  animation: mngDrawerIn var(--dur-base) var(--ease-glide) both;
 }
 @keyframes mngDrawerIn { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 
@@ -77,7 +77,7 @@
   width: min(440px, 100%); max-height: calc(100% - 48px); border-radius: var(--radius-lg);
   border: 1px solid var(--border-strong); box-shadow: var(--shadow-pop);
   display: flex; flex-direction: column; overflow: hidden;
-  animation: mngModalIn .24s var(--ease-glide) both;
+  animation: mngModalIn var(--dur-base) var(--ease-glide) both;
 }
 @keyframes mngModalIn { from { transform: translateY(10px) scale(0.98); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
 
@@ -102,7 +102,7 @@
 /* ---- inline form error note (NOT the .locked-note danger hack) ---- */
 .mng-err {
   display: flex; align-items: center; gap: 8px; margin: 6px 0 0; padding: 9px 11px;
-  border-radius: 9px; font-size: 12.5px;
+  border-radius: 2px; font-size: 12px;
   background: var(--danger-soft); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
 }
 
@@ -115,7 +115,7 @@
 .mng-matched__name { font-weight: 600; }
 
 /* ---- typed-confirm delete summary ---- */
-.mng-summary { margin: 4px 0 0; padding: 10px 12px; border-radius: 9px; font-size: 12.5px; background: var(--surface-2); border: 1px solid var(--border); }
+.mng-summary { margin: 4px 0 0; padding: 10px 12px; border-radius: 2px; font-size: 12px; background: var(--surface-2); border: 1px solid var(--border); }
 
 /* ---- SEO score badge + breakdown ---- */
 /* search score: the number, coloured by how findable the track is */
@@ -134,7 +134,7 @@
 .mng-seo-panel__head { display: flex; align-items: center; gap: 9px; margin-bottom: 11px; }
 .mng-seo-panel__title { font-weight: 600; font-size: 13px; }
 .mng-seo-checks { display: grid; gap: 6px; }
-.mng-seo-check { display: flex; align-items: center; gap: 9px; font-size: 12.5px; }
+.mng-seo-check { display: flex; align-items: center; gap: 9px; font-size: 12px; }
 .mng-seo-check__mark {
   display: inline-grid; place-items: center; width: 17px; height: 17px; flex-shrink: 0;
   border-radius: 5px; font-size: 12px; font-weight: 700;
@@ -164,7 +164,7 @@
 /* the title column keeps room for a name at the default window size; the waveform
    and project columns give way first */
 /* stripe · tick · play · cover · track · rating · waveform · from project · plays · score · privacy · actions */
-.track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) 84px minmax(48px, 1fr) minmax(104px, 1fr) 56px 72px 92px; }
+.track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) 84px minmax(64px, 1fr) minmax(104px, 1fr) 56px 72px 92px; }
 .table--crate .track-cols .mixrow__check { margin: 0; }
 /* narrower windows: rating, waveform and project step out (the project shows in the edit panel) */
 @media (max-width: 1099px) {
@@ -175,31 +175,20 @@
 /* ---- Sleeve look: a wall of cover cards ---- */
 .track-sleeves { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 .track-sleeve .sleeve__art img.cover { width: 100%; height: 100%; border-radius: 0; display: block; }
-/* faint until you point at the card, so ticking many doesn't depend on hovering */
-.track-sleeve__check { position: absolute; left: 10px; bottom: 12px; opacity: 0.45; transition: opacity 0.15s; }
+/* hidden until you point at the card or focus it, and all showing once anything is
+   ticked (the same rule as rows); top-left, clear of the printed catalogue number */
+.track-sleeve__check { position: absolute; left: 10px; top: 10px; opacity: 0; transition: opacity var(--dur-quick) var(--ease-lazy); }
 .track-sleeve__check:focus-visible { opacity: 1; }
-.track-sleeve:hover .track-sleeve__check, .track-sleeve__check:checked, .sleeve--selected .track-sleeve__check { opacity: 1; }
+.track-sleeve:hover .track-sleeve__check, .track-sleeve:focus-within .track-sleeve__check, .track-sleeve__check:checked,
+.sleeve--selected .track-sleeve__check, .track-sleeves:has(.track-sleeve__check:checked) .track-sleeve__check { opacity: 1; }
+@media (hover: none) { .track-sleeve__check { opacity: 1; } }
 .sleeve--selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .track-sleeve__top { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
 .track-sleeve__top .iconbtn { width: 24px; height: 24px; flex: none; }
 .track-sleeve__sub { display: flex; justify-content: space-between; gap: 8px; color: var(--text-faint); font-size: 12px; min-width: 0; margin-bottom: 6px; }
 .track-sleeve__sub .mono { flex: none; font-size: 12px; }
 
-/* ---- Upload, Sleeve look: one card per mix; click a card to pick it ---- */
-.mix-sleeves { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
-/* top-left, clear of the catalogue number (bottom-left) and the status pill (top-right) */
-.mix-sleeve__check { position: absolute; left: 10px; top: 11px; }
-.sleeve--done .sleeve__art { opacity: 0.55; }
-.mix-sleeve__draft { margin-top: 6px; }
 .track-sleeve__top .fmt-badge { flex: none; }
-.mix-sleeve__draft { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.mix-sleeve__draft { min-width: 0; overflow: hidden; }
-.mix-sleeve__draft .genrechip { min-width: 0; flex: 0 1 auto; overflow: hidden; }
-.mix-sleeve__draft .genrechip__pen { display: none; }
-.mix-sleeve__draft .genrechip { padding: 0 8px; gap: 5px; }
-.mix-sleeve__draft .genrechip > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; }
-.mix-sleeve__draft .genrechip__how { display: none; }
-.mix-sleeve__draft > :last-child { white-space: nowrap; flex-shrink: 0; }
 .row__sub .mix-genre { color: inherit; font-size: inherit; }
 .row__sub .mix-genre:hover { color: var(--accent); }
 
@@ -223,17 +212,18 @@
 }
 .find__x:hover { color: var(--text); background: var(--surface-3); }
 .find__top .toolchk { margin-left: auto; }
-.find__view { display: flex; gap: 8px; }
-.find__n { color: var(--text-faint); font-family: var(--font-mono); font-size: 11.5px; margin-left: 4px; }
+/* Rows / Covers / Columns, in the page head beside Refresh */
+.find__view .seg__opt { display: inline-flex; align-items: center; gap: 6px; }
+.find__n { color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; margin-left: 4px; }
 .seg__opt--on .find__n { color: var(--text-dim); }
-.find__pick { width: auto; min-width: 108px; height: 30px; padding-top: 0; padding-bottom: 0; font-size: 12.5px; }
+.find__pick { width: auto; min-width: 108px; height: 30px; padding-top: 0; padding-bottom: 0; font-size: 12px; }
 .find__pick--on { border-color: var(--accent); color: var(--text); }
-.find__count { margin-left: auto; font-size: 12.5px; color: var(--text-dim); white-space: nowrap; }
+.find__count { margin-left: auto; font-size: 12px; color: var(--text-dim); white-space: nowrap; }
 .find__count b { color: var(--text); font-weight: 600; }
 .find__clear {
   display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px;
   border: 1px solid var(--border-strong); border-radius: var(--radius); background: transparent;
-  color: var(--text-dim); font: 500 12.5px var(--font); cursor: pointer;
+  color: var(--text-dim); font: 500 12px var(--font); cursor: pointer;
 }
 .find__clear:hover { color: var(--text); border-color: var(--border-interactive); }
 
@@ -254,11 +244,11 @@
 .mix-split { display: flex; align-items: center; gap: 8px; margin: 26px 0 12px; font-size: 15px; font-weight: 600; color: var(--text-dim); }
 .mix-split span { font-size: 12px; font-weight: 500; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .mix-split svg { color: var(--accent-2); }
-.table--crate > .row.mix-split--row { margin: 0; min-height: 0; padding: 8px 16px; font-size: 12.5px; background: var(--surface-2); }
+.table--crate > .row.mix-split--row { margin: 0; min-height: 0; padding: 8px 16px; font-size: 12px; background: var(--surface-2); }
 
 /* History: a heading per day inside the table, and "Show older posts" under it */
 .table > .row.hist-day { min-height: 0; padding: 8px 16px; }
-.hist-day { display: flex; align-items: baseline; gap: 8px; padding: 9px 16px; font-size: 12.5px; font-weight: 600; color: var(--text-dim); background: var(--surface-2); }
+.hist-day { display: flex; align-items: baseline; gap: 8px; padding: 9px 16px; font-size: 12px; font-weight: 600; color: var(--text-dim); background: var(--surface-2); }
 .hist-day span { font-weight: 500; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .hist-more { display: flex; justify-content: center; margin-top: 16px; }
 
@@ -287,42 +277,20 @@
 .table--crate > .row.hist-day:nth-child(n), .table--crate > .row.mix-split--row:nth-child(n) { background: var(--surface-2); }
 
 /* ---- the top of a track's page (TrackHero): waveform with listeners' comments,
-   and the numbers. Crate reads like a deck's screen; Sleeve prints it big. ---- */
+   and the numbers, read like a deck's screen. ---- */
 .trackhero { display: grid; gap: 12px; margin: 0 0 18px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
-.trackhero__wave { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: center; padding-top: 6px; }
-.trackhero--crate .trackhero__wave { grid-template-columns: minmax(0, 1fr); }
-.trackhero .deckread {
-  display: inline-grid; grid-auto-flow: column; justify-self: start;
-  background: #070A0D; border: 1px solid var(--border); border-radius: 0; box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.6);
-}
-.trackhero .deckread__cell { display: grid; gap: 1px; padding: 6px 14px 7px; border-left: 1px solid var(--border); min-width: 72px; }
-.trackhero .deckread__cell:first-child { border-left: 0; }
-.trackhero .deckread__cell small { font: 600 11px var(--font); text-transform: uppercase; letter-spacing: .08em; color: var(--text-faint); }
-.trackhero .deckread__cell b { font: 600 19px/1.1 var(--font); letter-spacing: -0.01em; color: var(--text); font-variant-numeric: tabular-nums; }
-.trackhero__said { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12.5px; }
+.trackhero__wave { padding-top: 6px; min-width: 0; }
+.trackhero__said { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12px; }
 .trackhero__said li { display: grid; grid-template-columns: 44px auto minmax(0, 1fr); gap: 8px; align-items: baseline; color: var(--text-dim); }
 .trackhero__said .mono { color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .trackhero__said b { font-weight: 600; color: var(--text); }
-.trackhero__top { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 22px; align-items: end; }
-.trackhero__art { border-radius: 4px; box-shadow: 0 14px 34px rgb(var(--shade-rgb) / calc(0.45 * var(--shade-k))); }
-.trackhero .proj-spec { display: flex; flex-wrap: wrap; gap: 10px 0; margin: 0; }
-.trackhero .proj-spec > div { padding: 0 18px; border-left: 1px solid var(--border); }
-.trackhero .proj-spec > div:first-child { padding-left: 0; border-left: 0; }
-.trackhero .proj-spec dt { font-size: 12px; color: var(--text-dim); }
-.trackhero .proj-spec dd { margin: 0; font: 600 36px/1.05 var(--font); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-.trackhero--sleeve .playbtn--big { background: var(--text); border-color: var(--text); color: var(--bg); }
-.trackhero--sleeve .playbtn--big.playbtn--on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .trackhero .marks-labelled, .trackhero .wave-wrap--marked { margin-top: 0; }
-/* the drawer is narrow: Sleeve stacks its big numbers beside the cover */
-.trackhero--sleeve .proj-spec { flex-direction: column; gap: 8px; }
-.trackhero--sleeve .proj-spec > div { padding: 0; border-left: 0; }
-.trackhero--sleeve .proj-spec dd { font-size: 30px; }
 
 /* ---- Calmer Your tracks: filters fold under one button, row buttons show on hover ---- */
 .find__filters { display: inline-flex; align-items: center; gap: 6px; }
 .find__filters--on .up-tools__chev { transform: rotate(180deg); }
 .find__filters .find__n { color: var(--accent); }
-.track-cols .col-act { opacity: 0; transition: opacity .12s; }
+.track-cols .col-act { opacity: 0; transition: opacity var(--dur-quick) var(--ease-lazy); }
 .track-cols:hover .col-act, .track-cols:focus-within .col-act { opacity: 1; }
 @media (hover: none) { .track-cols .col-act { opacity: 1; } }
 /* Public is the usual, so it's plain; Private keeps its dot */

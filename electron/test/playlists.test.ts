@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detailChanges, fmtLength, mainGenre, moveItem, playlistPlace, playlistsWith, sideLabel, songOnPlaylist } from "../src/playlists";
+import { detailChanges, fmtLength, mainGenre, moveItem, playlistPlace, playlistsWith, songOnPlaylist } from "../src/playlists";
 import type { Playlist } from "../src/types";
 
 describe("playlists", () => {
@@ -25,12 +25,6 @@ describe("playlists", () => {
     expect(moveItem([1, 2, 3, 4], 3, 0)).toEqual([4, 1, 2, 3]);
     expect(moveItem([1, 2, 3], 1, 1)).toEqual([1, 2, 3]);
     expect(moveItem([1, 2, 3], 1, 99)).toEqual([1, 3, 2]);
-  });
-
-  it("numbers Sleeve playlists by side", () => {
-    expect([0, 1, 2, 3, 4].map((i) => sideLabel(i, 5))).toEqual(["A1", "A2", "A3", "B1", "B2"]);
-    expect(sideLabel(1, 3)).toBe("2");    // too short for sides
-    expect(sideLabel(29, 30)).toBe("30"); // too long for sides
   });
 
   it("says how long a playlist is in plain words", () => {
