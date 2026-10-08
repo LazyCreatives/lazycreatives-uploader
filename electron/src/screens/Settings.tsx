@@ -10,6 +10,7 @@ import { ConnectPanel } from "../components/Connect";
 import { ThemePicker } from "../components/LookPicker";
 import { GlyphPicker } from "../components/Marks";
 import { DENSITIES, useDensity } from "../marks";
+import { Choice, OnOff, SetPanel, SetRow, SetTabs, useSettingsTab } from "../components/SetRow";
 import { useAuditionMode } from "../audition";
 import { UpdateCheck } from "../components/UpdateCheck";
 import { PAUSE_ON_MINIMIZE, keep, pausesOnMinimize } from "../desktop";
@@ -21,6 +22,13 @@ const BLANK_TEMPLATE: MetadataTemplate = {
   tags: [], sharing: "public", downloadable: false,
 };
 
+// How often the folder check runs. A time saved before these buttons existed still shows, as its own button.
+const INTERVALS = [[0, "Off"], [15, "Every 15 min"], [60, "Hourly"], [360, "Every 6 hours"], [1440, "Daily"]] as const;
+const TABS = [["folders", "Folders"], ["soundcloud", "SoundCloud"], ["posts", "New posts"], ["auto", "Automatic"],
+  ["look", "Look"], ["privacy", "Privacy"], ["app", "App"]] as const;
+const TAB_KEYS = TABS.map(([k]) => k);
+const SHARING = [["public", "Public"], ["private", "Private"]] as const;
+
 const LOGIN_STORAGE: Record<NonNullable<Account["login_storage"]>, string> = {
   windows: "Your SoundCloud login is encrypted and locked to your Windows user account.",
   file: "Your SoundCloud login is encrypted, with the key kept in a file only your user account can open.",
@@ -31,6 +39,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
   cfg: Config; account: Account; ent: Entitlement;
   onCfg: (c: Config) => void; onAccount: (a: Account) => void; onEnt: (e: Entitlement) => void;
 }) {
+  const [tab, setTab] = useSettingsTab(TAB_KEYS);
   const [draft, setDraft] = useState<Config>(cfg);
   const [savedFlash, setSavedFlash] = useState(false);
   const [licenseKey, setLicenseKey] = useState("");
@@ -110,169 +119,110 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
   const canAuto = ent.features.auto_upload;
   const canTemplates = ent.features.metadata_templates;
 
+  const every = INTERVALS.some(([m]) => m === draft.interval_minutes)
+    ? INTERVALS : [...INTERVALS, [draft.interval_minutes, `Every ${draft.interval_minutes} min`] as const];
+  const minLen = draft.min_length_seconds ?? 30;
+
   return (
     <div className="settings">
-      <PageHeader title="Settings" sub="Your SoundCloud accounts, the folders to watch, and what every upload starts with."
+      <PageHeader title="Settings" sub="Your folders, your SoundCloud, what every post starts with, how the app looks, and what it does with your files."
         actions={savedFlash
           ? <span className="pill pill--ok" role="status">Saved</span>
           : <span className="faint settings-autosave">Changes save by themselves</span>} />
       {saveError && <div className="banner banner--warn">{saveError}</div>}
 
-      <div className="card">
-        <h2>Appearance</h2>
-        <h3 style={{ margin: "0 0 4px" }}>Light or dark</h3>
-        <p className="sub" style={{ margin: "0 0 10px" }}>Ink or paper. Match my computer follows your computer's own setting.</p>
-        <ThemePicker />
-        <h3 style={{ margin: "18px 0 4px" }}>Rating mark</h3>
-        <p className="sub" style={{ margin: "0 0 10px" }}>What ratings are drawn with. Rate a track from its row in Your tracks, or right-click it.</p>
-        <GlyphPicker />
-      </div>
-
-      <div className="card">
-        <h2>Lists</h2>
-        <h3 style={{ margin: "0 0 4px" }}>Row spacing</h3>
-        <p className="sub" style={{ margin: "0 0 10px" }}>How tall the rows are in Your tracks and History.</p>
-        <div className="seg" role="radiogroup" aria-label="Row spacing">
-          {DENSITIES.map((d) => (
-            <button key={d.key} type="button" role="radio" aria-checked={rows === d.key}
-              className={`seg__opt${rows === d.key ? " seg__opt--on" : ""}`}
-              onClick={() => { setTrackRows(d.key); setHistoryRows(d.key); }}>{d.label}</button>
-          ))}
-        </div>
-        <label className="toolchk toolchk--wrap" style={{ marginTop: 18 }}>
-          <input type="checkbox" checked={preview} onChange={(e) => setPreview(e.target.checked)} />
-          Preview on hover: point at a song in a list to hear a few seconds of it
-        </label>
-      </div>
-
-      <div className="card">
-        <h2>Covers</h2>
-        <p className="sub" style={{ marginTop: 0 }}>
-          Put your own pictures on your covers: behind the drawing, or as the whole cover. Each mix goes up to
-          SoundCloud with the cover it shows here. Change one mix by right-clicking it on Upload.
-        </p>
-        <CoverShelf sample="Your mix" what="mix" />
-      </div>
-
-      <div className="card">
-        <h2>SoundCloud accounts {ent.features.multi_account && !ent.beta && <ProBadge />}</h2>
-        <ConnectPanel account={account} onChange={onAccount} />
-        {account.connected && account.login_storage && (
-          <div className="sub" style={{ margin: "10px 0 0", fontSize: 12 }}>
-            {LOGIN_STORAGE[account.login_storage]}
-          </div>
-        )}
-      </div>
-
-      <div className="card">
-        <h2>Watched folders</h2>
+      <SetTabs tabs={TABS} value={tab} onChange={setTab} />
+      <SetPanel tab={tab}>
+      {tab === "folders" && <>
+      <SetRow title="Watched folders" help="Where you export your mixes. Uploader finds new songs here.">
         <Folders sources={draft.sources} onChange={(s) => set("sources", s)} />
-        {bkFolders?.installed && (
-          <>
-            <div className="toolchk toolchk--wrap" style={{ fontSize: 13, marginTop: 14 }}>
-              <input type="checkbox" id="bk-folders" checked={!!draft.watch_backups_folders}
-                onChange={(e) => set("watch_backups_folders", e.target.checked)} />
-              <label htmlFor="bk-folders">Also look in the export folders Backups knows about</label>
+      </SetRow>
+      {bkFolders?.installed && (
+        <SetRow title="Backups' export folders" help="Also look in the folders where Backups finds your exported songs.">
+          <OnOff label="Backups' export folders" on={!!draft.watch_backups_folders} onChange={(on) => set("watch_backups_folders", on)} />
+          <p className="set-note">
+            {bkFolders.folders.length === 0
+              ? "Backups hasn't found any export folders yet."
+              : bkExtra.length === 0
+                ? "Every export folder Backups knows about is already in your list."
+                : <>No need to add them twice: {bkExtra.length === 1 ? "this folder" : `these ${bkExtra.length} folders`} from Backups {draft.watch_backups_folders ? "are" : "would be"} looked in too.</>}
+          </p>
+          {draft.watch_backups_folders && bkExtra.length > 0 && (
+            <div className="table">
+              {bkExtra.map((f) => (
+                <div key={f} className="row" style={{ marginBottom: 0 }}>
+                  <span className="faint" style={{ display: "flex" }}><Icon name="folder" /></span>
+                  <div className="row__main pathline"><div className="row__title mono col-trunc" style={{ fontSize: 12, fontWeight: 400 }} title={f}>{f}</div></div>
+                  <span className="pill">from Backups</span>
+                </div>
+              ))}
             </div>
-            <p className="sub" style={{ margin: "6px 0 0", fontSize: 12 }}>
-              {bkFolders.folders.length === 0
-                ? "Backups hasn't found any export folders yet."
-                : bkExtra.length === 0
-                  ? "Every export folder Backups knows about is already in your list."
-                  : <>No need to add them twice: {bkExtra.length === 1 ? "this folder" : `these ${bkExtra.length} folders`} from Backups {draft.watch_backups_folders ? "are" : "would be"} looked in too.</>}
-            </p>
-            {draft.watch_backups_folders && bkExtra.length > 0 && (
-              <div className="table" style={{ marginTop: 8 }}>
-                {bkExtra.map((f) => (
-                  <div key={f} className="row" style={{ marginBottom: 0 }}>
-                    <span className="faint" style={{ display: "flex" }}><Icon name="folder" /></span>
-                    <div className="row__main pathline"><div className="row__title mono col-trunc" style={{ fontSize: 12, fontWeight: 400 }} title={f}>{f}</div></div>
-                    <span className="pill">from Backups</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-        <div className="toolchk minlen" style={{ fontSize: 13, marginTop: 14 }}>
-          <input type="checkbox" id="minlen-on" checked={(draft.min_length_seconds ?? 30) > 0}
-            onChange={(e) => set("min_length_seconds", e.target.checked ? 30 : 0)} />
-          <label htmlFor="minlen-on">Hide exports shorter than</label>
-          <input type="number" min={1} max={3600} aria-label="Shortest length in seconds"
-            disabled={(draft.min_length_seconds ?? 30) === 0}
-            value={(draft.min_length_seconds ?? 30) || 30} style={{ width: 64 }}
-            onChange={(e) => set("min_length_seconds", Math.min(3600, Math.max(1, Math.round(Number(e.target.value)) || 1)))} />
-          <label htmlFor="minlen-on">seconds</label>
+          )}
+        </SetRow>
+      )}
+      <SetRow title="Skip short exports" help="Keeps clicks, test bounces and one-shots out of your Upload list. Nothing is deleted.">
+        <div className="set-inline">
+          <OnOff label="Skip short exports" on={minLen > 0} onChange={(on) => set("min_length_seconds", on ? 30 : 0)} />
+          <label className="set-inline" style={{ opacity: minLen > 0 ? 1 : 0.5 }}>
+            <span className="set-note">Shorter than</span>
+            <input type="number" min={1} max={3600} aria-label="Shortest length in seconds" disabled={minLen === 0}
+              value={minLen || 30} style={{ width: 64 }}
+              onChange={(e) => set("min_length_seconds", Math.min(3600, Math.max(1, Math.round(Number(e.target.value)) || 1)))} />
+            <span className="set-note">seconds</span>
+          </label>
         </div>
-        <p className="sub" style={{ margin: "6px 0 0", fontSize: 12 }}>
-          Keeps clicks, test bounces and one-shot renders out of your Upload list. Nothing is deleted:
-          Upload can still show them, and automatic posting skips them.
-        </p>
-      </div>
+        <p className="set-note">Upload can still show them. Automatic posting always skips them.</p>
+      </SetRow>
 
-      <div className="card">
-        <h2>Upload defaults</h2>
-        <label className="field"><span>Title template</span>
-          <input type="text" value={draft.title_template}
-            onChange={(e) => set("title_template", e.target.value)} placeholder="{name}" /></label>
-        <label className="field"><span>Default release</span>
-          <select value={draft.default_sharing} onChange={(e) => set("default_sharing", e.target.value as Sharing)}>
-            <option value="public">Public</option><option value="private">Private</option>
-          </select></label>
-        <label className="field"><span>Genre</span>
-          <input type="text" value={draft.default_genre}
-            onChange={(e) => set("default_genre", e.target.value)} placeholder="e.g. House" /></label>
-        <label className="field"><span>Tags (comma-separated)</span>
-          <TagsInput tags={draft.default_tags} onChange={(t) => set("default_tags", t)} /></label>
-        <label className="field"><span>Add new posts to a playlist</span>
-          <select value={plValue} disabled={!account.connected}
-            onChange={(e) => {
-              const v = e.target.value;
-              set("auto_playlist", v === "genre" ? { mode: "genre", playlist_id: null }
-                : v.startsWith("pl:") ? { mode: "one", playlist_id: Number(v.slice(3)) } : { mode: "off", playlist_id: null });
-            }}>
-            <option value="off">No</option>
-            <option value="genre">A playlist for each genre</option>
-            {plRule.mode === "one" && plRule.playlist_id && !(playlists || []).some((p) => p.id === plRule.playlist_id) && (
-              <option value={plValue}>{playlists === null ? "Your playlist (loading…)" : "A playlist that's no longer there"}</option>)}
-            {(playlists || []).map((p) => <option key={p.id} value={`pl:${p.id}`}>{p.title}</option>)}
-          </select></label>
-        <p className="sub" style={{ margin: "-4px 0 12px", fontSize: 12 }}>
+      </>}
+      {tab === "soundcloud" && <>
+      <SetRow title={<>Accounts{ent.features.multi_account && !ent.beta && <ProBadge />}</>} help="The SoundCloud accounts Uploader posts to.">
+        <ConnectPanel account={account} onChange={onAccount} />
+      </SetRow>
+
+      </>}
+      {tab === "posts" && <>
+      <SetRow title="Public or private" help="Who can hear a new post. You can still change each one before it goes up.">
+        <Choice label="Public or private" value={draft.default_sharing} options={SHARING} onChange={(v) => set("default_sharing", v as Sharing)} />
+      </SetRow>
+      <SetRow title="Title" help={<>What each song is called on SoundCloud. <code>{"{name}"}</code> is the file name without the ending.</>}>
+        <input type="text" aria-label="Title" value={draft.title_template}
+          onChange={(e) => set("title_template", e.target.value)} placeholder="{name}" />
+      </SetRow>
+      <SetRow title="Genre and tags" help="Helps people find your songs on SoundCloud.">
+        <input type="text" aria-label="Genre" value={draft.default_genre}
+          onChange={(e) => set("default_genre", e.target.value)} placeholder="Genre, e.g. House" />
+        <TagsInput aria-label="Tags" tags={draft.default_tags} onChange={(t) => set("default_tags", t)} />
+      </SetRow>
+      <SetRow title="Description" help="The text under every new post.">
+        <textarea aria-label="Description" value={draft.default_description}
+          onChange={(e) => set("default_description", e.target.value)} />
+      </SetRow>
+      <SetRow title="Playlist" help="Add every new post to a playlist, whether you post it or it goes up by itself.">
+        <select aria-label="Playlist" value={plValue} disabled={!account.connected}
+          onChange={(e) => {
+            const v = e.target.value;
+            set("auto_playlist", v === "genre" ? { mode: "genre", playlist_id: null }
+              : v.startsWith("pl:") ? { mode: "one", playlist_id: Number(v.slice(3)) } : { mode: "off", playlist_id: null });
+          }}>
+          <option value="off">None</option>
+          <option value="genre">A playlist for each genre</option>
+          {plRule.mode === "one" && plRule.playlist_id && !(playlists || []).some((p) => p.id === plRule.playlist_id) && (
+            <option value={plValue}>{playlists === null ? "Your playlist (loading…)" : "A playlist that's no longer there"}</option>)}
+          {(playlists || []).map((p) => <option key={p.id} value={`pl:${p.id}`}>{p.title}</option>)}
+        </select>
+        {plRule.mode !== "off" && <p className="set-note">
           {plRule.mode === "genre"
-            ? "Each new song goes into the playlist named after its genre, made the first time one goes up. A private song never makes a public playlist."
-            : "Every song you post, by hand or automatically, is added to the end of that playlist. Nothing is ever taken out."}
-        </p>
-        <label className="field"><span>Default description</span>
-          <textarea value={draft.default_description}
-            onChange={(e) => set("default_description", e.target.value)} /></label>
-        <label className="toolchk toolchk--wrap" style={{ fontSize: 13 }}>
-          <input type="checkbox" checked={draft.changelog_comments !== false}
-            onChange={(e) => set("changelog_comments", e.target.checked)} />
-          Comment a timestamped changelog when a draft is re-bounced
-        </label>
-        <label className="toolchk toolchk--wrap" style={{ fontSize: 13, marginTop: 14 }}>
-          <input type="checkbox" checked={draft.cover_watermark !== false}
-            onChange={(e) => set("cover_watermark", e.target.checked)} />
-          Add a small LazyCreatives watermark to generated waveform covers
-        </label>
-        <label className="field" style={{ marginBottom: 0, marginTop: 12 }}>
-          <span>Waveform color</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <input type="color" value={draft.cover_waveform_color || "#86B3D3"}
-              onChange={(e) => set("cover_waveform_color", e.target.value)}
-              style={{ width: 44, height: 30, padding: 2, cursor: "pointer" }} aria-label="Waveform color" />
-            <span className="sub" style={{ margin: 0 }}>
-              Base hue for generated covers — bass renders darker, treble brighter.
-            </span>
-          </div>
-        </label>
-      </div>
-
-      <div className="card">
-        <h2>Templates {!canTemplates && <ProBadge />}</h2>
-        <p className="sub" style={{ marginTop: 0 }}>Saved metadata presets you can apply at upload time.</p>
+            ? "Each new song goes into the playlist named after its genre, made the first time one goes up. A private song never goes in a public playlist."
+            : "Each new song is added to the end of that playlist. Nothing is ever taken out."}
+        </p>}
+      </SetRow>
+      <SetRow title="What changed comments" help="When you post a new export of a draft, add a comment listing what changed, with the time.">
+        <OnOff label="What changed comments" on={draft.changelog_comments !== false} onChange={(on) => set("changelog_comments", on)} />
+      </SetRow>
+      <SetRow title={<>Saved sets{!canTemplates && <ProBadge />}</>} help="Titles, tags and genres you use often, saved to pick in one go on Upload.">
         {!canTemplates ? (
-          <div className="locked-note">Saved metadata templates are a Pro feature.</div>
+          <div className="locked-note">Saved sets are a Pro feature.</div>
         ) : (
           <div className="stack">
             {draft.templates.map((t, i) => (
@@ -280,122 +230,126 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   <label className="field"><span>Name</span>
                     <input type="text" value={t.name} onChange={(e) => setTemplate(i, { ...t, name: e.target.value })} /></label>
-                  <label className="field"><span>Release</span>
+                  <label className="field"><span>Public or private</span>
                     <select value={t.sharing} onChange={(e) => setTemplate(i, { ...t, sharing: e.target.value as Sharing })}>
                       <option value="public">Public</option><option value="private">Private</option>
                     </select></label>
-                  <label className="field"><span>Title template</span>
+                  <label className="field"><span>Title</span>
                     <input type="text" value={t.title_template} onChange={(e) => setTemplate(i, { ...t, title_template: e.target.value })} /></label>
                   <label className="field"><span>Genre</span>
                     <input type="text" value={t.genre} onChange={(e) => setTemplate(i, { ...t, genre: e.target.value })} /></label>
                 </div>
-                <label className="field"><span>Tags (comma-separated)</span>
+                <label className="field"><span>Tags</span>
                   <TagsInput tags={t.tags} onChange={(tags) => setTemplate(i, { ...t, tags })} /></label>
                 <div style={{ textAlign: "right" }}>
                   <Button kind="danger" sm onClick={() => removeTemplate(i)}>Remove</Button>
                 </div>
               </div>
             ))}
-            <Button kind="ghost" onClick={() => set("templates", [...draft.templates, { ...BLANK_TEMPLATE }])}>+ Add template</Button>
+            <div><Button sm onClick={() => set("templates", [...draft.templates, { ...BLANK_TEMPLATE }])}><Icon name="plus" />Add a saved set</Button></div>
           </div>
         )}
-      </div>
+      </SetRow>
 
-      <div className="card">
-        <h2>Automation {!canAuto && <ProBadge />}</h2>
-        <p className="sub" style={{ marginTop: 0 }}>Watch your folders and publish new renders automatically.</p>
-        <label className="field" style={{ opacity: canAuto ? 1 : 0.55 }}>
-          <span>Check every (minutes) — 0 = off</span>
-          <input type="number" min={0} max={44640} disabled={!canAuto}
-            value={draft.interval_minutes}
-            onChange={(e) => set("interval_minutes", Math.max(0, Number(e.target.value) || 0))} /></label>
-        <label className="field" style={{ opacity: canAuto ? 1 : 0.55 }}>
-          <span>Auto-uploads are released as</span>
-          <select value={draft.auto_upload_sharing} disabled={!canAuto}
-            onChange={(e) => set("auto_upload_sharing", e.target.value as Sharing)}>
-            <option value="private">Private (recommended)</option><option value="public">Public</option>
-          </select></label>
-        <label className="toolchk toolchk--wrap" style={{ fontSize: 13, marginTop: 12 }}>
-          <input type="checkbox" checked={draft.auto_cover ?? false} disabled={!canAuto}
-            onChange={(e) => set("auto_cover", e.target.checked)} />
-          Give automatic posts a waveform cover
-        </label>
-        <p className="sub" style={{ margin: "6px 0 0", fontSize: 12 }}>
-          Songs posted by the folder check or as drafts get a cover drawn from the song itself, in your waveform
-          colour. Off unless you tick it. Songs you post from Upload keep the cover you see there.
-        </p>
-        <label className="toolchk toolchk--wrap" style={{ fontSize: 13, marginTop: 12 }}>
-          <input type="checkbox" checked={draft.auto_new_versions ?? true} disabled={!canAuto}
-            onChange={(e) => set("auto_new_versions", e.target.checked)} />
-          Post new versions of private songs by themselves
-        </label>
-        <p className="sub" style={{ margin: "6px 0 0", fontSize: 12 }}>
-          When you re-export a song that's up as private, the new version goes up with the same title, cover,
-          details and playlists. The old one stays until you remove it in Your tracks. Public songs always wait
-          for you to press Update on Upload.
-        </p>
-        {!canAuto && <div className="locked-note">Automatic watch-folder uploads are a Pro feature.</div>}
-      </div>
+      </>}
+      {tab === "auto" && <>
+      <SetRow title={<>Automatic posting{!canAuto && <ProBadge />}</>} help="Leave the app open and it looks in your folders for new songs and posts them.">
+        <Choice label="Automatic posting" value={draft.interval_minutes} options={every} disabled={!canAuto}
+          onChange={(m) => set("interval_minutes", m)} />
+        {!canAuto && <div className="locked-note">Automatic posting is a Pro feature.</div>}
+      </SetRow>
+      <SetRow title="Posts go up as" help="Private is safest: you can listen first, then make it public.">
+        <Choice label="Posts go up as" value={draft.auto_upload_sharing} options={SHARING} disabled={!canAuto}
+          onChange={(v) => set("auto_upload_sharing", v as Sharing)} />
+      </SetRow>
+      <SetRow title="Waveform cover" help="Songs that go up by themselves get a cover drawn from the song, in your waveform colour. Songs you post from Upload keep the cover you see there.">
+        <OnOff label="Waveform cover" on={draft.auto_cover ?? false} disabled={!canAuto} onChange={(on) => set("auto_cover", on)} />
+      </SetRow>
+      <SetRow title="New versions" help="When you re-export a private song, post the new version with the same title, cover, details and playlists. The old one stays until you remove it. Public songs always wait for you to press Update.">
+        <OnOff label="New versions" on={draft.auto_new_versions ?? true} disabled={!canAuto} onChange={(on) => set("auto_new_versions", on)} />
+      </SetRow>
 
-      <div className="card">
-        <h2>App</h2>
-        <label className="toolchk toolchk--wrap" style={{ fontSize: 13 }}>
-          <input type="checkbox" checked={atLogin} onChange={(e) => toggleLogin(e.target.checked)} />
-          Open Uploader when the computer starts
-        </label>
-        <label className="toolchk toolchk--wrap" style={{ fontSize: 13, marginTop: 8 }}>
-          <input type="checkbox" checked={pauseMin} onChange={(e) => { keep(PAUSE_ON_MINIMIZE, e.target.checked); setPauseMin(e.target.checked); }} />
-          Pause the music when the window is minimized
-        </label>
-      </div>
+      </>}
+      {tab === "look" && <>
+      <SetRow title="Light or dark" help="Dark ink or light paper. Match my computer follows your computer's own setting.">
+        <ThemePicker />
+      </SetRow>
+      <SetRow title="Rating mark" help="What ratings are drawn with. Rate a track from its row in Your tracks, or right-click it.">
+        <GlyphPicker />
+      </SetRow>
+      <SetRow title="Row spacing" help="How tall the rows are in Your tracks and History.">
+        <Choice label="Row spacing" value={rows} options={DENSITIES.map((d) => [d.key, d.label] as const)}
+          onChange={(k) => { setTrackRows(k); setHistoryRows(k); }} />
+      </SetRow>
+      <SetRow title="Preview on hover" help="Point at a song in a list to hear a few seconds of it.">
+        <OnOff label="Preview on hover" on={preview} onChange={setPreview} />
+      </SetRow>
+      <SetRow title="Your pictures" help="Put your own pictures on covers: behind the drawing, or as the whole cover. Each mix goes up with the cover it shows here. Change one mix by right-clicking it on Upload.">
+        <CoverShelf sample="Your mix" what="mix" />
+      </SetRow>
+      <SetRow title="Waveform colour" help="The colour of covers drawn from a song. Low sounds come out darker, high sounds brighter.">
+        <div className="set-inline">
+          <input type="color" value={draft.cover_waveform_color || "#86B3D3"}
+            onChange={(e) => set("cover_waveform_color", e.target.value)}
+            style={{ width: 44, height: 30, padding: 2, cursor: "pointer" }} aria-label="Waveform colour" />
+          <span className="set-note mono">{(draft.cover_waveform_color || "#86B3D3").toUpperCase()}</span>
+        </div>
+      </SetRow>
+      <SetRow title="Lazy Creatives mark" help="A small Lazy Creatives mark in the corner of covers drawn from a song.">
+        <OnOff label="Lazy Creatives mark" on={draft.cover_watermark !== false} onChange={(on) => set("cover_watermark", on)} />
+      </SetRow>
 
-      <div className="card">
-        <h2>What it does</h2>
-        <p className="sub" style={{ marginTop: 0 }}>
-          Uploader posts your mixes to SoundCloud without doubles and lets you manage every track from one place.
-          It only reads your audio files; it never changes them.
-        </p>
-        <p className="faint" style={{ margin: 0, fontSize: 12 }}>Lazy Creatives · Looks lazy. Works obsessively.</p>
-      </div>
+      </>}
+      {tab === "privacy" && <>
+      <p className="set-intro">Your music stays yours. Here is everything Uploader touches, and everything that leaves your computer.</p>
+      <SetRow title="Your files" help="Your mixes and exported songs.">
+        <p className="set-about">Uploader only reads them. It never moves, changes or deletes a file. Covers it draws and pictures you add are kept in its own folder.</p>
+      </SetRow>
+      <SetRow title="Your SoundCloud login" help="How Uploader stays signed in.">
+        <p className="set-about">{account.login_storage ? LOGIN_STORAGE[account.login_storage] : "Your SoundCloud login is kept on this computer, encrypted when your computer offers a safe place for it."} Signing in passes through a small Lazy Creatives helper that holds the app's SoundCloud key. It never saves your login.</p>
+      </SetRow>
+      <SetRow title="What leaves your computer" help="No tracking, no adverts.">
+        <p className="set-about">The songs you post, with their details and covers, go to your SoundCloud. Checking for updates asks GitHub for the newest version number. Nothing else is sent.</p>
+      </SetRow>
+      <SetRow title="Something not working?"
+        help="Opens a short report on GitHub with your app version and computer type filled in. You read it before you send it. If the app ever crashes, it offers the same report the next time it opens.">
+        <Button sm onClick={() => (window as any).lazyupload?.reportProblem?.()}>Report a problem</Button>
+      </SetRow>
 
-      <div className="card">
-        <h2>Updates</h2>
-        <p className="sub" style={{ marginTop: 0 }}>The app checks for a new version on its own. Press the button to check right now.</p>
+      </>}
+      {tab === "app" && <>
+      <SetRow title="Start with your computer" help="Opens Uploader when you log in, so automatic posting keeps running.">
+        <OnOff label="Start with your computer" on={atLogin} onChange={toggleLogin} />
+      </SetRow>
+      <SetRow title="Pause when minimized" help="Stops the music when you minimize the window. Press play to carry on.">
+        <OnOff label="Pause when minimized" on={pauseMin} onChange={(on) => { keep(PAUSE_ON_MINIMIZE, on); setPauseMin(on); }} />
+      </SetRow>
+
+      <SetRow title="What it does" help="Lazy Creatives. Looks lazy. Works obsessively.">
+        <p className="set-about">Uploader posts your mixes to SoundCloud without doubles and lets you manage every track from one place. It only reads your audio files; it never changes them.</p>
+      </SetRow>
+      <SetRow title="Updates" help="The app checks for a new version by itself. Press Check for updates to look right now.">
         <UpdateCheck />
-      </div>
-
-      <div className="card">
-        <h2>Something not working?</h2>
-        <p className="sub" style={{ marginTop: 0 }}>
-          Opens a short report on GitHub with your app version and computer type filled in. You read it before you send it.
-          If the app ever crashes, it offers the same report the next time it opens.
-        </p>
-        <div><Button sm onClick={() => (window as any).lazyupload?.reportProblem?.()}>Report a problem</Button></div>
-      </div>
-
-
-      {!ent.beta && <div className="card">
-        <h2>Plan</h2>
-        {ent.tier === "free" ? (
-          <>
-            <p className="sub" style={{ marginTop: 0 }}>
-              You’re on <b>Free</b>. Pro unlocks auto-upload, batch publishing, multiple
-              accounts, saved templates, and scheduled release.
-            </p>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input type="text" placeholder="Licence key" value={licenseKey}
-                onChange={(e) => setLicenseKey(e.target.value)} style={{ flex: 1 }} />
-              <Button kind="primary" onClick={activate} disabled={!licenseKey.trim()}>Activate</Button>
-            </div>
-            {licenseError && <div className="locked-note" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}>{licenseError}</div>}
-          </>
-        ) : (
-          <div className="row-spread">
-            <div><span className="pill pill--ok">{ent.tier} plan</span> All features unlocked.</div>
-            <Button sm onClick={deactivate}>Deactivate</Button>
-          </div>
-        )}
-      </div>}
+      </SetRow>
+      {!ent.beta && (
+        <SetRow title="Plan" help="Pro unlocks automatic posting, posting many at once, more accounts, saved sets and timed releases.">
+          {ent.tier === "free" ? (
+            <>
+              <p className="set-about">You’re on <b>Free</b>.</p>
+              <div className="set-inline">
+                <input type="text" placeholder="Licence key" value={licenseKey}
+                  onChange={(e) => setLicenseKey(e.target.value)} style={{ flex: 1, maxWidth: 360 }} />
+                <Button kind="primary" onClick={activate} disabled={!licenseKey.trim()}>Activate</Button>
+              </div>
+              {licenseError && <p className="set-note set-note--bad">{licenseError}</p>}
+            </>
+          ) : (
+            <div className="set-inline"><span className="pill pill--ok">{ent.tier} plan</span> All features unlocked.<Button sm onClick={deactivate}>Deactivate</Button></div>
+          )}
+        </SetRow>
+      )}
+      </>}
+      </SetPanel>
     </div>
   );
 }

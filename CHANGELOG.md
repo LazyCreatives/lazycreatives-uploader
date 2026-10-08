@@ -14,7 +14,14 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
-## Unreleased
+## 0.2.9 (8 October 2026)
+
+### Better
+- **The Genre and Year columns view on Your tracks is redone.** It matches the rest of the app: ratings show on every row and can be set right there, a new Favourites section (Rated) sits above the genres, and each track says Public or Private in words.
+- **Settings in tabs.** Settings is split into short tabs: Folders, SoundCloud, New posts, Automatic, Look, Privacy and App, laid out in rows like Backups, and opens on the one you used last. The new Privacy tab says plainly what Uploader reads, how your SoundCloud login is kept and what leaves your computer. On/Off buttons replace tick boxes, Off / Hourly / Daily buttons replace the minutes box, and the wording is plain throughout.
+
+### Fixed
+- **The Delete button on Your tracks is back in view.** At the normal window size the row ran past the edge, hiding the bin button when you point at a track.
 
 ## 0.2.8 (8 October 2026)
 

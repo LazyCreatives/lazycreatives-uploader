@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { makeApi, openExternal, pickImage, readImage, revealPath } from "../api";
 import { askConfirm, CopyButton, Exit, openMenu, type MenuItem } from "../components/Desktop";
-import { Rating, ratingMenu } from "../components/Marks";
+import { FILLED, Rating, ratingMenu } from "../components/Marks";
 import { ratingOf, useDensity, useRatings } from "../marks";
 import { pickCrateColor } from "../components/GenrePick";
 import { copyText, keep, recall } from "../desktop";
@@ -217,6 +217,9 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
     const inGenre = active.genre ? applyFilters(pool, { ...NO_FILTERS, genre: active.genre }).length : pool.length;
     return { ...facets(pool, (t) => t.genre, yearOf, active.genre), total: pool.length, inGenre };
   }, [tracks, active, rated]);
+  // Favourites over the genres: how many of what the other filters leave are rated.
+  const ratedCount = useMemo(() => applyFilters(tracks || [], { ...active, rated: Math.max(1, active.rated) }).length, [tracks, active, rated]);
+  const { glyph } = useRatings();
 
   // Lower-quality duplicate copies (e.g. the MP3 when a FLAC of the same title exists).
   const lossyDupes = useMemo(
@@ -611,7 +614,11 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
       {columns && (tracks || []).length > 0 && (
         <ColumnBrowse genres={browse.genres} years={browse.years} total={browse.total} inGenre={browse.inGenre}
           genre={filters.genre} year={filters.year} yearTitle="Year posted" noun={`Tracks (${fmtCount(filtered.length)})`}
-          onGenre={(g) => setFilters({ genre: g, year: "" })} onYear={(y) => setFilters({ year: y })}>
+          onGenre={(g) => setFilters({ genre: g, year: "" })} onYear={(y) => setFilters({ year: y })}
+          marks={[{ key: "rated", label: filters.rated > 1 ? `Rated ${filters.rated}${filters.rated < 5 ? " and up" : ""}` : "Rated", icon: FILLED[glyph], tone: "rate",
+            n: ratedCount, on: filters.rated > 0, onToggle: () => setFilters({ rated: filters.rated ? 0 : 1 }) }]}
+          cols="36px minmax(0, 1fr) 80px 76px" narrowCols="36px minmax(0, 1fr) 80px 10px"
+          heads={["Rating", <span className="browse__headwide">Sharing</span>]}>
           {filtered.length === 0 ? <p className="browse__empty">No tracks here. Pick another genre or year.</p>
             : <>
               {filtered.slice(0, columnShown).map((t) => (
@@ -840,17 +847,20 @@ const ColumnItem = memo(function ColumnItem({ track: t, defaultArt, actions }: {
   useGenreColors();  // a crate colour picked elsewhere redraws the stripe
   const meta = songMeta(t, artFor(t, defaultArt).src);
   return (
-    <button type="button" className="browse__item" data-nav-key={String(t.id)}
-      onClick={() => actions.edit(t)} onContextMenu={(e) => actions.menu(e, t)}>
+    <div role="button" tabIndex={0} className="browse__item" data-nav-key={String(t.id)}
+      onClick={() => actions.edit(t)} onKeyDown={rowKey(() => actions.edit(t))} onContextMenu={(e) => actions.menu(e, t)}>
       <span className="stripe" style={{ background: genreColor(t.genre) }} />
-      <Art meta={meta} size={28} />
+      <Art meta={meta} size={36} />
       <span className="browse__itemtext">
         <span className="lib-name" title={t.title}>{t.title}</span>
-        <span className="lib-sub">{[t.duration ? fmtDuration(t.duration) : "", t.playback_count != null ? `${t.playback_count.toLocaleString()} plays` : "", yearOf(t)].filter(Boolean).join(" · ")}</span>
+        <span className="lib-sub">{[t.genre || "", t.duration ? fmtDuration(t.duration) : "", t.playback_count != null ? `${t.playback_count.toLocaleString()} plays` : "", yearOf(t)].filter(Boolean).join(" · ")}</span>
       </span>
-      <Rating id={rateKey(t)} name={t.title} size={11} readOnly />
-      <span className={`dot ${isPrivate(t) ? "" : "dot--ok"}`} title={isPrivate(t) ? "Private" : "Public"} />
-    </button>
+      <Rating id={rateKey(t)} name={t.title} size={13} />
+      <span className="browse__state" title={isPrivate(t) ? "Private" : "Public"}>
+        <span className={`dot ${isPrivate(t) ? "" : "dot--ok"}`} />
+        <span className="browse__stateword col-trunc">{isPrivate(t) ? "Private" : "Public"}</span>
+      </span>
+    </div>
   );
 });
 
