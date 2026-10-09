@@ -14,6 +14,16 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## Unreleased
+
+## 0.2.10 (9 October 2026)
+
+### New
+- **Easier reading.** A new switch in Settings > Look for dyslexia or tired eyes: a clearer font (Atkinson Hyperlegible, or OpenDyslexic if you prefer it), more space between letters and words, bigger text, no capital-letter labels and less movement. Text size, spacing, font and a soft colour tint can each be changed, and lists stay lined up in columns.
+
+### Better
+- **Many more genres, in groups.** The genre box now lists 95 genres in ten groups that follow Splice's families, from Jerk, Rage, Plugg and UK drill to Jump up, Liquid and Neurofunk in a Drum & bass group, IDM, Experimental, Amapiano, Metal and Game music. Each one gets its own SoundCloud tag suggestions. Genres you set or typed yourself stay as they are.
+
 ## 0.2.9 (8 October 2026)
 
 ### Better

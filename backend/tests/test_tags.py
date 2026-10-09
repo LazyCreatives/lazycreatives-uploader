@@ -39,3 +39,18 @@ def test_seo_attaches_genre_appropriate_suggested_tags():
     # the tag hint now names real tags
     tag_hint = next(c["hint"] for c in r["checks"] if c["id"] == "tags")
     assert "try" in tag_hint
+
+
+def test_every_built_in_genre_has_its_own_tags():
+    # the genres the apps list (electron/src/look.ts GENRE_GROUPS): none falls back to the generic set
+    import re
+    from pathlib import Path
+    look = (Path(__file__).resolve().parents[2] / "electron" / "src" / "look.ts").read_text(encoding="utf-8")
+    groups = look[look.index("GENRE_GROUPS"):look.index("const GENRE_COLORS")]
+    built_in = re.findall(r'\["([^"]+)", "#', groups)
+    assert len(built_in) > 80
+    for g in built_in:
+        assert tags._resolve(g), g
+    assert tags.suggest_tags("Deep house", limit=1) == ["deep house"]
+    assert tags.suggest_tags("Amapiano", limit=1) == ["amapiano"]
+    assert tags.suggest_tags("Jerk", limit=1) == ["jerk"]

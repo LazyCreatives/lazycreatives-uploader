@@ -1,7 +1,7 @@
 {
   "name": "lazycreatives-uploader",
   "productName": "LazyCreatives Uploader",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "LazyCreatives Uploader — automatically publish your finished mixes to SoundCloud",
   "main": "electron/main.js",
   "scripts": {
@@ -100,7 +100,9 @@
     "wait-on": "^8.0.0"
   },
   "dependencies": {
+    "@fontsource/atkinson-hyperlegible-next": "^5.3.0",
     "@fontsource/bebas-neue": "^5.3.0",
+    "@fontsource/opendyslexic": "^5.3.0",
     "@fontsource/schibsted-grotesk": "^5.3.0",
     "@number-flow/react": "^0.6.2",
     "electron-updater": "^6.8.9"

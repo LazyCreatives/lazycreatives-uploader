@@ -8,6 +8,7 @@ import { Folders } from "../components/Folders";
 import { Icon } from "../components/Icon";
 import { ConnectPanel } from "../components/Connect";
 import { ThemePicker } from "../components/LookPicker";
+import { ReadingSettings } from "../components/ReadingSettings";
 import { GlyphPicker } from "../components/Marks";
 import { DENSITIES, useDensity } from "../marks";
 import { Choice, OnOff, SetPanel, SetRow, SetTabs, useSettingsTab } from "../components/SetRow";
@@ -274,6 +275,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
       <SetRow title="Light or dark" help="Dark ink or light paper. Match my computer follows your computer's own setting.">
         <ThemePicker />
       </SetRow>
+      <ReadingSettings />
       <SetRow title="Rating mark" help="What ratings are drawn with. Rate a track from its row in Your tracks, or right-click it.">
         <GlyphPicker />
       </SetRow>
