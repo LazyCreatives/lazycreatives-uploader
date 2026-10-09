@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { LcBrand } from "./LcBrand";
 import { Icon, type IconName } from "./Icon";
 import { openPalette } from "./Palette";
@@ -18,6 +18,22 @@ const ITEMS: { key: Tab; label: string; icon: IconName }[] = [
   { key: "settings", label: "Settings", icon: "settings" },
 ];
 
+// Below 880px wide the sidebar shows icons only (lazy-ui.css): each one then needs
+// its name as a tooltip. Screen readers get the name at every width.
+const ICONS_ONLY = "(max-width: 880px)";
+function useIconsOnly(): boolean {
+  const [on, setOn] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.(ICONS_ONLY).matches);
+  useEffect(() => {
+    const m = window.matchMedia?.(ICONS_ONLY);
+    if (!m) return;
+    const f = () => setOn(m.matches);
+    f();
+    m.addEventListener("change", f);
+    return () => m.removeEventListener("change", f);
+  }, []);
+  return on;
+}
+
 export function Nav({ tab, busy, onNavigate, account, tier, beta = false, onOpenRecent, openId, signIn }: {
   tab: Tab; busy: boolean; onNavigate: (t: Tab) => void;
   account: string | null; tier: string; beta?: boolean;
@@ -26,6 +42,7 @@ export function Nav({ tab, busy, onNavigate, account, tier, beta = false, onOpen
   signIn?: { signedOut: boolean; waiting: ReactNode; busy: boolean; start: () => void };
 }) {
   const out = !!signIn?.signedOut;
+  const iconsOnly = useIconsOnly();
   const plan = beta ? "free beta" : tier === "free" ? "free plan" : `${tier} plan`;
   return (
     <nav className="nav">
@@ -37,6 +54,7 @@ export function Nav({ tab, busy, onNavigate, account, tier, beta = false, onOpen
         <button key={it.key}
           className={`nav__item${tab === it.key ? " nav__item--active" : ""}`}
           aria-current={tab === it.key ? "page" : undefined}
+          aria-label={it.label} title={iconsOnly ? it.label : undefined}
           onClick={() => onNavigate(it.key)}>
           <Icon name={it.icon} className="nav__icon" />
           <span className="nav__label">{it.label}</span>
@@ -48,6 +66,7 @@ export function Nav({ tab, busy, onNavigate, account, tier, beta = false, onOpen
       <NarrowWindowButton />
       {out && signIn && (
         <button type="button" className="nav__item nav__signin" onClick={signIn.start} disabled={signIn.busy}
+          aria-label={signIn.busy ? "Waiting for browser" : "Sign in again"}
           title="SoundCloud signed you out. Sign in again to post and edit your tracks.">
           <Icon name="alert" className="nav__icon" />
           <span className="nav__label">{signIn.busy ? "Waiting for browser…" : "Sign in again"}</span>
@@ -69,7 +88,7 @@ export function Nav({ tab, busy, onNavigate, account, tier, beta = false, onOpen
 // Same in Backups and Uploader.
 export function NarrowWindowButton() {
   return (
-    <button type="button" className="nav__item nav__narrow" onClick={openCompanion}
+    <button type="button" className="nav__item nav__narrow" onClick={openCompanion} aria-label="Narrow window"
       title={`A narrow window to keep beside your music program (${COMPANION_KEYS})`}>
       <Icon name="narrow" className="nav__icon" />
       <span className="nav__label">Narrow window</span>

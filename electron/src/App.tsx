@@ -184,7 +184,7 @@ export default function App() {
       setViewKey((k) => k + 1);
       toast(fresh.length === 1 ? `Now watching ${baseName(fresh[0])}.` : `Now watching ${fresh.length} more folders.`, goUpload);
     } catch {
-      toastWarn("Couldn’t add that folder. Try Add folder in Settings.");
+      toastWarn("Couldn’t add that folder. Try Add folder in Settings > Folders.");
     }
   }
   // A mix dropped on the narrow window: Upload opens with it ticked, ready to post. Its
@@ -200,7 +200,7 @@ export default function App() {
         setCfg(await api.saveSettings({ ...cfg, sources: [...cfg.sources, ...fresh] }));
         toast(fresh.length === 1 ? `Now watching ${baseName(fresh[0])} as well.` : `Now watching ${fresh.length} more folders.`);
       } catch {
-        toastWarn("Couldn’t add that mix’s folder. Try Add folder in Settings.");
+        toastWarn("Couldn’t add that mix’s folder. Try Add folder in Settings > Folders.");
         return;
       }
     }

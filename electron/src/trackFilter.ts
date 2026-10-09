@@ -91,7 +91,7 @@ export function applyFilters(tracks: Track[], f: TrackFilters, skipPrivacy = fal
     if (f.score === "low" && !((t.seo?.score ?? 100) < LOW_SCORE)) return false;
     if (f.score === "good" && !((t.seo?.score ?? -1) >= LOW_SCORE)) return false;
     if (f.dupes && !((t.dupe_count ?? 0) > 1)) return false;
-    if (f.year && yearOf(t) !== f.year) return false;
+    if (f.year && (yearOf(t) || "-") !== f.year) return false;
     if (f.rated && ratingOf(`sc:${t.id}`) < f.rated) return false;
     if (q && !fuzzyScore(q, [t.title, t.genre, ...(t.tags || []), t.project_match, t.daw ? dawName(t.daw) : null])) return false;
     return true;
@@ -148,7 +148,7 @@ export function describeFilters(f: TrackFilters): string {
   const band = BPM_BANDS.find((b) => b.key === f.bpm);
   const project: Record<ProjectFilter, string> = { any: "", linked: "Has a project", backedup: "Backed up", missing: "Missing samples", unlinked: "No project" };
   const parts = [
-    f.q.trim() ? `“${f.q.trim()}”` : "", f.genre === "-" ? "No genre" : f.genre, f.year, band ? `${band.label} BPM` : "",
+    f.q.trim() ? `“${f.q.trim()}”` : "", f.genre === "-" ? "No genre" : f.genre, f.year === "-" ? "No date" : f.year, band ? `${band.label} BPM` : "",
     f.daw ? dawName(f.daw) : "", f.rated ? `${f.rated}+ rated` : "",
     f.privacy === "all" ? "" : f.privacy === "public" ? "Public" : "Private", project[f.project],
     f.score === "low" ? "Hard to find" : f.score === "good" ? "Easy to find" : "", f.dupes ? "Posted twice" : "",

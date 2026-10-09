@@ -165,7 +165,7 @@
    and project columns give way first (the waveform never narrower than its heading,
    and the row never wider than the window so the hover buttons stay in view) */
 /* stripe · tick · play · cover · track · rating · waveform · from project · plays · score · privacy · actions */
-.track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) 78px minmax(62px, 1fr) minmax(104px, 1fr) 56px 64px 92px; }
+.track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) 80px minmax(62px, 1fr) minmax(88px, 1fr) 56px 64px 92px; }
 .table--crate .track-cols .mixrow__check { margin: 0; }
 /* narrower windows: rating, waveform and project step out (the project shows in the edit panel) */
 @media (max-width: 1099px) {

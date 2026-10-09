@@ -561,7 +561,7 @@ function AddSongs({ a, app }: { a: Album; app: AlbumsProps["app"] }) {
       {all === null && <div className="faint alb__wait">Looking for your songs…</div>}
       {all && all.length === 0 && !err && <div className="faint alb__wait">{app === "backups"
         ? "No exported songs found yet. Songs show here once they're linked to a project in the Library."
-        : "No songs in your watched folders yet. Add a folder in Settings."}</div>}
+        : "No songs in your watched folders yet. Add a folder in Settings > Folders."}</div>}
       {all && all.length > 0 && left.length === 0 && <div className="faint alb__wait">Every song is on this album.</div>}
       {left.length > 0 && shown.length === 0 && <div className="faint alb__wait">Nothing matches “{q}”.</div>}
       <div className="alb-add__list">

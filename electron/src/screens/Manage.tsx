@@ -18,7 +18,7 @@ import {
 } from "../trackFilter";
 import { rowKey, useDialogFocus } from "../components/a11y";
 import { SmartBar } from "../components/SmartBar";
-import { ColumnBrowse, FacetChips, NO_GENRE, facets } from "../components/Browse";
+import { ColumnBrowse, FacetChips, NO_GENRE, facets, openFromRow } from "../components/Browse";
 import { TrackPlaylists, pickPlaylist } from "../components/PlaylistPick";
 import { NoteOpened } from "../components/Recents";
 import "../manage.css";
@@ -82,7 +82,7 @@ export function mergeEnriched(prev: Track, next: Track): Track {
 function friendlyError(msg: string): string {
   const m = msg.toLowerCase();
   if (m.includes("signed you out") || m.includes("sign in again")) return "SoundCloud signed you out. Sign in again from the sidebar.";
-  if (m.includes("connect a soundcloud")) return "Connect SoundCloud in Settings to see your tracks here.";
+  if (m.includes("connect a soundcloud")) return "Connect SoundCloud in Settings > SoundCloud to see your tracks here.";
   return msg;
 }
 
@@ -619,7 +619,10 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
             n: ratedCount, on: filters.rated > 0, onToggle: () => setFilters({ rated: filters.rated ? 0 : 1 }) }]}
           cols="36px minmax(0, 1fr) 80px 76px" narrowCols="36px minmax(0, 1fr) 80px 10px"
           heads={["Rating", <span className="browse__headwide">Sharing</span>]}>
-          {filtered.length === 0 ? <p className="browse__empty">No tracks here. Pick another genre or year.</p>
+          {filtered.length === 0 ? (filters.rated > 0
+              ? <div className="browse__empty">Nothing rated here.{" "}
+                  <button type="button" className="linkbtn" onClick={() => setFilters({ rated: 0 })}>Show every track</button></div>
+              : <p className="browse__empty">No tracks here. Pick another genre or year.</p>)
             : <>
               {filtered.slice(0, columnShown).map((t) => (
                 <ColumnItem key={t.id} track={t} defaultArt={defaultArt} actions={rowActions} />
@@ -847,14 +850,14 @@ const ColumnItem = memo(function ColumnItem({ track: t, defaultArt, actions }: {
   useGenreColors();  // a crate colour picked elsewhere redraws the stripe
   const meta = songMeta(t, artFor(t, defaultArt).src);
   return (
-    <div role="button" tabIndex={0} className="browse__item" data-nav-key={String(t.id)}
-      onClick={() => actions.edit(t)} onKeyDown={rowKey(() => actions.edit(t))} onContextMenu={(e) => actions.menu(e, t)}>
+    <div className="browse__item" data-nav-key={String(t.id)}
+      onClick={openFromRow(() => actions.edit(t))} onContextMenu={(e) => actions.menu(e, t)}>
       <span className="stripe" style={{ background: genreColor(t.genre) }} />
       <Art meta={meta} size={36} />
-      <span className="browse__itemtext">
+      <button type="button" className="browse__itemtext browse__open" onClick={() => actions.edit(t)}>
         <span className="lib-name" title={t.title}>{t.title}</span>
         <span className="lib-sub">{[t.genre || "", t.duration ? fmtDuration(t.duration) : "", t.playback_count != null ? `${t.playback_count.toLocaleString()} plays` : "", yearOf(t)].filter(Boolean).join(" · ")}</span>
-      </span>
+      </button>
       <Rating id={rateKey(t)} name={t.title} size={13} />
       <span className="browse__state" title={isPrivate(t) ? "Private" : "Public"}>
         <span className={`dot ${isPrivate(t) ? "" : "dot--ok"}`} />

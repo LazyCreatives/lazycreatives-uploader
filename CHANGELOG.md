@@ -16,6 +16,18 @@ How to keep this up to date:
 
 ## Unreleased
 
+## 0.2.11 (9 October 2026)
+
+### Better
+- **Find a genre by typing.** The genre box now has a search: type "liq" or "dnb" and pick from what matches, with your own genres on top. A name that isn't listed can be used as it is.
+- **Tidier Genre and Year columns.** Long genre names end in "…" and show whole when you point at them, the genre's colour stripe stays put on the one you picked, the Rating and Sharing headings stay over their columns, tracks with no date get a "No date" year, and "Nothing rated here" offers to show every track.
+- **Settings fits a mid-size window.** Between the normal and the narrow window the setting names take less room, so rows of buttons no longer wrap. Messages that send you to Settings now say which tab.
+- **Easier with the keyboard and a screen reader.** On/Off buttons move with the arrow keys, Settings tabs jump with Home and End, every track in the columns view can be opened by its name, and Public or Private is still read out (and shown by shape) in the narrow window.
+
+### Fixed
+- **The side menu has names in the narrow window.** When only the icons show, pointing at one shows its name, and screen readers say it.
+- **The Delete button on Your tracks fits at the normal window size**, even when the page has a scrollbar.
+
 ## 0.2.10 (9 October 2026)
 
 ### New

@@ -585,7 +585,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     : m.superseded_by
       ? <span className="pill pill--skipped">Using {m.superseded_by}</span>
       : m.short
-      ? <span className="pill pill--skipped" title="Shorter than the minimum length in Settings. Tick it to post it anyway.">Short</span>
+      ? <span className="pill pill--skipped" title="Shorter than the minimum length in Settings > Folders. Tick it to post it anyway.">Short</span>
       : m.stem
       ? <span className="pill pill--skipped" title="One part of a song (a kick, the vocals), not the whole song. Tick it to post it anyway.">Stem</span>
       : m.wip
@@ -799,7 +799,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
           )}
           {shortCount > 0 && (
             <label className="toolchk up-opt up-opt--end"
-              title="Exports shorter than the minimum length in Settings, like clicks and test bounces">
+              title="Exports shorter than the minimum length in Settings > Folders, like clicks and test bounces">
               <input type="checkbox" checked={showShort} onChange={(e) => setShowShort(e.target.checked)} />
               Show {fmtCount(shortCount)} short {shortCount === 1 ? "file" : "files"}
             </label>
@@ -822,7 +822,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
 
       {mixes && mixes.length === 0 && (
         <div className="table"><EmptyState pose="empty-crate" title="No mixes in your watched folders yet" say="Empty crate. Nothing to post.">
-          Export a mix into one of them, or add the folder you export into in Settings.
+          Export a mix into one of them, or add the folder you export into in {"Settings > Folders"}.
         </EmptyState></div>
       )}
 
