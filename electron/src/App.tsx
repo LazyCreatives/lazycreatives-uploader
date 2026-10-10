@@ -18,6 +18,7 @@ import { Upload } from "./screens/Upload";
 import { History } from "./screens/History";
 import { Playlists } from "./screens/Playlists";
 import { Albums } from "./components/Albums";
+import { albumSync, syncById } from "./albumSync";
 import { PlaylistPickHost } from "./components/PlaylistPick";
 import { loadPlaylists, playlistPlace, playlistsNow, songOnPlaylist } from "./playlists";
 import { Settings } from "./screens/Settings";
@@ -85,6 +86,19 @@ export default function App() {
   // a track opens in a panel over its list, so the list stays where it was underneath
   const openTrack = (id: string) => nav.go({ tab: "manage", sub: id }, { overlay: true });
   const openPlaylist = (id: number | "new") => setTab("playlists", String(id));
+  // Links from Backups: lazycreatives-uploader://album/<id>?sync=1 opens that album
+  // here and syncs it to SoundCloud (see openLink in electron/main.js).
+  useEffect(() => {
+    const b = (window as any).lazyupload;
+    const handle = (url: string | null) => {
+      const m = url ? /^lazycreatives-uploader:\/\/album\/([\w-]+)(\?sync=1)?/.exec(url) : null;
+      if (!m) return;
+      setTab("albums", m[1]);
+      if (m[2]) void syncById(m[1]);
+    };
+    void b?.takeOpenLink?.().then(handle);
+    return b?.onOpenLink?.(handle);
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
   // A song clicked on a playlist opens in the same panel, over the playlist; closing
   // it steps back to the playlist.
   const onPlaylist = playlistPlace(tab === "playlists" ? sub : null);
@@ -316,7 +330,7 @@ export default function App() {
               <Playlists open={onPlaylist.open} song={onPlaylist.track} onOpen={openPlaylist} onClose={() => setTab("playlists")}
                 onOpenTrack={openPlaylistSong} onCloseTrack={closePlaylistSong} />
             ) : tab === "albums" ? (
-              <Albums app="uploader" oneLook open={sub} onOpen={(id) => setTab("albums", id)} onClose={() => setTab("albums")}
+              <Albums app="uploader" oneLook sync={albumSync} open={sub} onOpen={(id) => setTab("albums", id)} onClose={() => setTab("albums")}
                 metaFor={(s, a, i) => ({ title: s.title, sub: `${a.title} · ${i + 1} of ${a.songs.length}`, cover: s.project || s.title, genre: s.genre || null })} />
             ) : tab === "history" ? (
               <History />

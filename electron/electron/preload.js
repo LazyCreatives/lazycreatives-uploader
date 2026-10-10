@@ -48,6 +48,13 @@ contextBridge.exposeInMainWorld("lazyupload", {
     ipcRenderer.on("window-minimized", h);
     return () => ipcRenderer.removeListener("window-minimized", h);
   },
+  // Links from Backups, like "sync this album to SoundCloud" (see openLink in main.js).
+  takeOpenLink: () => ipcRenderer.invoke("take-open-link"),
+  onOpenLink: (cb) => {
+    const h = (_e, url) => cb(url);
+    ipcRenderer.on("open-link", h);
+    return () => ipcRenderer.removeListener("open-link", h);
+  },
   onMenuCommand: (cb) => {
     const h = (_e, cmd) => cb(cmd);
     ipcRenderer.on("menu-command", h);

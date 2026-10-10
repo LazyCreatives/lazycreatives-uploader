@@ -146,6 +146,8 @@ test("albums", async () => {
     await test.step(`album (${look})`, async () => {
       await page.locator(".alb-row").filter({ hasText: "Late Night Tapes" }).click();
       await expect(page.locator(".albpage__head")).toBeVisible();
+      // each song's quality check reads its file once; wait for every answer
+      await expect(page.locator(".alb-q", { hasText: "Checking" })).toHaveCount(0, { timeout: 30_000 });
       await settle(page);
       await snap(page, `album-${look}`);
     });

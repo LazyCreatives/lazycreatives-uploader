@@ -3,7 +3,7 @@ import type {
   UploadItemInput, UploadRow,
 } from "./types";
 import type { CoverSource } from "./coverArt";
-import type { Album, AlbumCandidate, AlbumSongChange } from "./albums";
+import type { Album, AlbumCandidate, AlbumSongChange, SongCheck } from "./albums";
 import { plainProblem } from "./plainProblem";
 
 function base() {
@@ -51,7 +51,7 @@ export function makeApi() {
     async createAlbum(title: string, releaseDate = ""): Promise<Album> {
       return req("POST", "/api/albums", { title, release_date: releaseDate });
     },
-    async updateAlbum(id: string, change: { title?: string; release_date?: string; crossfade?: number }): Promise<Album> {
+    async updateAlbum(id: string, change: { title?: string; release_date?: string; crossfade?: number; kind?: string }): Promise<Album> {
       return req("PUT", `/api/albums/${id}`, change);
     },
     async deleteAlbum(id: string): Promise<{ ok: boolean }> { return req("DELETE", `/api/albums/${id}`); },
@@ -64,6 +64,15 @@ export function makeApi() {
     },
     async removeAlbumSong(id: string, path: string): Promise<Album> {
       return req("DELETE", `/api/albums/${id}/song?path=${encodeURIComponent(path)}`);
+    },
+    async swapAlbumSong(id: string, path: string, newPath: string): Promise<Album> {
+      return req("PUT", `/api/albums/${id}/swap`, { path, new_path: newPath });
+    },
+    async checkAlbumSong(path: string): Promise<SongCheck> {
+      return req("GET", `/api/albums/check?path=${encodeURIComponent(path)}`);
+    },
+    async syncAlbum(id: string, artworkPath?: string, songArt: Record<string, string> = {}): Promise<{ job_id: string }> {
+      return req("POST", `/api/albums/${id}/soundcloud`, { artwork_path: artworkPath ?? null, song_art: songArt });
     },
     async getSettings(): Promise<Config> { return req("GET", "/api/settings"); },
     async backupsFolders(): Promise<{ installed: boolean; folders: string[] }> { return req("GET", "/api/backups-folders"); },

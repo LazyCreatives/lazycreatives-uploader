@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from lazyupload import (coverart, covers, crypto, entitlement, playback, projectmeta, service,
+from lazyupload import (album_sync, coverart, covers, crypto, entitlement, playback, projectmeta, service,
                         soundcloud, waveform)
 from lazyupload.albums import Albums
 from lazyupload.albums_api import make_router as albums_router
@@ -19,7 +19,7 @@ from lazyupload.api.auth import require_token, ws_token_ok
 from lazyupload.models import AUDIO_EXTS
 from lazyupload.api.progress import ProgressHub
 from lazyupload.api.schemas import (
-    AccountActivateRequest, ActivateRequest, ArtworkRequest, BulkArtworkRequest, CoverRenderRequest,
+    AccountActivateRequest, ActivateRequest, AlbumSyncRequest, ArtworkRequest, BulkArtworkRequest, CoverRenderRequest,
     BulkDeleteRequest, BulkTrackUpdate, Config, DisconnectRequest, ScanRequest,
     MixGenreRequest, NewVersionRequest, PlaylistAdd, PlaylistCreate, PlaylistUpdate, TrackUpdate, UploadRequest, WipRequest,
 )
@@ -441,6 +441,49 @@ def create_app(token: str, db_path: Path) -> FastAPI:
                 for m in mixes if not m.get("stem") and not m.get("superseded_by") and not m.get("short")]
 
     app.include_router(albums_router(require_token, projectmeta.find_backups_db, _album_candidates, albums))
+
+    @app.post("/api/albums/{album_id}/soundcloud", dependencies=[Depends(require_token)])
+    async def sync_album(album_id: str, req: AlbumSyncRequest):
+        """Sync an album to SoundCloud as a playlist (see album_sync). Runs as a job:
+        ask /api/jobs/{job_id} how it is going."""
+        if not service.connected(catalog):
+            raise HTTPException(status_code=400, detail=_connect_first())
+        if any(j.get("album_id") == album_id and j.get("state") == "running" for j in app.state.jobs.values()):
+            raise HTTPException(status_code=409, detail="This album is already being synced.")
+        try:
+            albums.get(album_id)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="That album isn't there any more") from None
+        app.state.hub.bind_loop(asyncio.get_running_loop())
+        job_id = uuid.uuid4().hex
+        _new_job(job_id)
+        job = app.state.jobs[job_id]
+        job.update(album_id=album_id, step="Starting")
+        cancel, abort = threading.Event(), threading.Event()
+        app.state.cancels[job_id], app.state.aborts[job_id] = cancel, abort
+
+        def progress(ev):
+            if ev.get("type") == "album_sync":
+                job["step"] = ev["step"]
+            try:
+                hub.publish_threadsafe(ev)
+            except RuntimeError:
+                pass
+
+        async def go():
+            try:
+                result = await asyncio.to_thread(
+                    album_sync.sync, catalog, albums, album_id, req.artwork_path, req.song_art,
+                    progress, cancel.is_set, abort.is_set)
+                app.state.jobs[job_id] = {"state": "done", "album_id": album_id, "result": result}
+            except Exception as e:
+                app.state.jobs[job_id] = {"state": "error", "album_id": album_id,
+                                          "error": service.short_reason(e)}
+            finally:
+                app.state.cancels.pop(job_id, None)
+                app.state.aborts.pop(job_id, None)
+        asyncio.create_task(go())
+        return {"job_id": job_id, "state": "running"}
 
     @app.get("/api/audio")
     def audio(request: Request, path: str, t: str = "", decode: int = 0):

@@ -174,5 +174,12 @@ class PlaylistUpdate(BaseModel):
     tags: list[str] | None = Field(None, max_length=50)
 
 
+class AlbumSyncRequest(BaseModel):
+    """Put an album on SoundCloud. Covers are drawn in the app and saved first
+    (/api/covers/render): one for the playlist, and one per song that goes up."""
+    artwork_path: str | None = Field(None, max_length=_PATH)
+    song_art: dict[str, str] = Field(default_factory=dict, max_length=500)
+
+
 class PlaylistAdd(BaseModel):
     track_ids: list[int] = Field(..., min_length=1, max_length=500)

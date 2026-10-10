@@ -33,10 +33,34 @@ const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_e, argv) => {
     showWindow(win);
+    const link = argv.find((a) => a.startsWith(`${LINK_SCHEME}://`));
+    if (link) openLink(link);
   });
 }
+
+// Backups asks Uploader to do things with links like
+// lazycreatives-uploader://album/<id>?sync=1 ("Sync to SoundCloud" on an album page).
+// A link that arrives before the page is ready waits for it (takeOpenLink).
+const LINK_SCHEME = "lazycreatives-uploader";
+let waitingLink = process.argv.find((a) => a.startsWith(`${LINK_SCHEME}://`)) || null;
+if (process.defaultApp) {
+  if (process.argv.length >= 2) app.setAsDefaultProtocolClient(LINK_SCHEME, process.execPath, [path.resolve(process.argv[1])]);
+} else {
+  app.setAsDefaultProtocolClient(LINK_SCHEME);
+}
+function openLink(url) {
+  if (typeof url !== "string" || !url.startsWith(`${LINK_SCHEME}://`) || url.length > 500) return;
+  if (win && !win.webContents.isLoading()) {
+    showWindow(win);
+    win.webContents.send("open-link", url);
+  } else {
+    waitingLink = url;
+  }
+}
+app.on("open-url", (e, url) => { e.preventDefault(); openLink(url); });   // macOS
+ipcMain.handle("take-open-link", () => { const l = waitingLink; waitingLink = null; return l; });
 
 function backendDir() {
   return isDev
