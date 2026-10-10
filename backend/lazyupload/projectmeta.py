@@ -436,6 +436,7 @@ def annotate(mixes: list[dict]) -> int:
         mix["genre_by_you"] = bool(hit.get("genre_by_you"))
         mix["project_match"] = hit.get("project")
         mix["project_id"] = hit.get("project_id")
+        mix["project_saved"] = hit.get("project_mtime")
         mix["project_link"] = "exact" if pid and maps["by_id"].get(pid) is hit else "name"
         matched += 1
     return matched

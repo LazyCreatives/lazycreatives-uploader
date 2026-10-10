@@ -435,7 +435,9 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         song (no stems, no second format of the same mix, no test bounces)."""
         mixes = service.scan_mixes(catalog, _resolve_sources(None))
         return [{"path": m["path"], "title": m["name"], "project": m.get("project_match") or "",
-                 "genre": m.get("genre") or "", "duration": m.get("duration"), "posted": bool(m.get("uploaded"))}
+                 "project_id": m.get("project_id"), "bpm": m.get("bpm"), "genre": m.get("genre") or "",
+                 "duration": m.get("duration"), "exported": m.get("mtime"), "saved": m.get("project_saved"),
+                 "posted": bool(m.get("uploaded"))}
                 for m in mixes if not m.get("stem") and not m.get("superseded_by") and not m.get("short")]
 
     app.include_router(albums_router(require_token, projectmeta.find_backups_db, _album_candidates, albums))

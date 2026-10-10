@@ -141,7 +141,8 @@ def test_project_and_backup_state_come_from_backups(tmp_path):
     judge_album(album, db)
     a, b = album["songs"]
     assert a["project"] == "Night Drive v7" and a["daw"] == "Ableton" and a["backup"] == "changed"
-    assert a["needs"] == ["Project changed since export"] and a["is_ready"] is False
+    assert a["needs"] == ["Still working on it"] and a["is_ready"] is False
+    assert a["working"] is True and a["bpm"] is None and b["working"] is False
     assert b["project_id"] is None and b["is_ready"] is True
     judge_album(album, tmp_path / "no-backups.db")  # Backups not installed: no crash
 
