@@ -14,7 +14,14 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
-## Unreleased
+## 0.2.14 (11 October 2026)
+
+### New
+- **Pick which version of a song the album plays.** Click a song on an album (or its "2 versions" link) to see every version exported from its project, newest first, with when it was exported, its length and whether it plays anywhere. Press play to listen, then "Use this one". Undo puts the old one back.
+
+### Fixed
+- **No more impossible BPMs.** A track whose FL Studio project Backups had misread could show a BPM like 3221226 and put it in its tags. Uploader now leaves the BPM blank instead, and shows the real one once Backups reads the project again.
+- **Renamed songs stay on their album.** Rename a song's file with Tidy names in Backups, undo it, or rename or move it yourself in Finder or Explorer, and the album now finds it under its new name instead of saying "File moved or deleted". If the song's album title was just the old file name, it takes the new name; a title you typed yourself stays.
 
 ## 0.2.13 (10 October 2026)
 

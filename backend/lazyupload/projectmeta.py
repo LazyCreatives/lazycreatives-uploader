@@ -133,6 +133,16 @@ def _load_snapshot_aggregates(con) -> tuple[dict, dict]:
     return by_id, by_name
 
 
+def plausible_bpm(value):
+    """Backups' tempo if a project could really have it, else None. An older Backups
+    misread some FL Studio projects as 3221226 BPM; that must never reach a track."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return v if 10.0 <= v <= 999.0 else None
+
+
 def _load_full(con) -> list[dict]:
     """One rich meta dict per discovered project, fault-isolated: try the full row, fall
     back to the minimal columns if a newer/older Backups schema lacks some."""
@@ -172,7 +182,7 @@ def _load_full(con) -> list[dict]:
         out.append({
             "project": r.get("name"),
             "project_id": str(r["project_id"]) if r.get("project_id") else None,
-            "bpm": r.get("bpm"),
+            "bpm": plausible_bpm(r.get("bpm")),
             "genre": r.get("genre"),
             "genre_emoji": r.get("genre_emoji"),
             "genre_by_you": bool(r.get("genre_by_you")),
