@@ -16,7 +16,7 @@ import {
   BPM_BANDS, FIRST_DESC, LOW_SCORE, NO_FILTERS, applyFilters, dawName, describeFilters, extraFilterCount, yearOf, isFiltered, isPrivate, pickerOptions,
   privacyCounts, sortTracks, type PrivacyFilter, type SortKey, type TrackFilters,
 } from "../trackFilter";
-import { rowKey, useDialogFocus } from "../components/a11y";
+import { useDialogFocus } from "../components/a11y";
 import { SmartBar } from "../components/SmartBar";
 import { ColumnBrowse, FacetChips, NO_GENRE, facets, openFromRow } from "../components/Browse";
 import { TrackPlaylists, pickPlaylist } from "../components/PlaylistPick";
@@ -945,8 +945,8 @@ const TrackCard = memo(function TrackCard({ track, defaultArt, selected, actions
   const meta = songMeta(t, art.src);
   const preview = useAudition(t.local_path, meta);
   return (
-    <div {...preview} data-nav-key={String(t.id)} className={`sleeve track-sleeve${selected ? " sleeve--selected" : ""}`} role="button" tabIndex={0}
-      onClick={onEdit} onKeyDown={rowKey(onEdit)} onContextMenu={onContextMenu}>
+    <div {...preview} data-nav-key={String(t.id)} className={`sleeve track-sleeve${selected ? " sleeve--selected" : ""}`}
+      onClick={onEdit} onContextMenu={onContextMenu}>
       <div className="sleeve__art">
         <Art meta={meta} />
         {isPrivate(t) && <span className="sleeve__badge"><span className="dot dot--warn" />Private</span>}
@@ -957,7 +957,8 @@ const TrackCard = memo(function TrackCard({ track, defaultArt, selected, actions
       </div>
       <div className="sleeve__meta">
         <div className="track-sleeve__top">
-          <div className="sleeve__name" title={t.title}>{t.title}</div>
+          {/* the card holds buttons of its own, so its name is the button that opens it */}
+          <button type="button" className="rowopen"><span className="sleeve__name" title={t.title}>{t.title}</span></button>
           {t.permalink_url && (
             <button type="button" className="iconbtn" title="Open on SoundCloud" aria-label="Open on SoundCloud"
               onClick={(e) => { e.stopPropagation(); openExternal(t.permalink_url!); }}><Icon name="external" size={14} /></button>

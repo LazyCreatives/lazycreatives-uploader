@@ -141,7 +141,8 @@ function HomeDeck({ figures }: { figures: { label: string; value: number | null;
       {figures.map((f) => (
         <div key={f.label} className={`deckread__cell${f.bad ? " deckread__cell--bad" : ""}${f.value === 0 ? " deckread__cell--zero" : ""}`}>
           <dt>{f.label}</dt>
-          <dd>{f.value === null ? "—" : <Rolling value={f.value} />}</dd>
+          <dd className={f.value !== null && f.value >= 1e7 ? "home-deck__long2" : f.value !== null && f.value >= 1e5 ? "home-deck__long" : undefined}>
+            {f.value === null ? "—" : <Rolling value={f.value} />}</dd>
         </div>
       ))}
     </dl>

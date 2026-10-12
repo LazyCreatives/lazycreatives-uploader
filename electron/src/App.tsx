@@ -312,7 +312,7 @@ export default function App() {
         signIn={{ signedOut: !!account.signed_out, busy: signIn.busy, start: () => void signIn.start(),
           waiting: <>{signIn.error && <span className="faint">{signIn.error}</span>}<SignInWaiting signIn={signIn} compact /></> }}
         onOpenRecent={(id) => { setTab("manage"); openTrack(id); }} openId={tab === "manage" ? sub : null} />
-      <div className="main">
+      <main className="main">
         <div className="content">
           <div key={tab === "settings" || tab === "upload" ? `${tab}-${viewKey}` : tab} className="view-enter">
             {tab === "home" ? (
@@ -340,7 +340,7 @@ export default function App() {
             )}
           </div>
         </div>
-      </div>
+      </main>
       <PlayerBar onOpenTrack={(id) => { setTab("manage"); openTrack(id); }} />
       <WhatsNewHost setUp={setUpAtOpen.current === true} />
       <ContextMenuHost />

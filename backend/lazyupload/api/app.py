@@ -4,6 +4,7 @@ import hashlib
 import os
 import sys
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -26,6 +27,9 @@ from lazyupload.api.schemas import (
 from lazyupload.catalog import Catalog
 from lazyupload.connect import SoundCloudConnectSession
 from lazyupload.scheduler import UploadScheduler
+
+# How long a rendered cover is kept after it was last made or used (see covers_render).
+RENDERED_KEEP_S = 7 * 24 * 3600
 
 
 def create_app(token: str, db_path: Path) -> FastAPI:
@@ -114,6 +118,23 @@ def create_app(token: str, db_path: Path) -> FastAPI:
 
     covers.install(app, catalog, db_path, extra=_covers_extra)
 
+    def _clear_old_rendered(folder: Path) -> None:
+        """Rendered covers only live long enough to go up with an upload; ones not
+        written or used for RENDERED_KEEP_S are removed so the folder doesn't grow
+        forever. Only this app's own files in its own folder."""
+        cutoff = time.time() - RENDERED_KEEP_S
+        for f in folder.glob("*"):
+            if f.suffix not in (".png", ".part"):
+                continue
+            try:
+                if f.is_file() and f.stat().st_mtime < cutoff:
+                    f.unlink()
+            except OSError:
+                pass  # in use or already gone: next time
+
+    if (covers_folder / "rendered").is_dir():
+        _clear_old_rendered(covers_folder / "rendered")
+
     @app.post("/api/covers/render", dependencies=[Depends(require_token)])
     def covers_render(req: CoverRenderRequest):
         """Save a finished cover (drawn in the renderer) so an upload can use it as its
@@ -127,6 +148,9 @@ def create_app(token: str, db_path: Path) -> FastAPI:
             tmp = path.with_suffix(".part")
             tmp.write_bytes(raw)
             os.replace(tmp, path)
+        else:
+            os.utime(path)  # used again: keep it out of the clear-out below
+        _clear_old_rendered(folder)
         return {"path": str(path.resolve())}
 
     @app.get("/api/covers/backups-img/{pic_id}")

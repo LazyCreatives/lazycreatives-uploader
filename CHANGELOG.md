@@ -14,6 +14,24 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## 0.2.15 (12 October 2026)
+
+### Better
+- **Easier to see what's picked.** In every switch (Public / Private, Rows / Covers, On / Off and the rest) the picked option now has a blue edge and bold text, instead of being a shade lighter.
+- **Whole names on cards.** Track and album cards give a name two lines before cutting it short.
+
+### Fixed
+- Your tracks: the Waveform and From project headings no longer run into each other in a smaller window or with Easier reading.
+- Label strip covers: the play button no longer hides the name.
+- Screen readers: a track's card in the Covers view no longer puts buttons inside a button; its name is the button that opens it.
+- Old cover pictures made for uploads are cleared out after a week.
+- **Easier reading.** History and Home write "Public" and "Private" with their capital letter.
+- **Album song list.** In a narrow window or with Easier reading, song names take the spare room and the "Length" heading fits.
+- **Screen readers** can jump straight to the main part of every screen.
+- **Big play counts fit.** A play count in the millions on Home now fits its box instead of being cut off.
+- **Very long names no longer break pages.** A long album name is cut neatly in the albums summary, a long name on cover art fits the cover, and with Easier reading on a long album name wraps instead of being cut to one word.
+- **Long album plans stay short.** When many songs on an album need a quality check, the plan names the first few and says how many more, instead of listing every song.
+
 ## 0.2.14 (11 October 2026)
 
 ### New

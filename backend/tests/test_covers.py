@@ -2,7 +2,10 @@
 import base64
 import hashlib
 import json
+import os
 import sqlite3
+import time
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -163,6 +166,28 @@ def test_render_saves_png_once(tmp_path):
     assert c.post("/api/covers/render", json={"name": "x", "data": _url(WEBP, "image/webp")}).status_code == 400
     assert c.post("/api/covers/render", json={"name": "x", "data": "data:image/png;base64,%%"}).status_code == 400
     assert c.post("/api/covers/render", json={"name": "x", "data": _url(JPEG, "image/png")}).status_code == 400
+
+
+def test_render_clears_out_old_covers(tmp_path):
+    folder = tmp_path / "covers" / "rendered"
+    folder.mkdir(parents=True)
+    old, fresh, other = folder / "old.png", folder / "fresh.png", folder / "notes.txt"
+    for f in (old, fresh, other):
+        f.write_bytes(b"x")
+    stale = time.time() - 8 * 24 * 3600
+    os.utime(old, (stale, stale))
+    os.utime(other, (stale, stale))
+    c = _client(tmp_path)  # opening the app clears the old ones out
+    assert not old.exists() and fresh.exists() and other.exists()
+    # a cover used again is kept as fresh
+    path = Path(c.post("/api/covers/render", json={"name": "a", "data": _url(PNG)}).json()["path"])
+    os.utime(path, (stale, stale))
+    c.post("/api/covers/render", json={"name": "a", "data": _url(PNG)})
+    assert path.exists() and path.stat().st_mtime > stale + 3600
+    # and the next render clears out what went stale meanwhile
+    os.utime(fresh, (stale, stale))
+    c.post("/api/covers/render", json={"name": "b", "data": _url(JPEG, "image/jpeg")})
+    assert not fresh.exists() and path.exists()
 
 
 def _fake_backups(tmp_path, monkeypatch, state=None):

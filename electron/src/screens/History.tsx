@@ -84,7 +84,7 @@ export function UploadTable({ rows, byDay, density = "comfortable", onRetry, ret
             </div>
             <SongWave path={r.file_path} meta={meta} height={22} />
             <span className={`pill ${st.pill}`}>{st.label}</span>
-            <span className="muted" style={{ textTransform: "capitalize" }}>{r.sharing}</span>
+            <span className="muted">{r.sharing ? r.sharing[0].toUpperCase() + r.sharing.slice(1) : ""}</span>
             <span className="col-num">{fmtBytes(r.size)}</span>
             <span className="col-num">{byDay ? fmtTime(r.timestamp) : fmtWhen(r.timestamp)}</span>
             <span className="col-act">

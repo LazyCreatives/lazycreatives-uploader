@@ -149,6 +149,9 @@
 .home-deck .deckread__cell--zero dd { color: var(--text-faint); }
 .home-deck .deckread__cell--bad dd { color: var(--danger); }
 @media (max-width: 880px) { .home-deck dd { font-size: 27px; } .home-deck .deckread__cell { padding: 10px 12px 12px; } }
+/* six figures and up (a lot of plays) get smaller so the whole number fits its box */
+.home-deck dd.home-deck__long { font-size: 24px; }
+.home-deck dd.home-deck__long2 { font-size: 19px; }
 
 /* the checklist in the last look before posting */
 .lastlook { width: min(580px, 100%); }

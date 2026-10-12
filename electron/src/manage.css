@@ -162,11 +162,16 @@
 
 /* ---- Crate look: genre stripe, play, cover, waveform per row ---- */
 /* the title column keeps room for a name at the default window size; the waveform
-   and project columns give way first (the waveform never narrower than its heading,
-   and the row never wider than the window so the hover buttons stay in view) */
-/* stripe · tick · play · cover · track · rating · waveform · from project · plays · score · privacy · actions */
-.track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) 80px minmax(62px, 1fr) minmax(88px, 1fr) 56px 64px 92px; }
+   and project columns give way first, but never narrower than their headings with room
+   to spare (at 1100px, the smallest wide window, "Waveform" and "From project" ran into
+   each other), and the row never wider than the window so the hover buttons stay in view */
+/* stripe · tick · play · cover · track · rating · waveform · from project · plays · privacy · actions */
+.track-cols { --cols: 4px 16px 28px 36px minmax(118px, 2fr) 80px minmax(72px, 1fr) minmax(90px, 1fr) 56px 64px 92px; }
 .table--crate .track-cols .mixrow__check { margin: 0; }
+/* a heading stays inside its own column whatever the text size and font (Easier reading):
+   a two-word one takes a second line, a one-word one is cut short only as a last resort */
+.track-cols.cols-head > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-cols.cols-head .find__sort { white-space: normal; line-height: 1.25; }
 /* narrower windows: rating, waveform and project step out (the project shows in the edit panel) */
 @media (max-width: 1099px) {
   .track-cols { --cols: 4px 16px 28px 36px minmax(130px, 2fr) 56px 72px 92px; }
