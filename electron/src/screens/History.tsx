@@ -3,7 +3,7 @@ import { makeApi, openExternal, revealPath, saveRenderedCover } from "../api";
 import { coverPng } from "../coverRender";
 import { openMenu, toast, toastWarn } from "../components/Desktop";
 import { copyText } from "../desktop";
-import type { Sharing, UploadRow } from "../types";
+import type { HistoryAll, Sharing, UploadRow } from "../types";
 import { Button, fmtBytes, fmtCount, fmtWhen, PageHeader } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Cover } from "../components/Cover";
@@ -66,14 +66,18 @@ export function UploadTable({ rows, byDay, density = "comfortable", onRetry, ret
               { label: "Open on SoundCloud", onClick: () => openExternal(r.permalink_url!) },
               { label: "Copy SoundCloud link", onClick: () => { copyText(r.permalink_url!); } }, "-" as const] : []),
             ...(onRetry && canRetry(r, rows) ? [{ label: "Try again", onClick: () => onRetry(r), disabled: retrying?.has(r.id) }, "-" as const] : []),
-            { label: "Show the file", onClick: () => revealPath(r.file_path) },
-            { label: "Copy file path", onClick: () => { copyText(r.file_path); } },
+            ...(r.outside ? [] : [
+              { label: "Show the file", onClick: () => revealPath(r.file_path) },
+              { label: "Copy file path", onClick: () => { copyText(r.file_path); } }]),
           ])}>
             <span className="stripe" style={{ background: genreColor(r.project_genre) }} />
-            <PlayButton path={r.file_path} meta={meta} size={28} />
+            {r.outside ? <span /> : <PlayButton path={r.file_path} meta={meta} size={28} />}
             <Cover name={meta.cover} genre={meta.genre} size={36} label={false} />
             <div className="row__main">
               <div className="row__title" title={r.title}>{r.title}</div>
+              {r.outside && <div className="row__sub hist-outside">
+                {r.project_match ? `From ${r.project_match} · posted outside the app` : "Posted outside the app"}
+              </div>}
               {r.error && <div className="row__sub hist-err">
                 {onRetry && canRetry(r, rows) && (
                   <button type="button" className="btn btn--ghost btn--sm mixstate__retry" disabled={retrying?.has(r.id)}
@@ -82,10 +86,10 @@ export function UploadTable({ rows, byDay, density = "comfortable", onRetry, ret
                 <span className="col-trunc" title={r.error}>{r.error}</span>
               </div>}
             </div>
-            <SongWave path={r.file_path} meta={meta} height={22} />
+            <SongWave path={r.outside ? null : r.file_path} scUrl={r.outside ? r.waveform_url : null} meta={meta} height={22} />
             <span className={`pill ${st.pill}`}>{st.label}</span>
             <span className="muted">{r.sharing ? r.sharing[0].toUpperCase() + r.sharing.slice(1) : ""}</span>
-            <span className="col-num">{fmtBytes(r.size)}</span>
+            <span className="col-num">{r.size == null ? "" : fmtBytes(r.size)}</span>
             <span className="col-num">{byDay ? fmtTime(r.timestamp) : fmtWhen(r.timestamp)}</span>
             <span className="col-act">
               {r.permalink_url
@@ -111,15 +115,19 @@ export function canRetry(r: UploadRow, rows: UploadRow[]): boolean {
 }
 
 type ResultFilter = "all" | "uploaded" | "error" | "skipped";
+type WhereFilter = "all" | "app" | "outside";
 const PAGE = 100;
 
 export function History() {
   const [density] = useDensity("history");   // set in Settings > Lists
   const [rows, setRows] = useState<UploadRow[] | null>(null);
+  const [sc, setSc] = useState<HistoryAll["soundcloud"]>("ok");
   const [limit, setLimit] = useState(PAGE);
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<ResultFilter>("all");
-  const load = () => api.history(limit).then(setRows).catch(() => setRows((r) => r ?? []));
+  const [where, setWhere] = useState<WhereFilter>("all");
+  const load = () => api.historyAll(limit).then((h) => { setRows(h.uploads); setSc(h.soundcloud); })
+    .catch(() => setRows((r) => r ?? []));
   useEffect(() => { void load(); }, [limit]);   // eslint-disable-line react-hooks/exhaustive-deps
   const [retrying, setRetrying] = useState<Set<number>>(new Set());
 
@@ -133,7 +141,7 @@ export function History() {
       const art = await coverPng(name, r.project_genre).then((png) => saveRenderedCover(name, png)).catch(() => undefined);
       const { job_id } = await api.upload([{
         path: r.file_path, name: r.title, title: r.title, sharing: r.sharing as Sharing,
-        genre: r.project_genre || undefined, file_hash: r.file_hash, size: r.size, artwork_path: art,
+        genre: r.project_genre || undefined, file_hash: r.file_hash, size: r.size ?? undefined, artwork_path: art,
       }]);
       const tick = async () => {
         const job = await api.jobStatus(job_id).catch(() => null);
@@ -154,8 +162,13 @@ export function History() {
   const q = query.trim().toLowerCase();
   const matching = (rows ?? []).filter((r) => !q || [r.title, r.project_match, r.project_genre, r.sharing]
     .some((v) => v && v.toLowerCase().includes(q)));
-  const count = (k: ResultFilter) => k === "all" ? matching.length : matching.filter((r) => r.status === k).length;
-  const shown = result === "all" ? matching : matching.filter((r) => r.status === result);
+  const isWhere = (r: UploadRow, w: WhereFilter) => w === "all" || (w === "outside") === !!r.outside;
+  const placed = matching.filter((r) => isWhere(r, where));
+  const count = (k: ResultFilter) => k === "all" ? placed.length : placed.filter((r) => r.status === k).length;
+  const whereCount = (w: WhereFilter) => matching.filter((r) => (result === "all" || r.status === result) && isWhere(r, w)).length;
+  const shown = result === "all" ? placed : placed.filter((r) => r.status === result);
+  // Only offered when the list holds both: posts made here and ones made some other way.
+  const showWhere = (rows ?? []).some((r) => r.outside) && (rows ?? []).some((r) => !r.outside);
   const more = rows !== null && rows.length >= limit;
   // Only the results that happened get a button; with nothing but posts there's no choice to make.
   const kinds = ([["all", "All"], ["uploaded", "Posted"], ["error", "Failed"], ["skipped", "Skipped"]] as [ResultFilter, string][])
@@ -163,10 +176,15 @@ export function History() {
 
   return (
     <div>
-      <PageHeader title="History" sub="Everything Uploader has posted, newest first." />
+      <PageHeader title="History" sub="Everything on your SoundCloud, newest first, with what Uploader posted." />
+      {sc !== "ok" && rows && <p className="hist-note muted">
+        {sc === "offline"
+          ? "SoundCloud didn’t answer, so only what Uploader posted is showing. It tries again next time you open History."
+          : "Connect SoundCloud to see everything on your account here, not just what Uploader posted."}
+      </p>}
       {rows && rows.length === 0 && (
         <EmptyState pose="napping" title="Nothing posted yet" say="Nothing yet. I’m patient.">
-          Every mix you post shows here, newest first, with a link to it on SoundCloud.
+          Every track on your SoundCloud shows here, newest first, with a link to it.
         </EmptyState>
       )}
       {rows && rows.length > 0 && <>
@@ -179,6 +197,14 @@ export function History() {
             {query && <button type="button" className="find__x" aria-label="Clear search"
               onClick={() => setQuery("")}><Icon name="close" size={13} /></button>}
           </label>
+          {showWhere && <div className="seg" role="group" aria-label="Where it was posted">
+            {([["all", "Everywhere"], ["app", "With Uploader"], ["outside", "Outside the app"]] as [WhereFilter, string][]).map(([w, label]) => (
+              <button key={w} type="button" className={`seg__opt${where === w ? " seg__opt--on" : ""}`}
+                aria-pressed={where === w} onClick={() => setWhere(w)}>
+                {label} <span className="find__n">{fmtCount(whereCount(w))}</span>
+              </button>
+            ))}
+          </div>}
           {kinds.length > 2 && <div className="seg" role="group" aria-label="Result">
             {kinds.map(([k, label]) => (
               <button key={k} type="button" className={`seg__opt${result === k ? " seg__opt--on" : ""}`}
@@ -191,7 +217,7 @@ export function History() {
         {shown.length > 0
           ? <UploadTable rows={shown} byDay density={density} onRetry={(r) => void retry(r)} retrying={retrying} />
           : <div className="table"><EmptyState pose="searching" title="Nothing matches" say="Looked everywhere. Nothing.">
-              Try fewer letters, or pick All.
+              Try fewer letters, or pick All and Everywhere.
             </EmptyState></div>}
         {more && (
           <div className="hist-more">

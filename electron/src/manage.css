@@ -280,7 +280,7 @@
 .mng-tagsugg { margin-top: -6px; }
 .mng-cover .field, .mng-matched .field { margin: 0; }
 .art-thumb.cover { border-radius: 10px; }
-.table--crate > .row.hist-day:nth-child(n), .table--crate > .row.mix-split--row:nth-child(n) { background: var(--surface-2); }
+.table--crate > .row.hist-day:nth-child(n):not(.cols-head), .table--crate > .row.mix-split--row:nth-child(n):not(.cols-head) { background: var(--surface-2); }
 
 /* ---- the top of a track's page (TrackHero): waveform with listeners' comments,
    and the numbers, read like a deck's screen. ---- */
@@ -302,3 +302,5 @@
 /* Public is the usual, so it's plain; Private keeps its dot */
 .pill.pill--quiet { background: none; color: var(--text-faint); }
 .pill.pill--quiet::before { display: none; }
+.hist-outside { color: var(--text-faint); }
+.hist-note { margin: -4px 0 12px; font-size: 13px; }

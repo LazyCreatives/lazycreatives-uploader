@@ -1,6 +1,6 @@
 import type {
   Account, BulkResult, Config, Entitlement, JobStatus, Mix, Overview, Playlist, PlaylistChange, Sharing, Track, TrackComment, TrackUpdate,
-  UploadItemInput, UploadRow,
+  UploadItemInput, UploadRow, HistoryAll,
 } from "./types";
 import type { CoverSource } from "./coverArt";
 import type { Album, AlbumCandidate, AlbumSongChange, SongCheck } from "./albums";
@@ -114,6 +114,10 @@ export function makeApi() {
     async overview(): Promise<Overview> { return req("GET", "/api/overview"); },
     async history(limit = 50): Promise<UploadRow[]> {
       return (await req("GET", `/api/history?limit=${limit}`)).uploads;
+    },
+    // History's list: this app's posts joined with everything else on the SoundCloud account.
+    async historyAll(limit = 100): Promise<HistoryAll> {
+      return req("GET", `/api/history?everything=true&limit=${limit}`);
     },
     // The in-app player: <audio> can't send headers, so the token rides in the query
     // (the sidecar only serves mixes from watched folders or ones this app posted).

@@ -88,3 +88,43 @@ def test_batch_upload_gated_on_free_then_allowed_on_pro(client):
     assert ok.status_code == 200
     job = _poll_job(client, ok.json()["job_id"])
     assert job["result"]["ok_count"] == 3
+
+
+def test_history_everything_joins_the_whole_soundcloud_account(client):
+    client.put("/api/settings", json={"sources": [client.mixes_dir]})
+    client.post("/api/connect")
+    mixes = client.post("/api/scan", json={}).json()["mixes"]
+    job = _poll_job(client, client.post("/api/upload", json={"items": [{"path": mixes[0]["path"]}]}).json()["job_id"])
+    assert job["result"]["ok_count"] == 1
+
+    # Without the flag: only what this app posted (Home and the phone page use this).
+    assert len(client.get("/api/history").json()["uploads"]) == 1
+
+    body = client.get("/api/history?everything=true&limit=100").json()
+    assert body["soundcloud"] == "ok"
+    rows = body["uploads"]
+    mine = [r for r in rows if not r.get("outside")]
+    outside = [r for r in rows if r.get("outside")]
+    assert len(mine) == 1                       # the app's own post shows once
+    assert {r["title"] for r in outside} >= {"Warehouse Set (2024)", "Rainy Day Beat"}
+    assert all(r["permalink_url"] and r["file_path"] == "" and r["size"] is None for r in outside)
+    assert all(r["id"] < 0 for r in outside)     # never clashes with an upload row's id
+    # Newest first, with SoundCloud's times in the app's own "YYYY-MM-DD HH:MM:SS" shape.
+    assert [r["timestamp"] for r in rows] == sorted((r["timestamp"] for r in rows), reverse=True)
+    assert all(len(r["timestamp"]) == 19 and r["timestamp"][10] == " " for r in outside)
+    # The limit still pages.
+    assert len(client.get("/api/history?everything=true&limit=1").json()["uploads"]) == 1
+
+
+def test_history_everything_without_soundcloud_shows_the_apps_posts(client):
+    body = client.get("/api/history?everything=true").json()
+    assert body == {"uploads": [], "soundcloud": "not_connected"}
+
+
+def test_history_everything_drops_a_track_deleted_in_the_app(client):
+    client.post("/api/connect")
+    first = client.get("/api/history?everything=true").json()["uploads"]
+    gone = next(r for r in first if r["title"] == "Rainy Day Beat")
+    assert client.delete(f"/api/tracks/{gone['sc_track_id']}").status_code in (200, 204)
+    titles = {r["title"] for r in client.get("/api/history?everything=true").json()["uploads"]}
+    assert "Rainy Day Beat" not in titles

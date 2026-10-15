@@ -555,7 +555,10 @@ def create_app(token: str, db_path: Path) -> FastAPI:
         return {"peaks": _sc_peaks[url]}
 
     @app.get("/api/history", dependencies=[Depends(require_token)])
-    def history(limit: int = 50):
+    def history(limit: int = 50, everything: bool = False):
+        """This app's posts; with `everything`, the whole SoundCloud account joined in."""
+        if everything:
+            return service.full_history(catalog, limit=limit)
         return {"uploads": service.history_with_projects(catalog, limit=limit)}
 
     # ---- manage existing SoundCloud tracks ----------------------------------

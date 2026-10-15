@@ -621,14 +621,14 @@ class SoundCloudClient:
         return normalize_track(r.json())
 
     # ---- manage existing uploads -------------------------------------------
-    def list_tracks(self, page: int = 50, max_total: int = 2000) -> list[dict]:
-        """Every track on the connected account (normalized), paginated so large
-        libraries aren't silently truncated. Follows SoundCloud's next_href, bounded
-        by max_total so a huge account can't stall the UI."""
+    def list_tracks(self, page: int = 200, max_total: int | None = None) -> list[dict]:
+        """Every track on the connected account (normalized), public and private, oldest
+        uploads included. Follows SoundCloud's next_href to the end unless max_total
+        is given."""
         out: list[dict] = []
         url = f"{API_BASE}/me/tracks"
         params: dict | None = {"limit": page, "linked_partitioning": "true"}
-        while url and len(out) < max_total:
+        while url and (max_total is None or len(out) < max_total):
             r = requests.get(url, headers=self._headers(), params=params, timeout=30)
             _raise_for_status(r)
             body = r.json()
@@ -636,7 +636,7 @@ class SoundCloudClient:
             out.extend(normalize_track(t) for t in items)
             url = body.get("next_href") if isinstance(body, dict) else None
             params = None  # next_href already carries the cursor + params
-        return out[:max_total]
+        return out if max_total is None else out[:max_total]
 
     def update_track(self, track_id: int, fields: dict) -> dict:
         """Edit metadata / privacy on an existing track. `fields` may contain
@@ -875,8 +875,9 @@ class MockSoundCloudClient:
                 return normalize_track(t)
         raise RuntimeError("Track not found.")
 
-    def list_tracks(self, limit: int = 200) -> list[dict]:
-        return [normalize_track(t) for t in self._load()[:limit]]
+    def list_tracks(self, page: int = 200, max_total: int | None = None) -> list[dict]:
+        tracks = [normalize_track(t) for t in self._load()]
+        return tracks if max_total is None else tracks[:max_total]
 
     def find_posted(self, title: str, since: float) -> dict | None:
         # demo tracks have no upload time: the newest with this title

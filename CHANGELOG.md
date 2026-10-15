@@ -14,6 +14,14 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## 0.2.16 (15 October 2026)
+
+### New
+- **Your whole SoundCloud in History.** History now lists every track on your account, newest first, including ones posted before Uploader or from the SoundCloud website. Those say "Posted outside the app" and are matched to your Backups projects by name. A switch shows Everywhere, With Uploader or Outside the app.
+
+### Better
+- **No track limit.** Your tracks and History now load every track on big accounts, not just the newest 2,000.
+
 ## 0.2.15 (12 October 2026)
 
 ### Better

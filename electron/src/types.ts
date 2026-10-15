@@ -114,7 +114,7 @@ export interface UploadRow {
   title: string;
   file_path: string;
   file_hash: string | null;
-  size: number;
+  size: number | null;
   sharing: string;
   status: string;
   sc_track_id: number | null;
@@ -124,6 +124,14 @@ export interface UploadRow {
   timestamp: string;
   project_match?: string | null;   // the Backups project the file came from, if known
   project_genre?: string | null;
+  // On SoundCloud but not posted with this app: no file here, so no size, play or folder.
+  outside?: boolean;
+  waveform_url?: string | null;
+}
+
+export interface HistoryAll {
+  uploads: UploadRow[];
+  soundcloud: "ok" | "not_connected" | "offline";   // whether the rest of the account was read
 }
 
 export interface Entitlement {

@@ -331,6 +331,72 @@ def history_with_projects(catalog: Catalog, limit: int = 50) -> list[dict]:
     return rows
 
 
+# History keeps the account's tracks it last fetched (on the catalog, with the account
+# and time) so "Show older posts" and coming back to History don't ask SoundCloud each time.
+_HISTORY_SC_TTL = 300.0
+
+
+def _local_time(iso: str | None) -> str | None:
+    """SoundCloud's upload time (UTC) in the same local "YYYY-MM-DD HH:MM:SS" shape
+    this app's own history uses, so the two sort and read together."""
+    if not iso:
+        return None
+    try:
+        d = datetime.fromisoformat(iso)
+        if d.tzinfo is not None:
+            d = d.astimezone().replace(tzinfo=None)
+        return d.strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def _account_tracks_for_history(catalog: Catalog) -> list[dict]:
+    acct = (active_account(catalog) or {}).get("id")
+    hit = getattr(catalog, "_history_sc", None)
+    if hit and hit[0] == acct and time.time() - hit[1] < _HISTORY_SC_TTL:
+        return hit[2]
+    tracks = client_for(catalog).list_tracks()
+    try:
+        songs.remember_sc_tracks(catalog, acct, tracks, time.time())
+    except Exception:
+        pass
+    catalog._history_sc = (acct, time.time(), tracks)
+    return tracks
+
+
+def full_history(catalog: Catalog, limit: int = 100) -> dict:
+    """Everything on the connected SoundCloud account joined with this app's own posts,
+    newest first. A track the app posted shows once, as the app's row (it knows the
+    file and project); tracks posted some other way come in as `outside` rows, matched
+    to a Backups project by name. Only reads SoundCloud. `soundcloud` says whether the
+    account could be read: "ok", "not_connected" or "offline"."""
+    local = history_with_projects(catalog, limit=1_000_000)
+    if not connected(catalog):
+        return {"uploads": local[:limit], "soundcloud": "not_connected"}
+    try:
+        tracks = _account_tracks_for_history(catalog)
+    except Exception:
+        return {"uploads": local[:limit], "soundcloud": "offline"}
+    mine_ids = {r.get("sc_track_id") for r in local if r.get("sc_track_id") is not None}
+    mine_links = {r.get("permalink_url") for r in local if r.get("permalink_url")}
+    rows = list(local)
+    for t in tracks:
+        if t.get("id") in mine_ids or (t.get("permalink_url") and t["permalink_url"] in mine_links):
+            continue
+        meta = _project_meta_for(catalog, t, {}) or {}
+        rows.append({
+            "id": -int(t.get("id") or 0), "title": t.get("title") or "", "file_path": "",
+            "file_hash": None, "size": None, "sharing": t.get("sharing") or "public",
+            "status": "uploaded", "sc_track_id": t.get("id"),
+            "permalink_url": t.get("permalink_url"), "account": None, "error": None,
+            "timestamp": _local_time(t.get("created_at")) or "", "outside": True,
+            "waveform_url": t.get("waveform_url"), "duration": t.get("duration"),
+            "project_match": meta.get("project"), "project_genre": meta.get("genre"),
+        })
+    rows.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
+    return {"uploads": rows[:limit], "soundcloud": "ok"}
+
+
 def _enrich_track(catalog: Catalog, t: dict, upload_map: dict | None = None) -> None:
     """Attach the SEO score and borrowed Backups metadata to ONE managed track. Best-effort
     and independent: a failure (or a missing Backups catalog) never strips the SEO score."""
@@ -451,6 +517,7 @@ def delete_track(catalog: Catalog, track_id: int) -> None:
     if not connected(catalog):
         raise RuntimeError("not_connected")
     client_for(catalog).delete_track(track_id)
+    catalog._history_sc = None  # so History stops listing it
 
 
 # ---- playlists ("sets" on SoundCloud) -----------------------------------------
@@ -618,6 +685,7 @@ def bulk_update(catalog: Catalog, ids: list[int], patch: dict) -> list[dict]:
 def bulk_delete(catalog: Catalog, ids: list[int]) -> list[dict]:
     if not connected(catalog):
         raise RuntimeError("not_connected")
+    catalog._history_sc = None  # so History stops listing them
     return _bulk(catalog, ids, lambda c, tid: c.delete_track(tid))
 
 

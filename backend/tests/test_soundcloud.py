@@ -96,3 +96,20 @@ def test_upload_reply_lost_and_no_track_still_fails(tmp_path, monkeypatch):
         {"collection": [{"id": 1, "title": "My Mix", "created_at": old}]}))
     with pytest.raises(requests.exceptions.ReadTimeout):
         _fake_client().upload(str(f), TrackMeta(title="My Mix"))
+
+
+def test_list_tracks_reads_every_page_past_the_old_2000_limit(monkeypatch):
+    pages = 13  # 13 pages of 200 = 2,600 tracks
+    calls = []
+
+    def get(url, params=None, **k):
+        n = len(calls)
+        calls.append(url)
+        items = [{"id": n * 200 + i + 1, "title": f"t{n * 200 + i}"} for i in range(200)]
+        nxt = f"https://api.soundcloud.com/me/tracks?cursor={n + 1}" if n + 1 < pages else None
+        return _Resp({"collection": items, "next_href": nxt})
+
+    monkeypatch.setattr(soundcloud.requests, "get", get)
+    tracks = _fake_client().list_tracks()
+    assert len(tracks) == 2600 and len(calls) == pages
+    assert len({t["id"] for t in tracks}) == 2600
