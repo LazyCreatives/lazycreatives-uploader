@@ -25,6 +25,7 @@ import { Settings } from "./screens/Settings";
 import { WhatsNewHost, openWhatsNew } from "./components/WhatsNew";
 import { ConfirmHost, ContextMenuHost, DropZone, ShortcutsPanel, ToastHost, toast, toastWarn } from "./components/Desktop";
 import { GenrePickHost } from "./components/GenrePick";
+import { FolderPickHost } from "./components/ProjectFolders";
 import { CoverPickHost } from "./components/CoverPick";
 import { changeCovers, coverState, setCoverSource, shrinkImage } from "./coverArt";
 import { baseName, folderOf, isInside, keep, pageNumber, recall, useDesktopCommands, useEscapeToClose, useFileDrop, useIconProgress, type Dropped } from "./desktop";
@@ -347,6 +348,7 @@ export default function App() {
       <ToastHost />
       <ConfirmHost />
       <GenrePickHost />
+      <FolderPickHost />
       <CoverPickHost />
       <PlaylistPickHost onOpen={openPlaylist} />
       <PaletteHost items={paletteItems} />

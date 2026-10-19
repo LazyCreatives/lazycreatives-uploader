@@ -14,6 +14,11 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## 0.2.17 (19 October 2026)
+
+### New
+- **Folders from Backups.** The folders you sort your projects into in Backups show above Your tracks. Click one to see only the tracks from its projects. Drag a track onto a folder, or right-click it, to put its project in that folder. Your files never move.
+
 ## 0.2.16 (15 October 2026)
 
 ### New

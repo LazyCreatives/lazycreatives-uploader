@@ -139,6 +139,7 @@ def test_list_tracks_enriches_uploaded_track(tmp_path, monkeypatch):
     assert hit is not None, "the uploaded track should join to its Backups project"
     assert hit["bpm"] == 150 and hit["genre_emoji"] == "🔥" and hit["daw"] == "ableton"
     assert hit["backups"]["count"] == 1
+    assert hit["project_id"] == "px"  # so the track shows under its project's folders
 
 
 # ---- bulk operations ---------------------------------------------------------

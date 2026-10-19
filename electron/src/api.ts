@@ -3,6 +3,7 @@ import type {
   UploadItemInput, UploadRow, HistoryAll,
 } from "./types";
 import type { CoverSource } from "./coverArt";
+import type { Folder } from "./projectFolders";
 import type { Album, AlbumCandidate, AlbumSongChange, SongCheck } from "./albums";
 import { plainProblem } from "./plainProblem";
 
@@ -44,6 +45,21 @@ async function req(method: string, path: string, body?: unknown) {
 
 export function makeApi() {
   return {
+    // Folders you sort projects into: one list shared by Backups and Uploader (see projectFolders.ts).
+    async listFolders(): Promise<{ rev: number; folders: Folder[] }> { return req("GET", "/api/folders"); },
+    async foldersRev(): Promise<{ rev: number }> { return req("GET", "/api/folders/rev"); },
+    async createFolder(name: string, projectIds: string[] = []): Promise<Folder> {
+      return req("POST", "/api/folders", { name, project_ids: projectIds });
+    },
+    async renameFolder(id: string, name: string): Promise<Folder> { return req("PUT", `/api/folders/${id}`, { name }); },
+    async deleteFolder(id: string): Promise<{ ok: boolean }> { return req("DELETE", `/api/folders/${id}`); },
+    async addToFolder(id: string, projectIds: string[]): Promise<Folder> {
+      return req("POST", `/api/folders/${id}/projects`, { project_ids: projectIds });
+    },
+    async removeFromFolder(id: string, projectIds: string[]): Promise<Folder> {
+      return req("POST", `/api/folders/${id}/remove`, { project_ids: projectIds });
+    },
+    async orderFolders(ids: string[]): Promise<{ folders: Folder[] }> { return req("PUT", "/api/folders/order", { folder_ids: ids }); },
     // Albums: one list shared by Backups and Uploader (see albums.ts).
     async listAlbums(): Promise<{ rev: number; albums: Album[] }> { return req("GET", "/api/albums"); },
     async albumsRev(): Promise<{ rev: number }> { return req("GET", "/api/albums/rev"); },

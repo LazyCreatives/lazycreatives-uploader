@@ -16,6 +16,7 @@ from lazyupload import (album_sync, coverart, covers, crypto, entitlement, playb
                         soundcloud, waveform)
 from lazyupload.albums import Albums
 from lazyupload.albums_api import make_router as albums_router
+from lazyupload.folders_api import make_router as folders_router
 from lazyupload.api.auth import require_token, ws_token_ok
 from lazyupload.models import AUDIO_EXTS
 from lazyupload.api.progress import ProgressHub
@@ -465,6 +466,8 @@ def create_app(token: str, db_path: Path) -> FastAPI:
                 for m in mixes if not m.get("stem") and not m.get("superseded_by") and not m.get("short")]
 
     app.include_router(albums_router(require_token, projectmeta.find_backups_db, _album_candidates, albums))
+    # folders you sort projects into, made in either app (see folders.py)
+    app.include_router(folders_router(require_token))
 
     @app.post("/api/albums/{album_id}/soundcloud", dependencies=[Depends(require_token)])
     async def sync_album(album_id: str, req: AlbumSyncRequest):

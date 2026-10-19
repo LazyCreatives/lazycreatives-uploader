@@ -21,6 +21,8 @@ import { SmartBar } from "../components/SmartBar";
 import { ColumnBrowse, FacetChips, NO_GENRE, facets, openFromRow } from "../components/Browse";
 import { TrackPlaylists, pickPlaylist } from "../components/PlaylistPick";
 import { NoteOpened } from "../components/Recents";
+import { FolderShelf, pickFolders } from "../components/ProjectFolders";
+import { startProjectDrag, useFolders } from "../projectFolders";
 import "../manage.css";
 import { Collection } from "../components/Collection";
 import { collectionOf } from "./Home";
@@ -194,9 +196,30 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   // ---- filter + sort (client-side) ----
   const active = useMemo(() => ({ ...filters, q: search }), [filters, search]);
   const rated = (tracks || []).map((t) => ratingOf(rateKey(t))).join();
+  // Folders made in either app: the open one shows the tracks of its projects
+  const folders = useFolders();
+  const [folderId, setFolderState] = useState<string | null>(() => recall<string | null>("lc-tracks-folder", null, (v) => v === null || typeof v === "string"));
+  const setFolder = (id: string | null) => { keep("lc-tracks-folder", id); setFolderState(id); };
+  const folder = folders.find((f) => f.id === folderId) ?? null;
+  const inOpenFolder = useMemo(() => {
+    if (!folder) return tracks || [];
+    const ids = new Set(folder.project_ids);
+    return (tracks || []).filter((t) => !!t.project_id && ids.has(t.project_id));
+  }, [tracks, folder]);
+  // the projects your tracks came from, for the tiles' counts and covers
+  const shelfProjects = useMemo(() => {
+    const seen = new Map<string, { id: string; name: string; genre?: string | null }>();
+    for (const t of tracks || []) if (t.project_id && !seen.has(t.project_id)) seen.set(t.project_id, { id: t.project_id, name: t.project_match || t.title, genre: t.project_genre || t.genre });
+    return [...seen.values()];
+  }, [tracks]);
+  const tracksIn = (f: { project_ids: string[] } | null) => {
+    if (!f) return (tracks || []).length;
+    const ids = new Set(f.project_ids);
+    return (tracks || []).filter((t) => !!t.project_id && ids.has(t.project_id)).length;
+  };
   const filtered = useMemo(
-    () => sortTracks(applyFilters(tracks || [], active), sortKey, sortDesc),
-    [tracks, active, sortKey, sortDesc, rated]);
+    () => sortTracks(applyFilters(inOpenFolder, active), sortKey, sortDesc),
+    [inOpenFolder, active, sortKey, sortDesc, rated]);
   const counts = useMemo(() => privacyCounts(tracks || [], active), [tracks, active]);
   const options = useMemo(() => pickerOptions(tracks || []), [tracks]);
   const anyFilter = isFiltered(filters);
@@ -304,6 +327,18 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   }
 
   // Right-click on a track (both looks): the everyday actions in one place.
+  // Folders hold Backups projects: a track goes in by its project (when Backups knows it).
+  function addToFolders(list: Track[]) {
+    const ids = [...new Set(list.map((x) => x.project_id).filter(Boolean) as string[])];
+    if (!ids.length) return;
+    const one = list.find((x) => x.project_id);
+    void pickFolders(ids.length === 1 ? (one!.project_match || one!.title) : `${ids.length} projects`, ids);
+  }
+  function folderItem(list: Track[]): MenuItem[] {
+    if (!list.some((x) => x.project_id)) return [];
+    return [{ label: list.length > 1 ? "Add their projects to a folder…" : "Add its project to a folder…", onClick: () => addToFolders(list) }];
+  }
+
   function trackMenu(t: Track): MenuItem[] {
     const priv = isPrivate(t);
     const many = selected.has(t.id) ? (tracks || []).filter((x) => selected.has(x.id)) : [t];
@@ -315,6 +350,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
       { label: "Edit details", onClick: () => setEditing(t) },
       { label: many.length > 1 ? `Add ${many.length} to a playlist…` : "Add to playlist…", onClick: () => void pickPlaylist(many) },
       { label: priv ? "Make public" : "Make private", onClick: () => void quickPrivacy(t, priv ? "public" : "private") },
+      ...folderItem(many),
       "-",
       ...ratingMenu(many.map(rateKey), ratingOf(rateKey(t))),
       ...(t.genre ? [{ label: `Crate colour for ${t.genre}…`, onClick: () => pickCrateColor(t.genre, t.title) }] : []),
@@ -440,6 +476,11 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
         </>} />
 
       {friendly && <div className="banner banner--warn"><Icon name="alert" className="banner__icon" />{friendly}</div>}
+
+      {!loading && (tracks || []).length > 0 && (shelfProjects.length > 0 || folders.length > 0) && (
+        <FolderShelf open={folder?.id ?? null} onOpen={setFolder} projects={shelfProjects}
+          noun="tracks" allLabel="All tracks" count={tracksIn} />
+      )}
 
       {/* ---- search and filters; the bulk bar sits under them when tracks are ticked ---- */}
       {!loading && (tracks || []).length > 0 && (
@@ -572,6 +613,9 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
           <Button sm disabled={bulkBusy} onClick={() => void runBulkUpdate({ sharing: "public" })}>Make public</Button>
           <Button sm disabled={bulkBusy} onClick={() => void runBulkUpdate({ sharing: "private" })}>Make private</Button>
           <Button sm disabled={bulkBusy} onClick={() => void pickPlaylist((tracks || []).filter((x) => selected.has(x.id)))}>Add to playlist…</Button>
+          {(tracks || []).some((x) => selected.has(x.id) && x.project_id) && (
+            <Button sm disabled={bulkBusy} onClick={() => addToFolders((tracks || []).filter((x) => selected.has(x.id)))}>Add to folder…</Button>
+          )}
           <Button sm disabled={bulkBusy} onClick={() => setBulkEdit(true)}>Edit details…</Button>
           <Button sm disabled={bulkBusy} onClick={() => void runBulkArtwork()}>Set cover…</Button>
           <Button sm disabled={bulkBusy} onClick={() => void runBulkWaveform()}>Waveform covers</Button>
@@ -597,7 +641,13 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
           Post your first mix from Upload and it shows here.
         </EmptyState></div>
       )}
-      {!loading && (tracks || []).length > 0 && filtered.length === 0 && (
+      {!loading && folder && inOpenFolder.length === 0 && (
+        <div className="table"><EmptyState pose="napping" title={`No tracks in ${folder.name} yet`} say="An empty folder. Very tidy."
+          action={<Button sm onClick={() => setFolder(null)}>Show all tracks</Button>}>
+          Tracks show here once their project is in this folder. Drag a track onto the folder above, or right-click it.
+        </EmptyState></div>
+      )}
+      {!loading && (tracks || []).length > 0 && filtered.length === 0 && !(folder && inOpenFolder.length === 0) && (
         <div className="table"><EmptyState pose="searching" title={search ? `No tracks match “${search}”` : "No tracks match"} say="I looked everywhere."
           action={<Button sm onClick={clearFilters}>Clear search and filters</Button>}>
           Try fewer words or a different filter.
@@ -843,6 +893,11 @@ type RowActions = {
 };
 const COLUMN_PAGE = 200;
 
+// Drag a track onto a folder tile: its Backups project goes in the folder.
+const dragTrack = (t: Track) => t.project_id
+  ? { draggable: true, onDragStart: (e: React.DragEvent) => startProjectDrag(e, [t.project_id!], t.project_match || t.title) }
+  : {};
+
 // One track in the Genre > Year > Track columns.
 const ColumnItem = memo(function ColumnItem({ track: t, defaultArt, actions }: {
   track: Track; defaultArt: string | null; actions: RowActions;
@@ -850,7 +905,7 @@ const ColumnItem = memo(function ColumnItem({ track: t, defaultArt, actions }: {
   useGenreColors();  // a crate colour picked elsewhere redraws the stripe
   const meta = songMeta(t, artFor(t, defaultArt).src);
   return (
-    <div className="browse__item" data-nav-key={String(t.id)}
+    <div className="browse__item" data-nav-key={String(t.id)} {...dragTrack(t)}
       onClick={openFromRow(() => actions.edit(t))} onContextMenu={(e) => actions.menu(e, t)}>
       <span className="stripe" style={{ background: genreColor(t.genre) }} />
       <Art meta={meta} size={36} />
@@ -884,7 +939,7 @@ const TrackRow = memo(function TrackRow({ track, index, defaultArt, selected, ac
   const meta = songMeta(t, art.src);
   const preview = useAudition(t.local_path, meta);
   return (
-    <label {...preview} data-nav-key={String(t.id)} className={`row cols track-cols scanrow--enter${selected ? " row--selected" : ""}`}
+    <label {...preview} {...dragTrack(t)} data-nav-key={String(t.id)} className={`row cols track-cols scanrow--enter${selected ? " row--selected" : ""}`}
       onContextMenu={onContextMenu}
       style={{ ["--i" as string]: index } as React.CSSProperties}>
       <span className="stripe" style={{ background: genreColor(t.genre) }} />
@@ -945,7 +1000,7 @@ const TrackCard = memo(function TrackCard({ track, defaultArt, selected, actions
   const meta = songMeta(t, art.src);
   const preview = useAudition(t.local_path, meta);
   return (
-    <div {...preview} data-nav-key={String(t.id)} className={`sleeve track-sleeve${selected ? " sleeve--selected" : ""}`}
+    <div {...preview} {...dragTrack(t)} data-nav-key={String(t.id)} className={`sleeve track-sleeve${selected ? " sleeve--selected" : ""}`}
       onClick={onEdit} onContextMenu={onContextMenu}>
       <div className="sleeve__art">
         <Art meta={meta} />

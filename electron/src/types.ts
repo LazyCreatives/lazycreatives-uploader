@@ -188,6 +188,7 @@ export interface Track {
   genre_emoji?: string | null;       // e.g. "🔥"
   daw?: string | null;               // "ableton" | "flstudio" | ...
   project_match?: string | null;     // matched Backups project name
+  project_id?: string | null;        // that project's Backups id (for the folders it's in)
   project_genre?: string | null;     // that project's genre in Backups (same cover art in both apps)
   plugin_count?: number | null;
   track_count?: number | null;       // DAW project clip/track count

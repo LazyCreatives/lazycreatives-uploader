@@ -278,6 +278,7 @@ def _apply_project_meta(track: dict, meta: dict) -> None:
     track["project_genre"] = meta.get("genre")  # the project's own genre, for matching cover art
     track["daw"] = meta.get("daw")
     track["project_match"] = meta.get("project")
+    track["project_id"] = meta.get("project_id")  # Backups' id: puts the track under its project's folders
     track["plugin_count"] = meta.get("plugin_count")
     track["track_count"] = meta.get("track_count")
     track["missing_count"] = meta.get("missing_count")
