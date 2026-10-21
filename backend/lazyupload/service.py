@@ -8,11 +8,12 @@ import tempfile
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
-from lazyupload import coverart, crypto, projectmeta, seo, songs, soundcloud
+from lazyupload import coverart, crypto, plays, projectmeta, seo, songs, soundcloud
 from lazyupload.catalog import Catalog
+from lazyupload.names import song_title
 from lazyupload.hashing import hash_file
 from lazyupload.models import TrackMeta, UploadResult
 from lazyupload.scanner import discover, duration as file_duration
@@ -498,6 +499,16 @@ def list_tracks(catalog: Catalog) -> list[dict]:
     return tracks
 
 
+def note_plays(catalog: Catalog, tracks: list[dict], today: date | None = None) -> dict | None:
+    """Keep today's total plays and return the gain since an earlier day this week
+    (plays.py), for Home's "+38 plays since Tuesday". None when there is nothing to say."""
+    try:
+        total = sum(int(t.get("playback_count") or 0) for t in tracks)
+        return plays.record(catalog, (active_account(catalog) or {}).get("id"), total, today or date.today())
+    except Exception:
+        return None
+
+
 def update_track(catalog: Catalog, track_id: int, fields: dict) -> dict:
     if not connected(catalog):
         raise RuntimeError("not_connected")
@@ -888,25 +899,35 @@ def process_due_releases(catalog: Catalog, now: datetime | None = None) -> list[
 
 
 # ---- scan with dedupe -------------------------------------------------------
-def _hashed(catalog: Catalog, path: str, size: int, mtime: float) -> str:
+def _hashed(catalog: Catalog, path: str, size: int, mtime: float, cache: dict | None = None) -> str:
     """Content hash for a file, cached by (size, mtime) so unchanged files aren't
-    re-read on every scan. A render that changes bumps mtime/size -> re-hash."""
-    cache = catalog.get_setting(_HASH_CACHE_KEY) or {}
+    re-read on every scan. A render that changes bumps mtime/size -> re-hash.
+
+    A scan passes `cache` (read once with the whole folder check) and saves it once at
+    the end: reading and writing the whole list for every mix made a check of a few
+    thousand mixes take minutes."""
+    own = cache is None
+    if own:
+        cache = catalog.get_setting(_HASH_CACHE_KEY) or {}
     ent = cache.get(path)
     if ent and ent.get("size") == size and ent.get("mtime") == mtime:
         return ent["hash"]
     h = hash_file(Path(path))
     cache[path] = {"size": size, "mtime": mtime, "hash": h}
-    catalog.set_setting(_HASH_CACHE_KEY, cache)
+    if own:
+        catalog.set_setting(_HASH_CACHE_KEY, cache)
     return h
 
 
-def _prune_hash_cache(catalog: Catalog, live_paths: set[str]) -> None:
+def _prune_hash_cache(catalog: Catalog, live_paths: set[str], cache: dict | None = None,
+                      changed: bool = False) -> None:
     """Drop cached hashes for files that no longer exist, so the cache can't grow
-    without bound over time as renders are renamed/deleted."""
-    cache = catalog.get_setting(_HASH_CACHE_KEY) or {}
+    without bound over time as renders are renamed/deleted. With `cache` (a scan's own
+    copy), save it when anything was added (`changed`) or dropped."""
+    if cache is None:
+        cache = catalog.get_setting(_HASH_CACHE_KEY) or {}
     pruned = {p: v for p, v in cache.items() if p in live_paths}
-    if len(pruned) != len(cache):
+    if changed or len(pruned) != len(cache):
         catalog.set_setting(_HASH_CACHE_KEY, pruned)
 
 
@@ -1048,9 +1069,13 @@ def scan_mixes(catalog: Catalog, sources: list[Path], progress=None) -> list[dic
     if progress:
         progress({"type": "scan_start", "total": len(found)})
     out = []
+    cache = catalog.get_setting(_HASH_CACHE_KEY) or {}
+    changed = False
     for i, m in enumerate(found):
+        was = cache.get(m["path"])
         try:
-            h = _hashed(catalog, m["path"], m["size"], m["mtime"])
+            h = _hashed(catalog, m["path"], m["size"], m["mtime"], cache)
+            changed = changed or cache.get(m["path"]) is not was
         except OSError:
             continue
         m["file_hash"] = h
@@ -1061,7 +1086,7 @@ def scan_mixes(catalog: Catalog, sources: list[Path], progress=None) -> list[dic
         if progress:
             progress({"type": "scan_progress", "done": i + 1,
                       "total": len(found), "name": m["name"]})
-    _prune_hash_cache(catalog, {m["path"] for m in found})
+    _prune_hash_cache(catalog, {m["path"] for m in found}, cache, changed=changed)
     projectmeta.annotate(out)  # borrow BPM/genre from the sibling Backups catalog by name
     apply_mix_genres(out, catalog)  # a genre the producer set for one mix wins
     mark_stems(out)            # one part of a song (kick, vocals) is never a song to post
@@ -1083,7 +1108,8 @@ def scan_mixes(catalog: Catalog, sources: list[Path], progress=None) -> list[dic
 def _meta_for(item: dict, defaults: dict) -> TrackMeta:
     name = item.get("name") or Path(item["path"]).stem
     template = defaults.get("title_template") or "{name}"
-    title = (item.get("title") or template.replace("{name}", name)).strip() or name
+    # {name} is the song's tidy name from the file: "glasshouse_final_v3" -> "Glasshouse"
+    title = (item.get("title") or template.replace("{name}", song_title(name))).strip() or name
     tags = item.get("tags")
     if tags is None:
         tags = defaults.get("tags") or []
@@ -1743,7 +1769,8 @@ def process_wip(catalog: Catalog, sources: list[Path], progress=None) -> list[di
                          history=entry.get("history") or [default_timestamp()])
             wip[k] = entry
             continue
-        base = (config.get("title_template") or "{name}").replace("{name}", m["name"]).strip() or m["name"]
+        base = ((config.get("title_template") or "{name}").replace("{name}", song_title(m["name"])).strip()
+                or m["name"])
         wip_title = wip_tag_title(base)  # show it as a WIP on SoundCloud
         item = {"path": m["path"], "name": m["name"], "title": wip_title, "file_hash": h,
                 "size": m.get("size"), "sharing": "private", "allow_double": True,
@@ -1796,4 +1823,14 @@ def build_overview(catalog: Catalog) -> dict:
         "last_upload": (last or {}).get("timestamp"),
         "last_upload_ok": bool(last and last.get("status") == "uploaded"),
         "scheduled_count": len(pending_releases(catalog)),
+        # tracks last seen on the account (posted here or elsewhere); None if never looked
+        "sc_track_count": _seen_count(catalog),
     }
+
+
+def _seen_count(catalog: Catalog) -> int | None:
+    try:
+        tracks, at = songs.seen_sc_tracks(catalog, (active_account(catalog) or {}).get("id"))
+    except Exception:
+        return None
+    return len(tracks) if at else None

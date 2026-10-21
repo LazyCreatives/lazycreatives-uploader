@@ -3,9 +3,9 @@ import { fmtBytes, fmtCount, fmtDuration } from "../src/components/ui";
 
 describe("fmtBytes", () => {
   it("formats common sizes", () => {
-    expect(fmtBytes(0)).toBe("0 B");
-    expect(fmtBytes(2048)).toBe("2 KB");
-    expect(fmtBytes(5 * 1024 * 1024)).toBe("5.0 MB");
+    expect(fmtBytes(0)).toBe("0\u00a0B");
+    expect(fmtBytes(2048)).toBe("2\u00a0KB");
+    expect(fmtBytes(5 * 1024 * 1024)).toBe("5.0\u00a0MB");
   });
 });
 
@@ -24,7 +24,7 @@ describe("worst-case numbers", () => {
     expect(fmtDuration(3599)).toBe("59:59");
   });
   it("switches to TB for multi-terabyte totals", () => {
-    expect(fmtBytes(3 * 1024 ** 4)).toBe("3.0 TB");
+    expect(fmtBytes(3 * 1024 ** 4)).toBe("3.0\u00a0TB");
   });
   it("groups digits in counts", () => {
     expect(fmtCount(12345)).toBe((12345).toLocaleString());

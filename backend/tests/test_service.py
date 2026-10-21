@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from lazyupload import service
@@ -91,3 +92,30 @@ def test_automatic_posting_skips_short_exports(catalog, tmp_path, monkeypatch):
     monkeypatch.setattr(sched_mod, "run_upload", lambda cat, items, **kw: posted.extend(m["name"] for m in items))
     sched_mod.UploadScheduler(catalog)._run_once()
     assert posted == ["Night Drive"]
+
+
+def test_scan_reads_and_writes_the_hash_cache_once(catalog, mixes_dir, monkeypatch):
+    """A folder check reads its list of known mixes once and saves it once, not once
+    per mix (with thousands of mixes that took minutes)."""
+    calls = {"get": 0, "set": 0}
+    get, put = catalog.get_setting, catalog.set_setting
+
+    def counted_get(key, *a, **k):
+        calls["get"] += key == "hash_cache"
+        return get(key, *a, **k)
+
+    def counted_set(key, *a, **k):
+        calls["set"] += key == "hash_cache"
+        return put(key, *a, **k)
+    monkeypatch.setattr(catalog, "get_setting", counted_get)
+    monkeypatch.setattr(catalog, "set_setting", counted_set)
+    service.scan_mixes(catalog, [mixes_dir])
+    assert calls == {"get": 1, "set": 1}
+    service.scan_mixes(catalog, [mixes_dir])  # nothing changed: nothing to save
+    assert calls == {"get": 2, "set": 1}
+    target = next(mixes_dir.glob("*.wav"))
+    make_wav(target, seconds=2)  # re-bounced: hashed again and saved
+    os.utime(target, (1, 1))
+    service.scan_mixes(catalog, [mixes_dir])
+    assert calls["set"] == 2
+    assert len(get("hash_cache")) == 3

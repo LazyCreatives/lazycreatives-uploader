@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { makeApi, openExternal, revealPath, saveRenderedCover } from "../api";
 import { coverPng } from "../coverRender";
 import { openMenu, toast, toastWarn } from "../components/Desktop";
@@ -39,79 +39,118 @@ export function dayLabel(s: string, now: Date = new Date()): string {
 // One fixed-column table of uploads; Home shows the latest few with the same columns.
 // Each row carries the mix's cover, a play button and its waveform.
 // With `byDay`, rows sit under a heading per day and the When column shows just the time.
+// Rows are memoised and keyed by id: pressing "Show older posts" draws only the new rows,
+// and the day headings and Try again checks are worked out in one pass over the list.
 export function UploadTable({ rows, byDay, density = "comfortable", onRetry, retrying }: {
   rows: UploadRow[]; byDay?: boolean; density?: Density;
   onRetry?: (r: UploadRow) => void; retrying?: Set<number>;
 }) {
-  let lastDay = "";
+  const days = useMemo(() => byDay ? dayHeadings(rows) : null, [rows, byDay]);
+  const retryable = useMemo(() => onRetry ? retryableIds(rows) : null, [rows, onRetry]);
   return (
     <div className={`table table--crate rows--${density}`}>
       <div className="row cols cols-head history-cols">
         <span /><span /><span /><span>Track</span><span>Waveform</span><span>Result</span><span>Privacy</span>
         <span className="col-num">Size</span><span className="col-num">When</span><span />
       </div>
-      {rows.map((r) => {
-        const st = STATUS[r.status] ?? { pill: "", label: r.status };
-        const day = byDay ? dayLabel(r.timestamp) : "";
-        const heading = byDay && day !== lastDay
-          ? <div key={`day-${day}`} className="row hist-day">{day}<span>{rows.filter((x) => dayLabel(x.timestamp) === day).length}</span></div>
-          : null;
-        lastDay = day;
-        const meta = { title: r.title, sub: r.project_match ? `From ${r.project_match}` : `Posted ${fmtWhen(r.timestamp)}`,
-          cover: r.project_match || r.title, genre: r.project_genre };
-        return (<Fragment key={r.id}>
-          {heading}
-          <div className={`row cols history-cols${r.status === "error" ? " row--failed" : ""}`} onContextMenu={(e) => openMenu(e, [
-            ...(r.permalink_url ? [
-              { label: "Open on SoundCloud", onClick: () => openExternal(r.permalink_url!) },
-              { label: "Copy SoundCloud link", onClick: () => { copyText(r.permalink_url!); } }, "-" as const] : []),
-            ...(onRetry && canRetry(r, rows) ? [{ label: "Try again", onClick: () => onRetry(r), disabled: retrying?.has(r.id) }, "-" as const] : []),
-            ...(r.outside ? [] : [
-              { label: "Show the file", onClick: () => revealPath(r.file_path) },
-              { label: "Copy file path", onClick: () => { copyText(r.file_path); } }]),
-          ])}>
-            <span className="stripe" style={{ background: genreColor(r.project_genre) }} />
-            {r.outside ? <span /> : <PlayButton path={r.file_path} meta={meta} size={28} />}
-            <Cover name={meta.cover} genre={meta.genre} size={36} label={false} />
-            <div className="row__main">
-              <div className="row__title" title={r.title}>{r.title}</div>
-              {r.outside && <div className="row__sub hist-outside">
-                {r.project_match ? `From ${r.project_match} · posted outside the app` : "Posted outside the app"}
-              </div>}
-              {r.error && <div className="row__sub hist-err">
-                {onRetry && canRetry(r, rows) && (
-                  <button type="button" className="btn btn--ghost btn--sm mixstate__retry" disabled={retrying?.has(r.id)}
-                    onClick={() => onRetry(r)}>{retrying?.has(r.id) ? "Posting…" : "Try again"}</button>
-                )}
-                <span className="col-trunc" title={r.error}>{r.error}</span>
-              </div>}
-            </div>
-            <SongWave path={r.outside ? null : r.file_path} scUrl={r.outside ? r.waveform_url : null} meta={meta} height={22} />
-            <span className={`pill ${st.pill}`}>{st.label}</span>
-            <span className="muted">{r.sharing ? r.sharing[0].toUpperCase() + r.sharing.slice(1) : ""}</span>
-            <span className="col-num">{r.size == null ? "" : fmtBytes(r.size)}</span>
-            <span className="col-num">{byDay ? fmtTime(r.timestamp) : fmtWhen(r.timestamp)}</span>
-            <span className="col-act">
-              {r.permalink_url
-                ? <button className="iconbtn" title="Open on SoundCloud" aria-label={`Open ${r.title} on SoundCloud`}
-                    onClick={() => openExternal(r.permalink_url!)}><Icon name="external" /></button>
-                : <button className="iconbtn" title="Show the file" aria-label={`Show ${r.title} on disk`}
-                    onClick={() => revealPath(r.file_path)}><Icon name="folder" /></button>}
-            </span>
-          </div>
-        </Fragment>);
-      })}
+      {rows.map((r) => (
+        <HistoryRow key={r.id} r={r} byDay={!!byDay} heading={days?.get(r.id) ?? null}
+          canRetry={!!retryable?.has(r.id)} retrying={!!retrying?.has(r.id)} onRetry={onRetry} />
+      ))}
     </div>
   );
 }
 
+// Which rows start a new day, with the day's name and how many rows it holds.
+// Each distinct date is named once (toLocaleDateString is slow over thousands of rows).
+export function dayHeadings(rows: UploadRow[], now: Date = new Date()): Map<number, { day: string; n: number }> {
+  const names = new Map<string, string>();
+  const nameOf = (ts: string) => {
+    const d = parseWhen(ts);
+    const k = isNaN(d.getTime()) ? "" : d.toDateString();
+    let name = names.get(k);
+    if (name === undefined) { name = dayLabel(ts, now); names.set(k, name); }
+    return name;
+  };
+  const out = new Map<number, { day: string; n: number }>();
+  const counts = new Map<string, number>();
+  let last = "";
+  for (const r of rows) {
+    const day = nameOf(r.timestamp);
+    counts.set(day, (counts.get(day) ?? 0) + 1);
+    if (day !== last) out.set(r.id, { day, n: 0 });
+    last = day;
+  }
+  for (const h of out.values()) h.n = counts.get(h.day) ?? 0;
+  return out;
+}
+
+const sameRow = (a: UploadRow, b: UploadRow) => a === b
+  || (Object.keys(a) as (keyof UploadRow)[]).every((k) => a[k] === b[k]) && Object.keys(a).length === Object.keys(b).length;
+
+// One upload. Loading older posts hands back fresh copies of the rows already shown;
+// a row whose fields are all the same isn't drawn again.
+const HistoryRow = memo(function HistoryRow({ r, byDay, heading, canRetry, retrying, onRetry }: {
+  r: UploadRow; byDay: boolean; heading: { day: string; n: number } | null;
+  canRetry: boolean; retrying: boolean; onRetry?: (r: UploadRow) => void;
+}) {
+  const st = STATUS[r.status] ?? { pill: "", label: r.status };
+  const meta = { title: r.title, sub: r.project_match ? `From ${r.project_match}` : `Posted ${fmtWhen(r.timestamp)}`,
+    cover: r.project_match || r.title, genre: r.project_genre };
+  const retryHere = !!onRetry && canRetry;
+  return (<>
+    {heading && <div className="row hist-day">{heading.day}<span>{fmtCount(heading.n)}</span></div>}
+    <div className={`row cols history-cols${r.status === "error" ? " row--failed" : ""}`} onContextMenu={(e) => openMenu(e, [
+      ...(r.permalink_url ? [
+        { label: "Open on SoundCloud", onClick: () => openExternal(r.permalink_url!) },
+        { label: "Copy SoundCloud link", onClick: () => { copyText(r.permalink_url!); } }, "-" as const] : []),
+      ...(retryHere ? [{ label: "Try again", onClick: () => onRetry!(r), disabled: retrying }, "-" as const] : []),
+      ...(r.outside ? [] : [
+        { label: "Show the file", onClick: () => revealPath(r.file_path) },
+        { label: "Copy file path", onClick: () => { copyText(r.file_path); } }]),
+    ])}>
+      <span className="stripe" style={{ background: genreColor(r.project_genre) }} />
+      {r.outside ? <span /> : <PlayButton path={r.file_path} meta={meta} size={28} />}
+      <Cover name={meta.cover} genre={meta.genre} size={36} label={false} />
+      <div className="row__main">
+        <div className="row__title" title={r.title} dir="auto">{r.title}</div>
+        {r.outside && <div className="row__sub hist-outside">
+          {r.project_match ? `From ${r.project_match} · posted outside the app` : "Posted outside the app"}
+        </div>}
+        {r.error && <div className="row__sub hist-err">
+          {retryHere && (
+            <button type="button" className="btn btn--ghost btn--sm mixstate__retry" disabled={retrying}
+              onClick={() => onRetry!(r)}>{retrying ? "Posting…" : "Try again"}</button>
+          )}
+          <span className="col-trunc" title={r.error}>{r.error}</span>
+        </div>}
+      </div>
+      <SongWave path={r.outside ? null : r.file_path} scUrl={r.outside ? r.waveform_url : null} meta={meta} height={22} />
+      <span className={`pill ${st.pill}`}>{st.label}</span>
+      {r.sharing ? <span className={`pill ${r.sharing === "private" ? "pill--private" : "pill--ok"}`}>{r.sharing === "private" ? "Private" : "Public"}</span> : <span />}
+      <span className="col-num">{r.size == null ? "" : fmtBytes(r.size)}</span>
+      <span className="col-num">{byDay ? fmtTime(r.timestamp) : fmtWhen(r.timestamp)}</span>
+      <span className="col-act">
+        {r.permalink_url
+          ? <button className="iconbtn" title="Open on SoundCloud" aria-label={`Open ${r.title} on SoundCloud`}
+              onClick={() => openExternal(r.permalink_url!)}><Icon name="external" /></button>
+          : <button className="iconbtn" title="Show the file" aria-label={`Show ${r.title} on disk`}
+              onClick={() => revealPath(r.file_path)}><Icon name="folder" /></button>}
+      </span>
+    </div>
+  </>);
+}, (a, b) => a.byDay === b.byDay && a.canRetry === b.canRetry && a.retrying === b.retrying && a.onRetry === b.onRetry
+  && a.heading?.day === b.heading?.day && a.heading?.n === b.heading?.n && sameRow(a.r, b.r));
+
 // A failed post can be tried again unless the same file has gone up since.
-// Rows are newest first, so anything before this one in the list is later.
-export function canRetry(r: UploadRow, rows: UploadRow[]): boolean {
-  if (r.status !== "error") return false;
-  const i = rows.indexOf(r);
-  return !rows.slice(0, i < 0 ? 0 : i).some((x) => x.status === "uploaded"
-    && (x.file_path === r.file_path || (!!r.file_hash && x.file_hash === r.file_hash)));
+// Rows are newest first, so anything before a row in the list is later. One pass, oldest checks last.
+export function retryableIds(rows: UploadRow[]): Set<number> {
+  const paths = new Set<string>(), hashes = new Set<string>(), out = new Set<number>();
+  for (const r of rows) {
+    if (r.status === "error" && !paths.has(r.file_path) && !(r.file_hash && hashes.has(r.file_hash))) out.add(r.id);
+    if (r.status === "uploaded") { paths.add(r.file_path); if (r.file_hash) hashes.add(r.file_hash); }
+  }
+  return out;
 }
 
 type ResultFilter = "all" | "uploaded" | "error" | "skipped";
@@ -158,6 +197,11 @@ export function History() {
       toastWarn(`Couldn’t post ${r.title} again: ${String((e as Error).message)}`);
     }
   }
+
+  // One function for every row's Try again, so a row isn't drawn again just because History was.
+  const retryRef = useRef(retry);
+  retryRef.current = retry;
+  const onRetry = useCallback((r: UploadRow) => void retryRef.current(r), []);
 
   const q = query.trim().toLowerCase();
   const matching = (rows ?? []).filter((r) => !q || [r.title, r.project_match, r.project_genre, r.sharing]
@@ -215,7 +259,7 @@ export function History() {
           </div>}
         </div>
         {shown.length > 0
-          ? <UploadTable rows={shown} byDay density={density} onRetry={(r) => void retry(r)} retrying={retrying} />
+          ? <UploadTable rows={shown} byDay density={density} onRetry={onRetry} retrying={retrying} />
           : <div className="table"><EmptyState pose="searching" title="Nothing matches" say="Looked everywhere. Nothing.">
               Try fewer letters, or pick All and Everywhere.
             </EmptyState></div>}

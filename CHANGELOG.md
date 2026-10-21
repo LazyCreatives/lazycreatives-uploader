@@ -14,6 +14,47 @@ How to keep this up to date:
   The checks on pull requests fail if a new version has no section here.
 -->
 
+## Unreleased
+
+## 0.3.0 (21 October 2026)
+
+### New
+- **Crash reports.** If Uploader breaks, a note of what went wrong goes to Lazy Creatives so it can be fixed, without you filling anything in. It has the error, the app version and computer type, and any file paths in the error. Never your music. Turn it off any time in Settings, Privacy, Send crash reports.
+- **Plays this week on Home.** Under Plays, a quiet line says how many plays you've gained lately, like "+38 plays since Tuesday". It counts from the first day this week Uploader saw your plays, and shows nothing until there is a gain.
+- Your very first post gets its own line when it's done: "Your first mix is up on SoundCloud."
+
+### Better
+- **Hundreds of folders stay tidy.** The folder row above Your tracks shows your first 8 folders and an "All folders…" button that finds any folder by name, instead of a long strip you can't search.
+- **Faster with big folders.** With thousands of mixes, the Upload list checks your folders about 14 times faster (seconds instead of minutes), and adding songs to an album no longer checks every folder again. The app also opens a little sooner, and lists with song waves scroll more smoothly.
+- **A tidier look all round.** The folder row hides its scrollbar and scrolls with the mouse wheel, the folder path in Settings cuts from the start so you see the folder name, sizes and times never split over two lines, and "Add another account" is no longer orange. Public posts show a green dot in Your tracks and History. Settings says clearly which posts each choice is for, and Genre and Tags have their own labels. Album pages say how many songs are not ready and how many to check for quality, in plain words, and Easier reading keeps the Upload list in line.
+- A song from a folder of stems that Backups shows as "Stems only" says so in your tracks list, instead of a blank or code-like program name.
+- Mixes post to SoundCloud with a clean title: "glasshouse_final_3 master" goes up as "Glasshouse". The Upload list shows the title each mix will post as; hover it to see the file name. Your own titles and templates still win, and files are never renamed.
+- Songs added to an album get a clean title. Titles you typed yourself stay as they are.
+- Your tracks gives the list more room: folders sit in one slim row that scrolls sideways.
+- The "From project" column shows the project's name in full, plus a warning only when something needs a look (missing samples, a track posted twice). Hover it for the rest.
+- A track with no copy on this computer shows an empty ring where its play button would be, so the play column still lines up.
+- The Public and Private switch on Your tracks is easier to click, and closing "Find anything" or another pop-up puts you back where you were.
+- "Sync to SoundCloud" from Backups now asks first in Uploader, so a link from anywhere else can't post an album without you.
+- The track you just edited in Your tracks glows for a moment when the editor closes, so you can see where your change landed. Editing several at once lights up all the changed rows.
+- While a post runs, the "posted, skipped, failed" counts roll up as each mix finishes, like the numbers on Home.
+- "Now playing" shrinks back into the player bar instead of vanishing.
+- Safer behind the scenes: only song files and real pictures are ever sent to SoundCloud, the app's private key no longer shows in places other programs can read, and a damaged or disguised song file can't make the player open other files.
+- Clearer wording: when a post or sign-in fails it says what to do next, buttons say "post" all through the app, and pop-ups from your computer say "Lazy Creatives Uploader".
+
+### Fixed
+- The blue glow on a mix that just went up plays once, when it goes up. It no longer plays again on every posted mix when you search or press Check folders.
+- With Send crash reports switched off, nothing at all goes to the crash report service any more.
+- Clean song names keep real words: "Brand New", "Prelude in C Major" and "DNA" stay as they are.
+- The Title template in Settings is used for every mix again, not just some.
+- You can post a mix with its file's own name as the title ("DNA" stays "DNA").
+- The folder row above Your tracks stops scrolling on a folder's edge instead of half under "All tracks", and the open folder stays lit while the pointer is on it.
+- Your tracks and Upload open quickly even with thousands of mixes or folders. A long Upload list shows 200 mixes at a time, with "Show 200 more" under them.
+- "Show older posts" in History stays quick however many times you press it. It used to get slower each time, up to 10 seconds or more.
+- A long album fits its page: the Length strip stays inside its box, and the Tempo line shows the first 24 songs, then how many more.
+- Numbers read properly everywhere: big counts have their thousands separated (1,234,567 plays, 9,999 tracks), a 4-hour song shows 4:02:03, tempos are whole numbers (90, not 89.999), and a release years away says "73 years to go" instead of thousands of days.
+- Names in Arabic or Hebrew that are too long to fit are cut at their end, not their first word. "Missing 999+ samples" keeps the word "Missing" in a narrow column, "Stems only" shows under the project's name, and a track's Edit panel lists its program, tempo and backups.
+- An empty Home no longer says "Nothing posted yet" twice, and an empty Upload says "No mixes in your folders yet" without a Post button that has nothing to post. On a narrow album page Quality keeps only its dot so song names have room, and a cover's play button no longer sits on its name.
+
 ## 0.2.17 (19 October 2026)
 
 ### New

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { makeApi, openExternal, pickImage } from "../api";
 import { askConfirm, Exit, openMenu, toast, toastWarn, type MenuItem } from "../components/Desktop";
 import { copyText } from "../desktop";
-import { Button, PageHeader, fmtDuration } from "../components/ui";
+import { Button, PageHeader, fmtCount, fmtDuration } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Art, PlayButton } from "../components/Player";
 import { EmptyState } from "../components/SlothSpot";
@@ -134,10 +134,10 @@ function PlaylistRow({ p, onOpen }: { p: Playlist; onOpen: () => void }) {
       <span className="stripe" style={{ background: genreColor(mainGenre(p.tracks)) }} />
       <PlaylistArt p={p} size={36} />
       <div className="row__main">
-        <div className="row__title" title={p.title}>{p.title}</div>
-        <div className="row__sub col-trunc">{p.tracks.slice(0, 3).map((t) => t.title).join(", ") || "Empty so far"}</div>
+        <div className="row__title" title={p.title} dir="auto">{p.title}</div>
+        <div className="row__sub col-trunc">{p.tracks.slice(0, 3).map((t) => t.title.trim()).join(", ") || "Empty so far"}</div>
       </div>
-      <span className="col-num">{p.track_count}</span>
+      <span className="col-num">{fmtCount(p.track_count)}</span>
       <span className="col-num">{fmtLength(p.duration) || "—"}</span>
       <span className={`pill ${p.sharing === "private" ? "pill--private" : "pill--ok"}`}>{p.sharing === "private" ? "Private" : "Public"}</span>
       <span className="col-num faint">{shortDay(p.last_modified || p.created_at) || "—"}</span>
@@ -469,7 +469,7 @@ function TrackList({ rows, genre, onOrder, onRemove, canOpen, onOpen }: {
               {t.local_path ? <PlayButton path={t.local_path} meta={meta} size={28} /> : <span />}
               <Art meta={meta} size={36} />
               <div className="row__main">
-                <div className="row__title" title={t.title}>{t.title}</div>
+                <div className="row__title" title={t.title} dir="auto">{t.title}</div>
                 <div className="row__sub col-trunc">{meta.sub}</div>
               </div>
               <span className="col-trunc">

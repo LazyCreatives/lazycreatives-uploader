@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { makeApi, openExternal, saveRenderedCover } from "./api";
 import { loadAlbums, mainGenre, type Album, type AlbumLink } from "./albums";
 import { coverPng } from "./coverRender";
-import { toast, toastWarn } from "./components/Desktop";
+import { askConfirm, toast, toastWarn } from "./components/Desktop";
 import type { AlbumSync } from "./components/Albums";
 
 // "Sync to SoundCloud" on an album page: one playlist of the album's Ready songs in
@@ -87,8 +87,15 @@ export const albumSync: AlbumSync = {
 };
 
 // From Backups ("Sync to SoundCloud" there opens Uploader with the album's id).
+// From a link (Backups' "Sync to SoundCloud"). Links can come from anywhere, so it
+// asks first: nothing goes up to SoundCloud without a press here.
 export async function syncById(id: string) {
   const a = (await api.listAlbums().catch(() => ({ albums: [] as Album[] }))).albums.find((x) => x.id === id);
-  if (a) void start(a);
-  else toastWarn("That album isn't there any more.");
+  if (!a) { toastWarn("That album isn't there any more."); return; }
+  const ok = await askConfirm({
+    title: `Sync “${a.title}” to SoundCloud?`,
+    body: "Its Ready songs that aren't up yet are posted, and its SoundCloud playlist is brought up to date.",
+    confirm: "Sync to SoundCloud",
+  });
+  if (ok) void start(a);
 }

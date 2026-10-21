@@ -176,3 +176,29 @@ def test_old_album_list_gains_genre(tmp_path):
     assert store.all()[0]["songs"][0]["genre"] == ""
     store.add_songs("a1", [{"path": "/x/New.wav", "genre": "Grime"}])
     assert [s["genre"] for s in store.all()[0]["songs"]] == ["", "Grime"]
+
+
+def test_old_file_name_titles_are_cleaned_once(tmp_path):
+    import sqlite3
+    song = tmp_path / "glasshouse_final_v3.wav"
+    song.write_bytes(b"RIFF0000WAVE")
+    al = Albums(tmp_path / "albums.db")
+    a = al.create("EP")
+    al.add_songs(a["id"], [{"path": str(song)}])
+    con = sqlite3.connect(str(tmp_path / "albums.db"))
+    con.execute("UPDATE album_songs SET title = 'glasshouse_final_v3'")  # added before titles were cleaned
+    con.execute("DELETE FROM meta WHERE key = 'titles_cleaned'")
+    con.commit()
+    assert al.get(a["id"])["songs"][0]["title"] == "Glasshouse"
+    con.execute("UPDATE album_songs SET title = 'glasshouse_final_v3'")  # chosen on purpose later
+    con.commit()
+    con.close()
+    assert al.get(a["id"])["songs"][0]["title"] == "glasshouse_final_v3"
+
+
+def test_clean_names_keep_real_words():
+    from lazyupload.names import song_title
+    assert song_title("Brand New") == "Brand New"
+    assert song_title("Prelude in C Major") == "Prelude in C Major"
+    assert song_title("DNA") == "DNA"
+    assert song_title("Night Drive Amin") == "Night Drive"

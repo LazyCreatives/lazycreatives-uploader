@@ -7,7 +7,7 @@ import { askConfirm, Exit, openMenu, toast, type MenuItem, toastWarn } from "../
 import { pickGenre } from "../components/GenrePick";
 import { copyText } from "../desktop";
 import type { Config, Entitlement, Mix, Sharing, UploadItemInput } from "../types";
-import { Button, fmtBytes, fmtCount, fmtDuration, fmtWhen, PageHeader, ProBadge, ProgressBar } from "../components/ui";
+import { Button, fmtBytes, fmtCount, fmtDayIn, fmtDuration, PageHeader, ProBadge, ProgressBar } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Cover } from "../components/Cover";
 import { AuditionLabel, PlayButton, SongWave, type SongMeta } from "../components/Player";
@@ -16,8 +16,15 @@ import { genreColor } from "../look";
 import { EmptyState, SlothSpot } from "../components/SlothSpot";
 import type { ItemState, UploadState, ScanState } from "../useProgress";
 import { preselect as pickDropped } from "../companionQueue";
+import { Rolling } from "../components/Rolling";
+import { isFirstPost, newlyPosted } from "../moments";
+import { moreToShow, SHOW_PAGE } from "../paging";
 
 const api = makeApi();
+
+// Whether the post running now is the first ever (nothing on SoundCloud before it), for
+// the line that ends it. Kept outside the page, which can be left while a post runs.
+let firstPost = false;
 
 // Free to tick and post without asking: not up in any format or version, the best
 // file of its mix, and not a short click, test bounce or stem.
@@ -71,6 +78,9 @@ export function fmtRelease(value: string): string {
 }
 
 // The heading of the last look before posting: how many, as what, on which account.
+// What a mix goes up as: your own title, else the tidy name from its file.
+export const titleFor = (m: Mix, titles: Record<string, string> = {}) => titles[m.path] || m.song_title || m.name;
+
 export function lastLookTitle(n: number, sharings: Sharing[], account: string | null, goesPublic: string | null): string {
   const what = `${n} ${n === 1 ? "mix" : "mixes"}`;
   const on = account ? ` on ${account}` : "";
@@ -105,9 +115,12 @@ export function postButtonLook(picked: number, running: boolean): { kind: "sc" |
   return { kind: "sc", label: `Post ${picked} to SoundCloud` };
 }
 
-// The one line that ends a post, in plain words with the real counts.
-export function doneLine(ok: number, skipped: number, failed: number): string {
+// The one line that ends a post, in plain words with the real counts. The very first
+// post (nothing on SoundCloud before it) that all went up gets its own line.
+export function doneLine(ok: number, skipped: number, failed: number, first = false): string {
   const mixes = (n: number) => `${n} ${n === 1 ? "mix" : "mixes"}`;
+  if (first && ok > 0 && failed === 0 && skipped === 0)
+    return ok === 1 ? "Your first mix is up on SoundCloud." : `Your first ${ok} mixes are up on SoundCloud.`;
   if (failed > 0) {
     const where = `The reason is on ${failed === 1 ? "its row" : "their rows"}.`;
     if (ok === 0) return `${failed === 1 ? "That mix" : `Those ${mixes(failed)}`} didn’t go up. ${where}`;
@@ -146,6 +159,9 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   const [showShort, setShowShort] = useState(false);
   const [showStems, setShowStems] = useState(false);
   const [query, setQuery] = useState("");
+  // A long list draws its first SHOW_PAGE mixes, and more on asking (new and posted apart).
+  const [freshShown, setFreshShown] = useState(SHOW_PAGE);
+  const [postedShown, setPostedShown] = useState(SHOW_PAGE);
   const [coverArt, setCoverArt] = useState<string | null>(null);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
@@ -158,6 +174,22 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   const [editing, setEditing] = useState<string | null>(null);
 
   useEffect(() => { void rescan(); /* on mount */ }, []);
+
+  // The rows that have just gone up glow for a moment (.mixrow--justposted). Only for
+  // the glow's 2s after the change, so a row drawn again later doesn't replay it.
+  const [justPosted, setJustPosted] = useState<ReadonlySet<string>>(new Set());
+  const seenItems = useRef(upload.items);
+  const glowTimers = useRef<number[]>([]);
+  useEffect(() => {
+    const fresh = newlyPosted(seenItems.current, upload.items);
+    seenItems.current = upload.items;
+    if (!fresh.length) return;
+    setJustPosted((s) => new Set([...s, ...fresh]));
+    glowTimers.current.push(window.setTimeout(() => setJustPosted((s) => {
+      const next = new Set(s); fresh.forEach((k) => next.delete(k)); return next;
+    }), 2000));
+  }, [upload.items]);
+  useEffect(() => () => glowTimers.current.forEach((t) => clearTimeout(t)), []);
 
   // Load a preview data URL whenever the batch cover art changes.
   useEffect(() => {
@@ -309,9 +341,11 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
         const tags = mixTags(baseTags, m.bpm);
         // Drafts publish privately and carry a [WIP] marker in the title on SoundCloud.
         const own = titles[m.path]?.trim();
-        const name = own || m.name;
-        const baseTitle = tmpl ? tmpl.title_template.replace("{name}", name) : name;
-        const title = m.wip ? `${baseTitle} [WIP]` : (tmpl || own ? baseTitle : undefined);
+        const name = own || m.song_title || m.name;
+        // A named template, else the Settings > Title template; your own title goes as typed.
+        const pattern = tmpl ? tmpl.title_template : own ? "{name}" : cfg.title_template || "{name}";
+        const baseTitle = pattern.replace("{name}", name);
+        const title = m.wip ? `${baseTitle} [WIP]` : (tmpl || own || baseTitle !== m.name ? baseTitle : undefined);
         const itemSharing: Sharing = m.wip ? "private" : (tmpl ? tmpl.sharing : sharing);
         return {
           path: file.path, name: m.name,
@@ -368,7 +402,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     if (doubles.length) {
       const one = doubles.length === 1;
       const again = await askConfirm({
-        title: one ? "This song is already on SoundCloud" : `${doubles.length} of these songs are already on SoundCloud`,
+        title: one ? "This mix is already on SoundCloud" : `${doubles.length} of these mixes are already on SoundCloud`,
         body: `${doubles.map((d) => d.why).join(" ")} Posting ${one ? "it" : "them"} makes a second copy there.`,
         confirm: one ? "Post it anyway" : "Post them anyway", cancel: one ? "Leave it out" : "Leave them out",
       });
@@ -394,12 +428,14 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     setReview((r) => r && { ...r, items: r.items.map((i) => (i.path === path ? { ...i, title: text } : i)) });
     if (!templateName) setTitles((t) => ({ ...t, [path]: text.replace(/\s*\[WIP\]$/, "") }));
   }
-  // Name a mix for SoundCloud without renaming the file. Empty goes back to the file's name.
+  // Name a mix for SoundCloud without renaming the file. Empty goes back to the clean name.
   function setTitle(m: Mix, text: string) {
     const t = text.trim();
     setTitles((prev) => {
       const next = { ...prev };
-      if (!t || t === m.name) delete next[m.path]; else next[m.path] = t;
+      // Only a title the same as the one shown anyway goes back to it; even the file's
+      // own name stays when typed ("DNA" over a cleaned "Dna").
+      if (!t || t === (m.song_title || m.name)) delete next[m.path]; else next[m.path] = t;
       return next;
     });
     setEditing(null);
@@ -409,12 +445,14 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     setReview(null);
     setError(null); resetUpload(items.map((i) => i.path), keepOthers); setRunning(true); setStopping(false);
     try {
+      // asked before anything goes up: is this the first post ever?
+      firstPost = isFirstPost(await api.overview().catch(() => null));
       const { job_id } = await api.upload(await withCovers(items), false, releaseAt);
       jobRef.current = job_id;
       // The live WS stream drives the UI; poll the job only to surface a hard error.
       const tick = async () => {
         const job = await api.jobStatus(job_id);
-        if (job.state === "error") { setError(job.error || "Upload failed."); setRunning(false); return; }
+        if (job.state === "error") { setError(job.error || "That mix didn’t post. Try again. If it keeps happening, use Help > Report a problem."); setRunning(false); return; }
         if (job.state !== "done") pollRef.current = window.setTimeout(tick, 1000);
       };
       pollRef.current = window.setTimeout(tick, 1000);
@@ -454,6 +492,9 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
   const isUp = (m: Mix) => m.uploaded || m.on_soundcloud?.kind === "same";
   const fresh = visible.filter((m) => !isUp(m)).sort((a, b) => b.mtime - a.mtime);
   const posted = visible.filter(isUp);
+  useEffect(() => { setFreshShown(SHOW_PAGE); setPostedShown(SHOW_PAGE); }, [q, showShort, showStems]);
+  const freshMore = moreToShow(fresh.length, freshShown);
+  const postedMore = moreToShow(posted.length, postedShown);
   const pickable = fresh.filter(isNew).map((m) => m.path);  // a short one, a stem or a new version is ticked by hand
   const allPicked = pickable.length > 0 && pickable.every((p) => selected.has(p));
   const somePicked = pickable.some((p) => selected.has(p));
@@ -469,7 +510,9 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
 
   const whenProblem = releaseProblem(scheduleOn, releaseAtValue);
 
+  const noMixes = mixes !== null && mixes.length === 0;   // nothing in the folders: nothing to tick, search or post
   const summary = mixes === null ? "Looking through your watched folders…"
+    : noMixes ? "No mixes in your folders yet"
     : `${fmtCount(newCount)} new of ${fmtCount(mixes.length)} in your folders`
       + `${matched ? ` · ${fmtCount(matched)} tagged from Backups` : ""}${wipCount ? ` · ${wipCount} ${wipCount === 1 ? "draft" : "drafts"}` : ""}`
       + `${shortCount && !showShort ? ` · ${fmtCount(shortCount)} short ${shortCount === 1 ? "file" : "files"} hidden` : ""}`
@@ -500,7 +543,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     ...(m.on_soundcloud?.kind === "version" && !m.superseded_by ? ["-" as const,
       { label: "Update the song on SoundCloud with this version…", onClick: () => void updateVersion(m), disabled: busy }] : []),
     ...(!m.uploaded && !m.superseded_by ? ["-" as const,
-      { label: m.wip ? "Post as the final version" : "Post as work in progress (private)", onClick: () => toggleWip(m), disabled: running }] : []),
+      { label: m.wip ? "Post as the final version" : "Post as a draft (private)", onClick: () => toggleWip(m), disabled: running }] : []),
   ];
   // A new version of a song already up: post it in that song's place (same title,
   // cover, details and playlists). The old upload stays until you remove it.
@@ -624,7 +667,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
     const note = liveNote(m);
     const it = itemOf(m);
     return (
-    <AuditionLabel key={m.path} song={m.path} meta={meta} className={`row cols mix-cols scanrow--enter${selected.has(m.path) ? " row--selected" : ""}${it?.phase === "posted" ? " mixrow--justposted" : ""}`}
+    <AuditionLabel key={m.path} song={m.path} meta={meta} className={`row cols mix-cols scanrow--enter${selected.has(m.path) ? " row--selected" : ""}${justPosted.has(m.path) || justPosted.has(m.name) ? " mixrow--justposted" : ""}`}
       onContextMenu={(e) => openMenu(e, mixMenu(m))}
       style={{ ["--i" as any]: i, cursor: m.uploaded || busy ? "default" : "pointer" }}>
       <span className="stripe" style={{ background: genreColor(m.genre) }} />
@@ -635,10 +678,10 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
       <div className="row__main" style={{ opacity: m.uploaded || m.superseded_by || m.short || m.stem ? 0.6 : 1 }}>
         <div className="row__title mix-title">
           {editing === m.path
-            ? <TitleField name={m.name} value={titles[m.path] || m.name} onDone={(t) => setTitle(m, t)} onCancel={() => setEditing(null)} />
-            : <span className="col-trunc" title={titles[m.path] ? `Posts as “${titles[m.path]}”. The file is ${m.name}.` : undefined}
+            ? <TitleField name={m.name} value={titles[m.path] || titleFor(m)} onDone={(t) => setTitle(m, t)} onCancel={() => setEditing(null)} />
+            : <span className="col-trunc" title={titleFor(m, titles) !== m.name ? `Posts as “${titleFor(m, titles)}”. The file is ${m.name}.` : undefined}
                 onDoubleClick={(e) => { if (m.uploaded || m.superseded_by || running) return; e.preventDefault(); setEditing(m.path); }}>
-                {titles[m.path] || m.name}</span>}
+                {titleFor(m, titles)}</span>}
           {titles[m.path] && editing !== m.path && <span className="pill pill--quiet" title={`The file is ${m.name}`}>New title</span>}
           {editing !== m.path && formatChips(m)}
         </div>
@@ -648,7 +691,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
               <button type="button" className={`linkbtn mix-genre${m.genre_by_you || !m.genre ? "" : " genre-guess"}`}
                 title={m.genre ? (m.genre_by_you ? "Genre set by you. Click to change" : "Genre guessed from the project. Click to correct it") : "Set a genre"}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); changeGenre(m); }}>{m.genre || "Set genre"}</button>
-              {[m.bpm ? `${Math.round(m.bpm)} BPM` : "", m.uploaded ? "" : `exported ${fmtWhen(new Date(m.mtime * 1000).toISOString())}`, mixFrom(m), extLabel(m)]
+              {[m.bpm ? `${Math.round(m.bpm)} BPM` : "", m.uploaded ? "" : `exported ${fmtDayIn(new Date(m.mtime * 1000).toISOString())}`, mixFrom(m), extLabel(m)]
                 .filter(Boolean).map((t) => ` · ${t}`).join("")}
             </div>}
       </div>
@@ -680,10 +723,10 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
           <span className={`up-when${whenProblem ? " up-when--bad" : ""}`} role="status">
             {whenProblem ?? `Goes public ${fmtRelease(releaseAtValue)}`}</span>
         )}
-        <Button kind={postLook.kind} className={`btn btn--${postLook.kind} up-post`} disabled={selected.size === 0 || busy || !!whenProblem}
+        {!(noMixes && !busy) && <Button kind={postLook.kind} className={`btn btn--${postLook.kind} up-post`} disabled={selected.size === 0 || busy || !!whenProblem}
           onClick={() => start()} title={whenProblem ?? (selected.size === 0 && !busy ? "Tick the mixes you want to post" : undefined)}>
           {postLook.label}
-        </Button>
+        </Button>}
       </>} />
 
       {error && <div className="banner banner--warn"><Icon name="alert" className="banner__icon" />{error}</div>}
@@ -691,7 +734,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
       {ended && (
         <section className="card section up-overall up-done celebrate">
           {upload.errors === 0 && <SlothSpot pose="waving" size={44} />}
-          <p className="up-done__line" role="status">{doneLine(upload.completed, upload.skipped, upload.errors)}</p>
+          <p className="up-done__line" role="status">{doneLine(upload.completed, upload.skipped, upload.errors, firstPost)}</p>
           {firstUrl && <Button sm onClick={() => openExternal(firstUrl)}>
             <Icon name="external" size={14} />Open on SoundCloud</Button>}
         </section>
@@ -702,9 +745,10 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
             <b style={{ fontWeight: 600 }}>{upload.done
               ? postEndLine(upload)
               : stopping ? (upload.total - finished > 1 ? `Stopping after ${upload.current ?? "this mix"}…` : "Stopping…")
-              : upload.current ? `Posting ${Math.min(finished + 1, upload.total)} of ${upload.total}` : "Getting ready…"}</b>
+              : upload.current ? <>Posting <Rolling value={Math.min(finished + 1, upload.total)} /> of {upload.total}</> : "Getting ready…"}</b>
+            {/* the counts roll up as each mix finishes, like Home's numbers */}
             <span className="muted up-overall__counts">
-              {upload.completed} posted · {upload.skipped} skipped · {upload.errors} failed
+              <Rolling value={upload.completed} /> posted · <Rolling value={upload.skipped} /> skipped · <Rolling value={upload.errors} /> failed
               {upload.lastUrl && (
                 <> · <button className="linkbtn" onClick={() => openExternal(upload.lastUrl!)}>open the last one on SoundCloud</button></>
               )}
@@ -738,14 +782,14 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
       )}
 
       <div className="toolbar up-tools">
-        <label className="find__search upload-search">
+        {!noMixes && <label className="find__search upload-search">
           <Icon name="search" size={15} />
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search mixes, projects, genres…"
             aria-label="Search mixes" spellCheck={false} data-find
             onKeyDown={(e) => { if (e.key === "Escape") setQuery(""); }} />
           {query && <button type="button" className="find__x" aria-label="Clear search"
             onClick={() => setQuery("")}><Icon name="close" size={13} /></button>}
-        </label>
+        </label>}
         <span className="up-tools__plan" title={postsAs}>{postsAs}</span>
         <button type="button" className={`btn btn--sm up-tools__opts${optsOpen ? " up-tools__opts--on" : ""}`}
           aria-expanded={optsOpen} aria-controls="post-settings" onClick={() => setOptsOpen((o) => !o)}>
@@ -806,7 +850,7 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
           )}
           {stemCount > 0 && (
             <label className={`toolchk up-opt${shortCount > 0 ? "" : " up-opt--end"}`}
-              title="The separate parts of a song — a kick, the vocals — exported on their own. They are never posted for you.">
+              title="The separate parts of a song, like the kick or the vocals, exported on their own. They are never posted for you.">
               <input type="checkbox" checked={showStems} onChange={(e) => setShowStems(e.target.checked)} />
               Show {fmtCount(stemCount)} {stemCount === 1 ? "stem" : "stems"}
             </label>
@@ -836,13 +880,15 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
             <span /><span /><span>Mix</span><span>Waveform</span>
             <span className="col-num">Length</span><span>Status</span><span />
           </div>
-          {fresh.map(crateRow)}
+          {fresh.slice(0, freshShown).map(crateRow)}
+          {freshMore && <ShowMore more={freshMore} onMore={() => setFreshShown((n) => n + freshMore.next)} />}
           {posted.length > 0 && (
             <button type="button" className="row mix-split mix-split--row mix-split--btn" aria-expanded={showPosted || !!q} onClick={() => setShowPosted((v) => !v)}>
               <Icon name={showPosted || q ? "chevronDown" : "chevronRight"} size={14} />Already on SoundCloud<span>{fmtCount(posted.length)}</span>
               <em>{showPosted || q ? "Hide" : "Show"}</em></button>
           )}
-          {(showPosted || !!q) && posted.map((m, i) => crateRow(m, fresh.length + i))}
+          {(showPosted || !!q) && posted.slice(0, postedShown).map((m, i) => crateRow(m, Math.min(fresh.length, freshShown) + i))}
+          {(showPosted || !!q) && postedMore && <ShowMore more={postedMore} onMore={() => setPostedShown((n) => n + postedMore.next)} />}
         </div>
       )}
       {mixes && mixes.length > 0 && visible.length === 0 && (
@@ -856,6 +902,15 @@ export function Upload({ cfg, ent, scan, upload, resetUpload, account = null, pr
           onBack={() => setReview(null)} onTitle={retitle} onPost={() => void post(review.items, review.releaseAt, false)} />
       )}</Exit>
     </div>
+  );
+}
+
+// "Show 200 more of 7,302 left" under a long list, worded like the Columns view's.
+function ShowMore({ more, onMore }: { more: { next: number; left: number }; onMore: () => void }) {
+  return (
+    <button type="button" className="row mix-split mix-split--row mix-split--btn" onClick={onMore}>
+      <Icon name="chevronDown" size={14} />Show {fmtCount(more.next)} more<span>of {fmtCount(more.left)} left</span>
+    </button>
   );
 }
 

@@ -6,6 +6,7 @@ import type { CoverSource } from "./coverArt";
 import type { Folder } from "./projectFolders";
 import type { Album, AlbumCandidate, AlbumSongChange, SongCheck } from "./albums";
 import { plainProblem } from "./plainProblem";
+import type { PlaysGain } from "./moments";
 
 function base() {
   const port = (window as any).lazyupload?.port ?? "8754";
@@ -157,6 +158,11 @@ export function makeApi() {
       return req("GET", `/api/sc-peaks?url=${encodeURIComponent(url)}`);
     },
     async listTracks(): Promise<Track[]> { return (await req("GET", "/api/tracks")).tracks; },
+    // the same list, plus the plays gained since an earlier day this week (Home)
+    async tracksAndPlays(): Promise<{ tracks: Track[]; plays: PlaysGain | null }> {
+      const r = await req("GET", "/api/tracks");
+      return { tracks: r.tracks, plays: r.plays ?? null };
+    },
     async updateTrack(id: number, fields: TrackUpdate): Promise<Track> {
       return req("PUT", `/api/tracks/${id}`, fields);
     },

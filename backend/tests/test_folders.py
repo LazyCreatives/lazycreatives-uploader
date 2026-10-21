@@ -1,8 +1,9 @@
 """Folders: one list shared with Backups. A folder made in Backups shows here."""
+import pytest
 from fastapi.testclient import TestClient
 
 from lazyupload.api.app import create_app
-from lazyupload.folders import Folders
+from lazyupload.folders import Folders, NotFound
 
 
 def test_folders_made_in_backups_show_here(tmp_path):
@@ -15,3 +16,13 @@ def test_folders_made_in_backups_show_here(tmp_path):
     fid = got["folders"][0]["id"]
     assert c.post(f"/api/folders/{fid}/remove", json={"project_ids": ["p1"]}).json()["project_ids"] == ["p2"]
     assert Folders().get(fid)["project_ids"] == ["p2"]
+
+
+def test_one_folder_reads_the_same_as_in_the_full_list(tmp_path):
+    f = Folders(tmp_path / "folders.db")
+    for i in range(30):
+        f.create(f"Folder {i}", [f"p{i}", f"p{i + 1}"])
+    for x in f.all():
+        assert f.get(x["id"]) == x
+    with pytest.raises(NotFound):
+        f.get("nope")

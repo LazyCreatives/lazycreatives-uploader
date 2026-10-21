@@ -46,6 +46,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
   const [licenseKey, setLicenseKey] = useState("");
   const [licenseError, setLicenseError] = useState<string | null>(null);
   const [atLogin, setAtLogin] = useState(false);
+  const [crashReports, setCrashReports] = useState<boolean | null>(null);
   // Row spacing for the Crate lists (Your tracks and History share it) and hover previews.
   const [rows, setTrackRows] = useDensity("tracks");
   const [, setHistoryRows] = useDensity("history");
@@ -53,6 +54,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
   const [pauseMin, setPauseMin] = useState(pausesOnMinimize);
 
   useEffect(() => { getOpenAtLogin().then(setAtLogin).catch(() => {}); }, []);
+  useEffect(() => { (window as any).lazyupload?.getCrashReports?.().then((on: boolean) => setCrashReports(!!on)).catch(() => {}); }, []);
   // The export folders Backups knows about, for "Also look in Backups' export folders".
   const [bkFolders, setBkFolders] = useState<{ installed: boolean; folders: string[] } | null>(null);
   useEffect(() => { api.backupsFolders().then(setBkFolders).catch(() => setBkFolders(null)); }, []);
@@ -97,6 +99,10 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
     return () => window.clearTimeout(t);
   }, [draft]);
   async function toggleLogin(v: boolean) { setAtLogin(await setOpenAtLogin(v)); }
+  async function toggleCrashReports(v: boolean) {
+    const b = (window as any).lazyupload;
+    if (b?.setCrashReports) setCrashReports(await b.setCrashReports(v));
+  }
 
 
   async function activate() {
@@ -153,7 +159,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
               {bkExtra.map((f) => (
                 <div key={f} className="row" style={{ marginBottom: 0 }}>
                   <span className="faint" style={{ display: "flex" }}><Icon name="folder" /></span>
-                  <div className="row__main pathline"><div className="row__title mono col-trunc" style={{ fontSize: 12, fontWeight: 400 }} title={f}>{f}</div></div>
+                  <div className="row__main pathline"><div className="row__title mono col-trunc col-trunc--start" style={{ fontSize: 12, fontWeight: 400 }} title={f}><bdi>{f}</bdi></div></div>
                   <span className="pill">from Backups</span>
                 </div>
               ))}
@@ -183,17 +189,19 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
 
       </>}
       {tab === "posts" && <>
-      <SetRow title="Public or private" help="Who can hear a new post. You can still change each one before it goes up.">
+      <SetRow title="Public or private" help="Who can hear the songs you post from Upload. You can still change each one before it goes up. Songs that go up by themselves follow the Automatic tab.">
         <Choice label="Public or private" value={draft.default_sharing} options={SHARING} onChange={(v) => set("default_sharing", v as Sharing)} />
       </SetRow>
-      <SetRow title="Title" help={<>What each song is called on SoundCloud. <code>{"{name}"}</code> is the file name without the ending.</>}>
+      <SetRow title="Title" help={<>What each song is called on SoundCloud. <code>{"{name}"}</code> is the song's name from its file, tidied: “glasshouse_final_v3 master” posts as “Glasshouse”.</>}>
         <input type="text" aria-label="Title" value={draft.title_template}
           onChange={(e) => set("title_template", e.target.value)} placeholder="{name}" />
       </SetRow>
       <SetRow title="Genre and tags" help="Helps people find your songs on SoundCloud.">
-        <input type="text" aria-label="Genre" value={draft.default_genre}
-          onChange={(e) => set("default_genre", e.target.value)} placeholder="Genre, e.g. House" />
-        <TagsInput aria-label="Tags" tags={draft.default_tags} onChange={(t) => set("default_tags", t)} />
+        <label className="field"><span>Genre</span>
+          <input type="text" value={draft.default_genre}
+            onChange={(e) => set("default_genre", e.target.value)} placeholder="e.g. House" /></label>
+        <label className="field"><span>Tags</span>
+          <TagsInput tags={draft.default_tags} onChange={(t) => set("default_tags", t)} /></label>
       </SetRow>
       <SetRow title="Description" help="The text under every new post.">
         <textarea aria-label="Description" value={draft.default_description}
@@ -259,7 +267,7 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
           onChange={(m) => set("interval_minutes", m)} />
         {!canAuto && <div className="locked-note">Automatic posting is a Pro feature.</div>}
       </SetRow>
-      <SetRow title="Posts go up as" help="Private is safest: you can listen first, then make it public.">
+      <SetRow title="Posts go up as" help="For songs that go up by themselves. Private is safest: you can listen first, then make it public.">
         <Choice label="Posts go up as" value={draft.auto_upload_sharing} options={SHARING} disabled={!canAuto}
           onChange={(v) => set("auto_upload_sharing", v as Sharing)} />
       </SetRow>
@@ -279,8 +287,8 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
       <SetRow title="Rating mark" help="What ratings are drawn with. Rate a track from its row in Your tracks, or right-click it.">
         <GlyphPicker />
       </SetRow>
-      <SetRow title="Row spacing" help="How tall the rows are in Your tracks and History.">
-        <Choice label="Row spacing" value={rows} options={DENSITIES.map((d) => [d.key, d.label] as const)}
+      <SetRow title="Row height" help="How tall the rows are in Your tracks and History.">
+        <Choice label="Row height" value={rows} options={DENSITIES.map((d) => [d.key, d.label] as const)}
           onChange={(k) => { setTrackRows(k); setHistoryRows(k); }} />
       </SetRow>
       <SetRow title="Preview on hover" help="Point at a song in a list to hear a few seconds of it.">
@@ -311,8 +319,14 @@ export function Settings({ cfg, account, ent, onCfg, onAccount, onEnt }: {
         <p className="set-about">{account.login_storage ? LOGIN_STORAGE[account.login_storage] : "Your SoundCloud login is kept on this computer, encrypted when your computer offers a safe place for it."} Signing in passes through a small Lazy Creatives helper that holds the app's SoundCloud key. It never saves your login.</p>
       </SetRow>
       <SetRow title="What leaves your computer" help="No tracking, no adverts.">
-        <p className="set-about">The songs you post, with their details and covers, go to your SoundCloud. Checking for updates asks GitHub for the newest version number. Nothing else is sent.</p>
+        <p className="set-about">The songs you post, with their details and covers, go to your SoundCloud. Checking for updates asks GitHub for the newest version number. If Send crash reports is on, a note of what went wrong goes to Lazy Creatives. Nothing else is sent.</p>
       </SetRow>
+      {crashReports !== null && (
+        <SetRow title="Send crash reports"
+          help="When the app breaks, the error goes to Lazy Creatives through Sentry so it can be fixed. It can include file paths, so folder and song names. Never your music.">
+          <OnOff label="Send crash reports" on={crashReports} onChange={toggleCrashReports} />
+        </SetRow>
+      )}
       <SetRow title="Something not working?"
         help="Opens a short report on GitHub with your app version and computer type filled in. You read it before you send it. If the app ever crashes, it offers the same report the next time it opens.">
         <Button sm onClick={() => (window as any).lazyupload?.reportProblem?.()}>Report a problem</Button>

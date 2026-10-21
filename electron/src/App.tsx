@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { makeApi, makeCoverSource, readImage, SIGNED_OUT_EVENT } from "./api";
 import { SignInWaiting, useSignIn } from "./components/Connect";
 import { Nav, type Tab } from "./components/Nav";
@@ -12,16 +12,12 @@ import { COMPANION_KEYS, openCompanion, useCompanionCommand } from "./companion"
 import { NO_FILTERS, type TrackFilters } from "./trackFilter";
 import { Manage, showTracks } from "./screens/Manage";
 import type { Track } from "./types";
-import { Setup } from "./screens/Setup";
 import { Home } from "./screens/Home";
 import { Upload } from "./screens/Upload";
 import { History } from "./screens/History";
-import { Playlists } from "./screens/Playlists";
-import { Albums } from "./components/Albums";
 import { albumSync, syncById } from "./albumSync";
 import { PlaylistPickHost } from "./components/PlaylistPick";
 import { loadPlaylists, playlistPlace, playlistsNow, songOnPlaylist } from "./playlists";
-import { Settings } from "./screens/Settings";
 import { WhatsNewHost, openWhatsNew } from "./components/WhatsNew";
 import { ConfirmHost, ContextMenuHost, DropZone, ShortcutsPanel, ToastHost, toast, toastWarn } from "./components/Desktop";
 import { GenrePickHost } from "./components/GenrePick";
@@ -34,6 +30,21 @@ import type { Account, Config, Entitlement } from "./types";
 import { EmptyState } from "./components/SlothSpot";
 import { useBackForwardInput, useNav, type Place } from "./nav";
 import { getRecents, openedWhen } from "./recents";
+
+// Screens most visits never open load when first wanted, so the app starts with
+// less to read. They're fetched quietly a few seconds after start, so opening one
+// later is still instant.
+const screens = {
+  Setup: () => import("./screens/Setup"),
+  Playlists: () => import("./screens/Playlists"),
+  Settings: () => import("./screens/Settings"),
+  Albums: () => import("./components/Albums"),
+};
+const Setup = lazy(() => screens.Setup().then((m) => ({ default: m.Setup })));
+const Playlists = lazy(() => screens.Playlists().then((m) => ({ default: m.Playlists })));
+const Settings = lazy(() => screens.Settings().then((m) => ({ default: m.Settings })));
+const Albums = lazy(() => screens.Albums().then((m) => ({ default: m.Albums })));
+setTimeout(() => { for (const load of Object.values(screens)) void load(); }, 4000);
 
 const api = makeApi();
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -262,7 +273,7 @@ export default function App() {
     }
     if (live.upload.done && !prevDone.current && "Notification" in window
         && Notification.permission === "granted") {
-      new Notification("LazyCreatives Uploader", {
+      new Notification("Lazy Creatives Uploader", {
         body: `Published ${live.upload.completed}, skipped ${live.upload.skipped}, ${live.upload.errors} error(s).`,
       });
     }
@@ -283,7 +294,7 @@ export default function App() {
       <div className="splash">
         <EmptyState pose="tangled" title="Uploader couldn’t start its engine"
           action={<button className="btn btn--primary" onClick={() => (window as any).lazyupload?.relaunch?.()}>Restart the app</button>}>
-          The part of the app that talks to SoundCloud didn’t answer. Restarting the app usually fixes it; nothing you posted is lost. If it keeps happening, use Help, Report a problem.
+          The part of the app that talks to SoundCloud didn’t answer. Restarting the app usually fixes it; nothing you posted is lost. If it keeps happening, use Help {'>'} Report a problem.
         </EmptyState>
       </div>
     );
@@ -299,8 +310,10 @@ export default function App() {
   }
   if (!configured && !setUpOnce.current) {
     return (
-      <Setup cfg={cfg} account={account} onAccount={setAccount}
-        onDone={(c) => { setCfg(c); setTab("home"); }} />
+      <Suspense fallback={null}>
+        <Setup cfg={cfg} account={account} onAccount={setAccount}
+          onDone={(c) => { setCfg(c); setTab("home"); }} />
+      </Suspense>
     );
   }
 
@@ -316,6 +329,7 @@ export default function App() {
       <main className="main">
         <div className="content">
           <div key={tab === "settings" || tab === "upload" ? `${tab}-${viewKey}` : tab} className="view-enter">
+            <Suspense fallback={null}>
             {tab === "home" ? (
               <Home account={account} onAccount={setAccount} onUpload={() => setTab("upload")}
                 onHistory={() => setTab("history")} onTracks={tracksWith}
@@ -339,6 +353,7 @@ export default function App() {
               <Settings cfg={cfg} account={account} ent={ent}
                 onCfg={setCfg} onAccount={setAccount} onEnt={setEnt} />
             )}
+            </Suspense>
           </div>
         </div>
       </main>

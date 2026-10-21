@@ -69,7 +69,7 @@ export function foldUpload(u: UploadState, ev: ProgressEvent): UploadState {
         return { ...u, current: null, sent: 0, size: 0, items };
       }
       return { ...u, errors: u.errors + 1,
-        items: setItem({ phase: "failed", reason: ev.reason || "Something went wrong.", error: ev.error }) };
+        items: setItem({ phase: "failed", reason: ev.reason || "This mix didn’t post. Tick it and post it again.", error: ev.error }) };
     case "upload_done": {
       // anything still waiting (a stopped post) goes back to how it was
       const items = Object.fromEntries(Object.entries(u.items).filter(([, it]) => it.phase !== "waiting"));

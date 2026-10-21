@@ -72,10 +72,10 @@ export function Nav({ tab, busy, onNavigate, account, tier, beta = false, onOpen
           <span className="nav__label">{signIn.busy ? "Waiting for browser…" : "Sign in again"}</span>
         </button>
       )}
-      <div className="nav__foot">
-        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div className="nav__foot" title={out ? "SoundCloud signed you out" : account ? `SoundCloud connected as ${account}` : "SoundCloud not connected"}>
+        <span className="nav__foot-state">
           <span className={`dot${out ? " dot--warn" : account ? " dot--ok" : ""}`} />
-          {out ? "SoundCloud signed you out" : account ? "SoundCloud connected" : "Not connected"}
+          <span className="nav__label">{out ? "SoundCloud signed you out" : account ? "SoundCloud connected" : "Not connected"}</span>
         </span>
         {account && <span className="faint">as {account}</span>}
         {out && signIn?.waiting}
@@ -89,7 +89,7 @@ export function Nav({ tab, busy, onNavigate, account, tier, beta = false, onOpen
 export function NarrowWindowButton() {
   return (
     <button type="button" className="nav__item nav__narrow" onClick={openCompanion} aria-label="Narrow window"
-      title={`A narrow window to keep beside your music program (${COMPANION_KEYS})`}>
+      title={`A narrow window to keep beside your DAW (${COMPANION_KEYS})`}>
       <Icon name="narrow" className="nav__icon" />
       <span className="nav__label">Narrow window</span>
     </button>

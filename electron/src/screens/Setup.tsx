@@ -59,7 +59,7 @@ export function Setup({ cfg, account, onAccount, onDone }: {
     <WelcomeCard app="Uploader" step={3} title="Connect SoundCloud"
       sub="Sign in once. Your login stays on this computer and keeps itself fresh."
       foot={<>{back}<Button kind="primary" disabled={!account.connected || saving} onClick={finish}>
-        {saving ? "Finishing…" : "Start uploading"}
+        {saving ? "Finishing…" : "Start posting"}
       </Button></>}>
       <ConnectPanel account={account} onChange={onAccount} />
     </WelcomeCard>

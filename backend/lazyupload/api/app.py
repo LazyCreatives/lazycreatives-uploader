@@ -298,6 +298,8 @@ def create_app(token: str, db_path: Path) -> FastAPI:
 
         app.state.hub.bind_loop(asyncio.get_running_loop())
         mixes = await asyncio.to_thread(service.scan_mixes, catalog, sources, progress)
+        if not req.sources:
+            _remember_scan(mixes)
         return {"mixes": mixes}
 
     @app.post("/api/mixes/genre", dependencies=[Depends(require_token)])
@@ -454,11 +456,28 @@ def create_app(token: str, db_path: Path) -> FastAPI:
 
     # ---- albums: one list shared with Backups (see albums.py) ----------------
     albums = Albums()
+    app.state.last_scan = None  # (when, folders, mixes): the newest check of the watched folders
+
+    def _remember_scan(mixes: list[dict]) -> None:
+        app.state.last_scan = (time.monotonic(), [str(p) for p in _resolve_sources(None)], mixes)
+
+    def _recent_scan(max_age: float = 60.0) -> list[dict] | None:
+        last = app.state.last_scan
+        if not last or time.monotonic() - last[0] > max_age:
+            return None
+        if last[1] != [str(p) for p in _resolve_sources(None)]:
+            return None  # the watched folders changed since
+        return last[2]
 
     def _album_candidates() -> list[dict]:
         """Mixes that could go on an album: the songs in your watched folders, one per
-        song (no stems, no second format of the same mix, no test bounces)."""
-        mixes = service.scan_mixes(catalog, _resolve_sources(None))
+        song (no stems, no second format of the same mix, no test bounces). A folder
+        check from the last minute is used as it is, so opening the song picker
+        straight after Upload doesn't look through every folder again."""
+        mixes = _recent_scan()
+        if mixes is None:
+            mixes = service.scan_mixes(catalog, _resolve_sources(None))
+            _remember_scan(mixes)
         return [{"path": m["path"], "title": m["name"], "project": m.get("project_match") or "",
                  "project_id": m.get("project_id"), "bpm": m.get("bpm"), "genre": m.get("genre") or "",
                  "duration": m.get("duration"), "exported": m.get("mtime"), "saved": m.get("project_saved"),
@@ -583,7 +602,7 @@ def create_app(token: str, db_path: Path) -> FastAPI:
             tracks = await asyncio.to_thread(service.list_tracks, catalog)
         except Exception as e:
             raise _track_http_error(e, "Couldn't load your SoundCloud tracks.")
-        return {"tracks": tracks}
+        return {"tracks": tracks, "plays": service.note_plays(catalog, tracks)}
 
     @app.put("/api/tracks/{track_id}", dependencies=[Depends(require_token)])
     async def update_track(track_id: int, req: TrackUpdate):

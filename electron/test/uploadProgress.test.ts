@@ -38,7 +38,7 @@ describe("each mix's own progress", () => {
       { type: "track_error", index: 1, name: "c", path: "/c.wav", error: "x" },
       { type: "upload_done", ok_count: 1, error_count: 1, skipped_count: 0 },
     ]);
-    expect(s.items["/c.wav"].reason).toBe("Something went wrong.");  // older sidecar: no reason
+    expect(s.items["/c.wav"].reason).toBe("This mix didn’t post. Tick it and post it again.");  // older sidecar: no reason
     s = queueUpload(s, ["/c.wav"], true);
     expect(s.items["/a.wav"].phase).toBe("posted");
     expect(s.items["/c.wav"].phase).toBe("waiting");

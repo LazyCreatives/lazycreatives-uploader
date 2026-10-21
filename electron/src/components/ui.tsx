@@ -52,12 +52,12 @@ export function Segmented<T extends string>({ value, options, onChange }: {
 
 const KB = 1024, MB = KB * 1024, GB = MB * 1024, TB = GB * 1024;
 export function fmtBytes(n: number): string {
-  if (!n) return "0 B";
-  if (n >= TB) return `${(n / TB).toFixed(1)} TB`;
-  if (n >= GB) return `${(n / GB).toFixed(1)} GB`;
-  if (n >= MB) return `${(n / MB).toFixed(1)} MB`;
-  if (n >= KB) return `${(n / KB).toFixed(0)} KB`;
-  return `${n} B`;
+  if (!n) return "0\u00a0B";
+  if (n >= TB) return `${(n / TB).toFixed(1)}\u00a0TB`;
+  if (n >= GB) return `${(n / GB).toFixed(1)}\u00a0GB`;
+  if (n >= MB) return `${(n / MB).toFixed(1)}\u00a0MB`;
+  if (n >= KB) return `${(n / KB).toFixed(0)}\u00a0KB`;
+  return `${n}\u00a0B`;
 }
 export function fmtDuration(s: number | null): string {
   if (!s) return "";
@@ -70,6 +70,12 @@ export function fmtDuration(s: number | null): string {
 export function fmtCount(n: number | null | undefined): string {
   if (n === null || n === undefined || !isFinite(n)) return "—";
   return Math.round(n).toLocaleString();
+}
+
+// "Missing 3 samples", led by the word that matters so a narrow column cuts the number,
+// not the meaning. A huge count is capped: "Missing 999+ samples" (the exact count goes in the tooltip).
+export function missingSamples(n: number): string {
+  return `Missing ${n > 999 ? "999+" : fmtCount(n)} sample${n === 1 ? "" : "s"}`;
 }
 
 // "2026-10-02 08:15:09" (or ISO) → "2 Oct, 08:15"; this year drops the year.
@@ -85,6 +91,18 @@ export function fmtWhen(s: string | null | undefined): string {
   const sameYear = d.getFullYear() === now.getFullYear();
   const day = d.toLocaleDateString(undefined, { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) });
   return `${day}, ${time}`;
+}
+
+// The same, inside a sentence: "exported yesterday 2:31 PM".
+export function fmtWhenIn(s: string | null | undefined): string {
+  return fmtWhen(s)
+    .replace(/^(Today|Yesterday)\b/, (w) => w.toLowerCase())
+    .replace(/(\d) (AM|PM)\b/i, "$1\u00a0$2");
+}
+
+// Just the day, for a row's second line where space is short: "today", "yesterday", "17 Oct".
+export function fmtDayIn(s: string | null | undefined): string {
+  return fmtWhenIn(s).replace(/,? \d{1,2}:\d{2}.*$/, "");
 }
 
 // The grey second line under a row title; renders nothing when every part is empty,

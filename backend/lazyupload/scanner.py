@@ -5,6 +5,7 @@ import wave
 from pathlib import Path
 
 from lazyupload.models import AUDIO_EXTS
+from lazyupload.names import song_title
 
 
 def discover(sources: list[Path]) -> list[dict]:
@@ -35,6 +36,7 @@ def discover(sources: list[Path]) -> list[dict]:
                 out[key] = {
                     "path": key,
                     "name": p.stem,
+                    "song_title": song_title(p.stem),  # what it posts as unless you change it
                     "ext": ext,
                     "size": st.st_size,
                     "mtime": st.st_mtime,

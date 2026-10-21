@@ -8,7 +8,7 @@ function argValue(flag) {
 contextBridge.exposeInMainWorld("lazyupload", {
   // Easier reading's text size: the whole window scales, so columns stay lined up (src/reading.ts).
   setZoom: (f) => { if (typeof f === "number" && f >= 1 && f <= 1.5) webFrame.setZoomFactor(f); },
-  token: argValue("--lazyup-token"),
+  token: ipcRenderer.sendSync("sidecar-token"),
   port: argValue("--lazyup-port"),
   // "vibrancy" (Mac), "mica" (Windows 11) or "none": see windowMaterial in desktop.js.
   material: argValue("--lc-material") || "none",
@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld("lazyupload", {
   revealPath: (target) => ipcRenderer.invoke("reveal-path", target),
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   reportProblem: () => ipcRenderer.invoke("report-problem"),
+  // Settings > Privacy > Send crash reports, and window errors for them (sentry.js).
+  getCrashReports: () => ipcRenderer.invoke("get-crash-reports"),
+  setCrashReports: (on) => ipcRenderer.invoke("set-crash-reports", on),
+  reportError: (message, stack) => ipcRenderer.send("window-error", { message: String(message || ""), stack: String(stack || "") }),
   getOpenAtLogin: () => ipcRenderer.invoke("get-open-at-login"),
   setOpenAtLogin: (enabled) => ipcRenderer.invoke("set-open-at-login", enabled),
   // "Check for updates" in Settings (see updater.js).

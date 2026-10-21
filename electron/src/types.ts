@@ -26,6 +26,7 @@ export interface Config {
 export interface Mix {
   path: string;
   name: string;
+  song_title?: string;  // the tidy name it posts as ("glasshouse_final_v3" -> "Glasshouse")
   ext: string;
   size: number;
   mtime: number;
@@ -104,6 +105,7 @@ export interface Overview {
   last_upload: string | null;
   last_upload_ok: boolean;
   scheduled_count: number;
+  sc_track_count?: number | null;  // tracks last seen on the SoundCloud account; null if never looked
   tier: Tier;
   beta?: boolean;
   schedule: { enabled: boolean; interval_minutes: number; next_run?: string | null };

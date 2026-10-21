@@ -56,7 +56,7 @@ function PickBox({ s, done: close, onOpen }: { s: NonNullable<PickState>; done: 
   }, []);
 
   const one = s.tracks.length === 1;
-  const what = one ? `“${s.tracks[0].title}”` : `${s.tracks.length} tracks`;
+  const what = one ? `“${s.tracks[0].title}”` : `${s.tracks.length.toLocaleString()} tracks`;
   const target = picked === NEW ? null : (list ?? []).find((p) => p.id === picked) ?? null;
   const ready = picked === NEW ? name.trim().length > 0 : !!target && !has(target);
 

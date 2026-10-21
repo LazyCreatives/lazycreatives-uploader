@@ -49,6 +49,7 @@ const DAW_LABEL: Record<string, string> = {
   ableton: "Ableton", flstudio: "FL Studio", logic: "Logic Pro", "logic pro": "Logic Pro",
   cubase: "Cubase", studioone: "Studio One", bitwig: "Bitwig", reaper: "Reaper",
   protools: "Pro Tools", reason: "Reason", garageband: "GarageBand", dawproject: "DAWproject",
+  stems: "Stems only",  // a folder of stems with no project file, in Backups
 };
 export function dawName(daw: string): string {
   return DAW_LABEL[daw.toLowerCase()] || daw;
@@ -154,4 +155,19 @@ export function describeFilters(f: TrackFilters): string {
     f.score === "low" ? "Hard to find" : f.score === "good" ? "Easy to find" : "", f.dupes ? "Posted twice" : "",
   ].filter(Boolean);
   return parts.slice(0, 3).join(" · ") || "Everything";
+}
+
+// How many tracks came from each Backups project, counted once over the whole list, so
+// every folder tile can add up its count without looking through every track again.
+export function tracksByProject(tracks: Pick<Track, "project_id">[]): Map<string, number> {
+  const by = new Map<string, number>();
+  for (const t of tracks) if (t.project_id) by.set(t.project_id, (by.get(t.project_id) ?? 0) + 1);
+  return by;
+}
+
+// The tracks in a folder: those from its projects (a project listed twice counts once).
+export function folderTrackCount(projectIds: string[], byProject: Map<string, number>): number {
+  let n = 0;
+  for (const id of new Set(projectIds)) n += byProject.get(id) ?? 0;
+  return n;
 }

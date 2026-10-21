@@ -7,7 +7,7 @@ import { Wave, type WaveMark } from "./Wave";
 import { AUDITION_DELAY, AUDITION_FROM, auditionOn, bindAuditionKeys, useAuditionMode } from "../audition";
 import { Meter, listenTo } from "./Meter";
 import { onWindowMinimized, pausesOnMinimize } from "../desktop";
-import { toastWarn } from "./Desktop";
+import { Exit, toastWarn } from "./Desktop";
 
 const api = makeApi();
 
@@ -568,7 +568,8 @@ export function PlayerBar({ onOpenTrack }: { onOpenTrack?: (id: string) => void 
         <Meter peaks={peaks} playing={s.playing} duration={s.duration} now={now} />
         <button type="button" className="iconbtn" onClick={close} aria-label="Close the player"><Icon name="close" /></button>
       </div>
-      {big && (
+      {/* it shrinks back into the bar instead of blinking out (npOut in theme.css) */}
+      <Exit>{big && (
         <NowPlaying color={color} onClose={() => setBig(false)}
           art={<Art meta={m} className="nowplaying__cover" />}
           title={m.title} sub={s.error ?? m.sub ?? ""} open={open} openLabel="Open track"
@@ -576,7 +577,7 @@ export function PlayerBar({ onOpenTrack }: { onOpenTrack?: (id: string) => void 
           wave={<Wave peaks={peaks} color={color} played={played} height={88} onSeek={seek} duration={s.duration} className="nowplaying__wave" />}
           time={s.time} duration={s.duration}
           meter={<Meter peaks={peaks} playing={s.playing} duration={s.duration} now={now} />} />
-      )}
+      )}</Exit>
     </>
   );
 }

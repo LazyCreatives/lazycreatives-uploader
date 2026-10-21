@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { makeApi } from "../api";
 import type { Account, Mix, Overview, UploadRow } from "../types";
-import { Button, fmtCount, fmtWhen, ProBadge } from "../components/ui";
+import { Button, fmtCount, fmtWhenIn, ProBadge } from "../components/ui";
 import { ConnectPanel } from "../components/Connect";
 import { Icon } from "../components/Icon";
 import { UploadTable } from "./History";
@@ -11,6 +11,7 @@ import { tally, type CollectionData } from "../components/Collection";
 import { genreColor } from "../look";
 import { NO_FILTERS, yearOf, type TrackFilters } from "../trackFilter";
 import type { Track } from "../types";
+import { playsGainLine, type PlaysGain } from "../moments";
 
 const api = makeApi();
 
@@ -38,12 +39,17 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
     api.scan().then(setMixes).catch(() => setMixes(null));  // same list as the Upload page
   }, [account]);
   // Plays come from SoundCloud itself, so only once an account is connected.
+  // The app also keeps each day's total, so it can say "+38 plays since Tuesday".
   const [plays, setPlays] = useState<number | null>(null);
+  const [gain, setGain] = useState<PlaysGain | null>(null);
   useEffect(() => {
-    if (!account.connected) { setPlays(null); return; }
+    if (!account.connected) { setPlays(null); setGain(null); return; }
     let live = true;
-    api.listTracks().then((t) => { if (live) setPlays(t.reduce((n, x) => n + (x.playback_count || 0), 0)); })
-      .catch(() => { if (live) setPlays(null); });
+    api.tracksAndPlays().then(({ tracks, plays: g }) => {
+      if (!live) return;
+      setPlays(tracks.reduce((n, x) => n + (x.playback_count || 0), 0));
+      setGain(g);
+    }).catch(() => { if (live) { setPlays(null); setGain(null); } });
     return () => { live = false; };
   }, [account]);
   const waiting = waitingMixes(mixes);
@@ -65,18 +71,19 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
   // One quiet line under the headline: when you last posted, plus anything waiting or
   // running by itself. Things that are off or at zero aren't mentioned.
   const schedLine = [
-    ov?.last_upload ? `Last posted ${fmtWhen(ov.last_upload)}` : "",
+    ov?.last_upload ? `Last posted ${fmtWhenIn(ov.last_upload)}` : "",
     ov?.scheduled_count ? `${fmtCount(ov.scheduled_count)} waiting to go public` : "",
     ov?.schedule.enabled ? `auto-upload every ${ov.schedule.interval_minutes} min` : "",
   ].filter(Boolean).join(" · ");
   const subText = ready && waiting.newest
-    ? `Newest is ${waiting.newest.name}, exported ${fmtWhen(new Date(waiting.newest.mtime * 1000).toISOString())}.`
+    ? `Newest is ${waiting.newest.name}, exported ${fmtWhenIn(new Date(waiting.newest.mtime * 1000).toISOString())}.`
     : "Drop finished mixes in your watched folder and post them in one go. The same mix is never posted twice.";
   const mainButton = <Button kind="primary" onClick={onUpload} disabled={!account.connected}>
-    {ready ? "Review and post" : "Upload new mixes"}</Button>;
-  // The empty "Latest uploads" box: point at the mixes waiting, if there are any.
+    {ready ? "Review and post" : "Post new mixes"}</Button>;
+  // The empty "Latest uploads" box: point at the mixes waiting, if there are any. The
+  // headline above already says "Nothing posted yet.", so the box says what will be here.
   const emptyBox = (
-    <div className="table"><EmptyState pose={ready ? "waving" : "napping"} title="Nothing posted yet" say={ready ? "Your mixes are waiting. Go on." : "Wake me when there’s a mix."}
+    <div className="table"><EmptyState pose={ready ? "waving" : "napping"} title={posted === 0 ? "Your posts will show up here" : "Nothing posted yet"} say={ready ? "Your mixes are waiting. Go on." : "Wake me when there’s a mix."}
       action={ready ? <Button sm onClick={onUpload}>Post your first mix</Button> : undefined}>
       {ready ? readyInFolder(waiting.count) : "Export a mix into your folder and it shows up here, ready to post in one click."}
     </EmptyState></div>
@@ -99,7 +106,7 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
       <HomeDeck figures={[
         { label: "Ready to post", value: mixes ? waiting.count : null },
         { label: "Posted", value: ov ? posted : null },
-        { label: "Plays", value: plays },
+        { label: "Plays", value: plays, note: plays === null ? null : playsGainLine(gain, fmtCount) },
         { label: "Failed", value: ov ? ov.error_count : null, bad: !!ov?.error_count },
       ]} />
 
@@ -112,7 +119,7 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
 
       <section className="section">
         <div className="section__head">
-          <h2>Latest uploads</h2>
+          <h2>Latest posts</h2>
           {onHistory && recent && recent.length > 0 &&
             <button className="linkbtn" onClick={onHistory}>See all in History</button>}
         </div>
@@ -135,14 +142,16 @@ export function Home({ account, onAccount, onUpload, onHistory }: {
 // The deck readout under the headline: four big numbers in an inset screen that roll
 // to their new value when something changes. A dash while a number is still loading
 // (or, for Plays, while SoundCloud isn't connected).
-function HomeDeck({ figures }: { figures: { label: string; value: number | null; bad?: boolean }[] }) {
+// A figure can carry a quiet note under its number (Plays: "+38 plays since Tuesday").
+function HomeDeck({ figures }: { figures: { label: string; value: number | null; bad?: boolean; note?: string | null }[] }) {
   return (
-    <dl className="deckread home-deck">
+    <dl className={`deckread home-deck${figures.some((f) => f.note) ? " home-deck--notes" : ""}`}>
       {figures.map((f) => (
         <div key={f.label} className={`deckread__cell${f.bad ? " deckread__cell--bad" : ""}${f.value === 0 ? " deckread__cell--zero" : ""}`}>
           <dt>{f.label}</dt>
           <dd className={f.value !== null && f.value >= 1e7 ? "home-deck__long2" : f.value !== null && f.value >= 1e5 ? "home-deck__long" : undefined}>
             {f.value === null ? "—" : <Rolling value={f.value} />}</dd>
+          {f.note && <dd className="home-deck__note">{f.note}</dd>}
         </div>
       ))}
     </dl>

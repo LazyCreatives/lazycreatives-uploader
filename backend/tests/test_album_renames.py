@@ -109,7 +109,8 @@ def test_tidy_names_rename_and_swap(tmp_path):
                                       (str(final3), str(v2), "file", "b1", _later())])
     assert follow_renames(store, db) is True
     assert [Path(s["path"]).name for s in store.get(aid)["songs"]] == ["Glasshouse v1.wav", "Glasshouse v2.wav"]
-    assert [s["title"] for s in store.get(aid)["songs"]] == ["Glasshouse v1", "Glasshouse v2"]
+    # titles that were only file names read as the song's clean name
+    assert [s["title"] for s in store.get(aid)["songs"]] == ["Glasshouse", "Glasshouse"]
     assert follow_renames(store, db) is False
 
 

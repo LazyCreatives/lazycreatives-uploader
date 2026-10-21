@@ -27,6 +27,12 @@ setLook("crate");
 // Easier reading, and its text size on the window.
 applyReading();
 
+// Uncaught window errors go to crash reports when Settings > Privacy allows them (electron/sentry.js).
+const reportError = (message: string, stack?: string) => (window as any).lazyupload?.reportError?.(message, stack);
+window.addEventListener("error", (e) => reportError(e.message, e.error?.stack));
+window.addEventListener("unhandledrejection", (e) =>
+  reportError((e.reason && e.reason.message) || String(e.reason), e.reason?.stack));
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <TitleBar />

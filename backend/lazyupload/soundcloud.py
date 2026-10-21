@@ -31,6 +31,8 @@ from typing import Callable, Optional
 
 import requests
 
+from lazyupload.models import AUDIO_EXTS
+
 AUTH_BASE = "https://secure.soundcloud.com"
 API_BASE = "https://api.soundcloud.com"
 
@@ -97,6 +99,32 @@ class SignedOutError(AuthError):
     app access removed) or its single-use refresh was lost. Only signing in again helps."""
     def __init__(self):
         super().__init__("SoundCloud signed you out. Sign in again.")
+
+
+_IMAGE_MAGIC = (b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"GIF87a", b"GIF89a")
+
+
+def _image(path) -> Path | None:
+    """A cover to send: only a real picture (JPEG, PNG, GIF, WebP) is ever sent, so a
+    wrong path can't post some other file from this computer."""
+    ap = Path(path) if path else None
+    if not ap or not ap.is_file():
+        return None
+    try:
+        with open(ap, "rb") as f:
+            head = f.read(12)
+    except OSError:
+        return None
+    webp = head[:4] == b"RIFF" and head[8:12] == b"WEBP"
+    return ap if webp or head.startswith(_IMAGE_MAGIC) else None
+
+
+def _song(path: str) -> Path:
+    """A song to post: only audio files are ever sent (see models.AUDIO_EXTS)."""
+    p = Path(path)
+    if p.suffix.lower() not in AUDIO_EXTS or not p.is_file():
+        raise RuntimeError("That isn't a song file.")
+    return p
 
 
 def _raise_for_status(r) -> None:
@@ -539,7 +567,7 @@ class SoundCloudClient:
     def upload(self, file_path: str, meta, on_progress=None, artwork_path=None) -> dict:
         """Upload one audio file. `meta` is a models.TrackMeta. `artwork_path` optionally
         sets the cover art in the same request. Returns the track dict."""
-        path = Path(file_path)
+        path = _song(file_path)
         data = {
             "track[title]": meta.title,
             "track[sharing]": meta.sharing,
@@ -554,8 +582,8 @@ class SoundCloudClient:
         art_fh = None
         try:
             files = {"track[asset_data]": (path.name, pf, "application/octet-stream")}
-            ap = Path(artwork_path) if artwork_path else None
-            if ap and ap.is_file():
+            ap = _image(artwork_path)
+            if ap:
                 art_fh = open(ap, "rb")
                 ctype = mimetypes.guess_type(ap.name)[0] or "image/jpeg"
                 files["track[artwork_data]"] = (ap.name, art_fh, ctype)
@@ -609,8 +637,8 @@ class SoundCloudClient:
 
     def set_artwork(self, track_id: int, image_path: str) -> dict:
         """Replace a track's cover art (PUT track[artwork_data]). Returns the updated track."""
-        ap = Path(image_path)
-        if not ap.is_file():
+        ap = _image(image_path)
+        if ap is None:
             raise RuntimeError("Image file not found.")
         ctype = mimetypes.guess_type(ap.name)[0] or "image/jpeg"
         with open(ap, "rb") as fh:
@@ -721,8 +749,8 @@ class SoundCloudClient:
 
     def set_playlist_artwork(self, playlist_id: int, image_path: str) -> dict:
         """Replace a playlist's cover (PUT playlist[artwork_data]); its tracks are left alone."""
-        ap = Path(image_path)
-        if not ap.is_file():
+        ap = _image(image_path)
+        if ap is None:
             raise RuntimeError("Image file not found.")
         ctype = mimetypes.guess_type(ap.name)[0] or "image/jpeg"
         with open(ap, "rb") as fh:

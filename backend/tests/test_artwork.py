@@ -69,7 +69,7 @@ def test_set_and_bulk_set_artwork(tmp_path):
     for i in (1, 2):
         f = make_wav(tmp_path / f"m{i}.wav", value=i)
         service.run_upload(catalog, [{"path": str(f), "name": f"m{i}"}], {"sharing": "public"})
-    ids = [t["id"] for t in service.list_tracks(catalog) if t["title"].startswith("m")]
+    ids = [t["id"] for t in service.list_tracks(catalog) if t["title"].lower().startswith("m")]
     art = _make_png(tmp_path / "new.png")
 
     # single

@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { makeApi, openExternal, pickImage, readImage, revealPath } from "../api";
 import { askConfirm, CopyButton, Exit, openMenu, type MenuItem } from "../components/Desktop";
 import { FILLED, Rating, ratingMenu } from "../components/Marks";
@@ -6,7 +6,7 @@ import { ratingOf, useDensity, useRatings } from "../marks";
 import { pickCrateColor } from "../components/GenrePick";
 import { copyText, keep, recall } from "../desktop";
 import type { BulkResult, Config, Entitlement, SeoScore, Sharing, Track, TrackComment, TrackUpdate } from "../types";
-import { Button, PageHeader, SubLine, ProBadge, fmtDuration, fmtCount, parseTags } from "../components/ui";
+import { Button, PageHeader, SubLine, ProBadge, fmtDuration, fmtCount, missingSamples, parseTags } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { Art, PlayButton, SongWave, useAudition, useSongLength, type SongMeta } from "../components/Player";
 import type { WaveMark } from "../components/Wave";
@@ -14,18 +14,20 @@ import { GENRES, genreColor, useGenreColors, useLook } from "../look";
 import { EmptyState } from "../components/SlothSpot";
 import {
   BPM_BANDS, FIRST_DESC, LOW_SCORE, NO_FILTERS, applyFilters, dawName, describeFilters, extraFilterCount, yearOf, isFiltered, isPrivate, pickerOptions,
-  privacyCounts, sortTracks, type PrivacyFilter, type SortKey, type TrackFilters,
+  privacyCounts, sortTracks, folderTrackCount, tracksByProject, type PrivacyFilter, type SortKey, type TrackFilters,
 } from "../trackFilter";
 import { useDialogFocus } from "../components/a11y";
 import { SmartBar } from "../components/SmartBar";
 import { ColumnBrowse, FacetChips, NO_GENRE, facets, openFromRow } from "../components/Browse";
 import { TrackPlaylists, pickPlaylist } from "../components/PlaylistPick";
 import { NoteOpened } from "../components/Recents";
-import { FolderShelf, pickFolders } from "../components/ProjectFolders";
+import { FolderShelf as FolderShelfAll, pickFolders } from "../components/ProjectFolders";
 import { startProjectDrag, useFolders } from "../projectFolders";
+import { moreToShow, SHOW_PAGE } from "../paging";
 import "../manage.css";
 import { Collection } from "../components/Collection";
 import { collectionOf } from "./Home";
+import { glowRow } from "../moments";
 
 const api = makeApi();
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
@@ -199,7 +201,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   // Folders made in either app: the open one shows the tracks of its projects
   const folders = useFolders();
   const [folderId, setFolderState] = useState<string | null>(() => recall<string | null>("lc-tracks-folder", null, (v) => v === null || typeof v === "string"));
-  const setFolder = (id: string | null) => { keep("lc-tracks-folder", id); setFolderState(id); };
+  const setFolder = useCallback((id: string | null) => { keep("lc-tracks-folder", id); setFolderState(id); }, []);
   const folder = folders.find((f) => f.id === folderId) ?? null;
   const inOpenFolder = useMemo(() => {
     if (!folder) return tracks || [];
@@ -212,11 +214,12 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
     for (const t of tracks || []) if (t.project_id && !seen.has(t.project_id)) seen.set(t.project_id, { id: t.project_id, name: t.project_match || t.title, genre: t.project_genre || t.genre });
     return [...seen.values()];
   }, [tracks]);
-  const tracksIn = (f: { project_ids: string[] } | null) => {
-    if (!f) return (tracks || []).length;
-    const ids = new Set(f.project_ids);
-    return (tracks || []).filter((t) => !!t.project_id && ids.has(t.project_id)).length;
-  };
+  // Each tile's count: the tracks of every project counted once, then added up per
+  // folder, so thousands of folders don't each look through every track.
+  const byProject = useMemo(() => tracksByProject(tracks || []), [tracks]);
+  const allCount = (tracks || []).length;
+  const tracksIn = useCallback((f: { project_ids: string[] } | null) => (f ? folderTrackCount(f.project_ids, byProject) : allCount),
+    [byProject, allCount]);
   const filtered = useMemo(
     () => sortTracks(applyFilters(inOpenFolder, active), sortKey, sortDesc),
     [inOpenFolder, active, sortKey, sortDesc, rated]);
@@ -298,6 +301,12 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
     toggleSelect(id, true);
   }
   function clearSelection() { setSelected(new Set()); setBulkSummary(null); }
+
+  // The rows you just changed glow for a moment once the editor has gone, so you can
+  // see where the change landed (the same glow as a row you come back to).
+  function glowChanged(ids: number[]) {
+    window.setTimeout(() => ids.slice(0, 200).forEach((id) => glowRow(String(id))), 0);
+  }
 
   // ---- single-track mutations ----
   function applyUpdate(t: Track) {
@@ -390,6 +399,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
       spliceBulkTracks(res.results);
       summarize(res, "track", "updated");
       setBulkEdit(false);
+      glowChanged(res.results.filter((r) => r.ok).map((r) => r.id));
     } catch (e) { setError(String((e as Error).message)); }
     finally { setBulkBusy(false); }
   }
@@ -423,7 +433,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
   }
   async function runBulkWaveform() {
     if (selectedIds.length === 0) return;
-    if (!await confirmLargeBulk("Generate waveform covers for")) return;
+    if (!await confirmLargeBulk("Make waveform covers for")) return;
     setBulkBusy(true); setBulkSummary(null); setError(null);
     try {
       const res = await api.bulkWaveformCover(selectedIds);
@@ -446,10 +456,11 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
     remove: (t) => void latest.current.deleteOne(t),
     menu: (e, t) => openMenu(e, latest.current.trackMenu(t)),
   }), []);
-  // The columns view draws the first COLUMN_PAGE tracks and more on asking, so a big
+  // The columns view draws the first SHOW_PAGE tracks and more on asking, so a big
   // library doesn't freeze the window while thousands of buttons are made.
-  const [columnShown, setColumnShown] = useState(COLUMN_PAGE);
-  useEffect(() => { setColumnShown(COLUMN_PAGE); }, [filtered]);
+  const [columnShown, setColumnShown] = useState(SHOW_PAGE);
+  useEffect(() => { setColumnShown(SHOW_PAGE); }, [filtered]);
+  const columnMore = moreToShow(filtered.length, columnShown);
 
   const friendly = error ? friendlyError(error) : null;
   const loading = tracks === null;
@@ -677,10 +688,10 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
               {filtered.slice(0, columnShown).map((t) => (
                 <ColumnItem key={t.id} track={t} defaultArt={defaultArt} actions={rowActions} />
               ))}
-              {filtered.length > columnShown && (
-                <button type="button" className="browse__item browse__more" onClick={() => setColumnShown((n) => n + COLUMN_PAGE)}>
-                  Show {fmtCount(Math.min(COLUMN_PAGE, filtered.length - columnShown))} more
-                  <span className="faint"> of {fmtCount(filtered.length - columnShown)} left</span>
+              {columnMore && (
+                <button type="button" className="browse__item browse__more" onClick={() => setColumnShown((n) => n + columnMore.next)}>
+                  Show {fmtCount(columnMore.next)} more
+                  <span className="faint"> of {fmtCount(columnMore.left)} left</span>
                 </button>
               )}
             </>}
@@ -734,7 +745,7 @@ export function Manage({ ent, cfg, openTrack, onOpenTrack, onCloseTrack }: {
         genre={editing.project_match ? editing.project_genre : editing.genre} />}
       <Exit>{editing && (
         <EditPanel track={editing} defaultArt={defaultArt} onClose={() => setEditing(null)}
-          onSaved={(t) => { applyUpdate(t); setEditing(null); }} />
+          onSaved={(t) => { applyUpdate(t); setEditing(null); glowChanged([t.id]); }} />
       )}</Exit>
 
       {/* ---- bulk metadata editor ---- */}
@@ -798,17 +809,19 @@ function SortHead({ k, label, num, mid, sortKey, desc, onSort }: {
 }
 
 // ---- "From project" cell: the Backups project this track came from, and its state ----
-function ProjectCell({ track }: { track: Track }) {
+function ProjectCell({ track, full = false }: { track: Track; full?: boolean }) {
   const t = track;
   const stale = backupStale(t);
   const hasBackup = !!t.backups && (t.backups.count ?? 0) > 0;
-  const notes: { text: string; tone?: "warn" | "faint"; title?: string }[] = [];
-  if (t.daw) notes.push({ text: dawLabel(t.daw) });
+  const notes: { text: string; tone?: "warn" | "faint"; title?: string; show?: boolean }[] = [];
+  // "Stems only" says the song has no full project here, so it shows in the row too
+  if (t.daw) notes.push({ text: dawLabel(t.daw), tone: t.daw === "stems" ? "faint" : undefined, show: t.daw === "stems" });
   if (t.bpm != null) notes.push({ text: `${Math.round(t.bpm)} BPM` });
   if (hasBackup) notes.push(stale
     ? { text: `backup older than track`, tone: "faint", title: `Last backup ${fmtDate(t.backups!.last_backup)}, before this track was posted` }
     : { text: `${t.backups!.count} backup${t.backups!.count === 1 ? "" : "s"}${t.backups!.verified ? ", checked" : ""}` });
-  if ((t.missing_count ?? 0) > 0) notes.push({ text: `${fmtCount(t.missing_count)} sample${t.missing_count === 1 ? "" : "s"} missing`, tone: "warn" });
+  if ((t.missing_count ?? 0) > 0) notes.push({ text: missingSamples(t.missing_count!), tone: "warn",
+    title: `${fmtCount(t.missing_count)} sample${t.missing_count === 1 ? "" : "s"} missing` });
   const fmt = t.original_format ? `${t.original_format.toUpperCase()} ` : "";
   if ((t.dupe_count ?? 0) > 1) notes.push({
     text: t.dupe_keeper ? `${fmt}copy to keep` : `${fmt}posted twice`,
@@ -821,14 +834,18 @@ function ProjectCell({ track }: { track: Track }) {
     text: `${t.version_count} versions up`, tone: "faint",
     title: `This song is on SoundCloud in ${t.version_count} versions of different lengths. Each is its own track, so nothing is marked to remove.`,
   });
+  // The column is narrow: the project's name, and under it only what needs a look
+  // (missing samples, a double post) and "Stems only". Everything else is in the tooltip.
+  // The Edit panel has room, so it shows every note.
+  const shown = full ? notes : notes.filter((n) => n.tone === "warn" || n.show);
   return (
-    <div className="row__main">
-      <div className={`row__title${t.project_match ? "" : " faint"}`} style={{ fontWeight: 400 }}>
+    <div className="row__main" title={[t.project_match || "Not linked", ...notes.map((n) => n.title ?? n.text)].join("\n")}>
+      <div className={`row__title${t.project_match ? "" : " faint"}`} style={{ fontWeight: 400 }} dir="auto">
         {t.project_match || "Not linked"}
       </div>
-      {notes.length > 0 && (
-        <div className="row__sub row__sub--wrap">
-          {notes.map((n, i) => (
+      {shown.length > 0 && (
+        <div className={`row__sub${full ? " mng-matched__notes" : ""}`}>
+          {shown.map((n, i) => (
             <span key={i} title={n.title} style={n.tone === "warn" ? { color: "var(--warn)" } : undefined}>
               {i > 0 ? " · " : ""}{n.text}
             </span>
@@ -891,7 +908,9 @@ type RowActions = {
   remove: (t: Track) => void;
   menu: (e: React.MouseEvent, t: Track) => void;
 };
-const COLUMN_PAGE = 200;
+// The folder row draws again only when its folders, counts or the open folder change,
+// not on every tick, hover or keystroke elsewhere on the page.
+const FolderShelf = memo(FolderShelfAll);
 
 // Drag a track onto a folder tile: its Backups project goes in the folder.
 const dragTrack = (t: Track) => t.project_id
@@ -946,10 +965,11 @@ const TrackRow = memo(function TrackRow({ track, index, defaultArt, selected, ac
       <input type="checkbox" className="mixrow__check" checked={selected}
         onChange={() => { /* click handler owns toggling for shift-range support */ }}
         onClick={onCheck} aria-label={`Tick ${t.title}`} />
-      {t.local_path ? <PlayButton path={t.local_path} meta={meta} size={28} /> : <span />}
+      {t.local_path ? <PlayButton path={t.local_path} meta={meta} size={28} />
+        : <span className="play-none" title="No copy of this track on this computer to play" />}
       <Art meta={meta} size={36} />
       <div className="row__main">
-        <div className="row__title" title={t.title}>{t.title}</div>
+        <div className="row__title" title={t.title} dir="auto">{t.title}</div>
         {t.replaced_by ? (
           <div className="row__sub">
             <span style={{ color: "var(--warn)" }}
@@ -967,7 +987,7 @@ const TrackRow = memo(function TrackRow({ track, index, defaultArt, selected, ac
       <SongWave path={t.local_path} scUrl={t.local_path ? null : t.waveform_url} meta={meta} height={24} />
       <ProjectCell track={t} />
       <span className="col-num">{t.playback_count != null ? t.playback_count.toLocaleString() : "—"}</span>
-      <button type="button" className={`pill ${priv ? "pill--private" : "pill--quiet"} linkbtn`}
+      <button type="button" className={`pill ${priv ? "pill--private" : "pill--ok"} linkbtn`}
         style={{ color: "var(--text-dim)" }}
         title={`Click to make ${next}`} aria-label={`${priv ? "Private" : "Public"}. Make ${next}`}
         onClick={(e) => { e.preventDefault(); onQuickPrivacy(next); }}>
@@ -1020,7 +1040,7 @@ const TrackCard = memo(function TrackCard({ track, defaultArt, selected, actions
           )}
         </div>
         <div className="track-sleeve__sub">
-          <span className="col-wrap2" title={t.project_match ?? undefined}>{t.project_match ? `From ${t.project_match}` : t.genre || "No genre"}</span>
+          <span className="col-wrap2" title={t.project_match ?? undefined}>{t.project_match ? <>From <bdi>{t.project_match}</bdi></> : t.genre || "No genre"}</span>
           <span className="mono">{t.playback_count != null ? `${t.playback_count.toLocaleString()} play${t.playback_count === 1 ? "" : "s"}` : ""}</span>
         </div>
         <SongWave path={t.local_path} scUrl={t.local_path ? null : t.waveform_url} meta={meta} height={18} />
@@ -1236,7 +1256,7 @@ export function EditPanel({ track, defaultArt, onClose, onSaved }: {
         {matched && (
           <div className="mng-matched">
             <div className="field"><span>From project</span></div>
-            <ProjectCell track={track} />
+            <ProjectCell track={track} full />
           </div>
         )}
       </div>
@@ -1369,7 +1389,7 @@ function DeleteConfirm({ count, busy, onClose, onConfirm }: {
         <label className="field" style={{ marginBottom: 0 }}>
           <span>Type <b>{count}</b> or the word <b>DELETE</b> to confirm</span>
           <input type="text" value={text} onChange={(e) => setText(e.target.value)} autoFocus
-            placeholder={String(count)} aria-label="Type to confirm deletion" />
+            placeholder={String(count)} aria-label="Type the number or DELETE to confirm" />
         </label>
       </div>
       <div className="mng-panel__foot">

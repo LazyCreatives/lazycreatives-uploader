@@ -6,14 +6,6 @@
 .row-spread { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .stack { display: grid; gap: 10px; }
 
-/* waveform motif (upload in progress) */
-.waveform { display: flex; align-items: center; gap: 3px; height: 100%; width: 100%; }
-.waveform span {
-  flex: 1; min-width: 2px; max-width: 4px; border-radius: 1px; background: var(--accent);
-  transform-origin: center; animation: waveBreathe 1.6s ease-in-out infinite;
-}
-@keyframes waveBreathe { 0%, 100% { transform: scaleY(0.35); opacity: 0.6; } 50% { transform: scaleY(1); opacity: 1; } }
-
 /* two-step upload flow */
 .flowbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 14px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
 .flowbar__steps { display: flex; gap: 18px; }
@@ -33,6 +25,8 @@
 .mixrow__check::before { content: ""; position: absolute; inset: -5px; }
 .info::before { content: ""; position: absolute; inset: -6px; border-radius: 50%; }
 .draftbtn { min-height: 24px; padding: 0 2px; }
+button.pill { position: relative; }
+button.pill::after { content: ""; position: absolute; inset: -5px -4px; }
 /* same first five columns as Your tracks: stripe, tick, play, cover, name */
 .mix-cols { --cols: 4px 16px 28px 36px minmax(160px, 2fr) minmax(120px, 1.6fr) 52px 120px 32px; }
 .mix-cols .cover { border-radius: 4px; }
@@ -72,19 +66,23 @@
 .mixstate { display: grid; gap: 4px; min-width: 0; }
 .mixstate__label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
 .mixstate__label .num { color: var(--text); }
+/* a mix's progress glides between the live updates (about a second apart) */
+:root { --dur-progress: calc(var(--dur-slow) * 1.75); }
 /* each mix's own progress: its waveform fills with blue as the bytes go up (Player.tsx
    SongWave `upload`); the blue copy is cut off where the upload has got to */
 .mixstate__bar { display: none; width: 84px; max-width: 100%; height: 3px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
-.mixstate__bar > span { display: block; height: 100%; width: 100%; border-radius: 2px; background: var(--accent); transform: translateX(calc(var(--pct, 0) * 1% - 100%)); transition: transform .7s var(--ease-glide); }
+.mixstate__bar > span { display: block; height: 100%; width: 100%; border-radius: 2px; background: var(--accent); transform: translateX(calc(var(--pct, 0) * 1% - 100%)); transition: transform var(--dur-progress) var(--ease-glide); }
 .songwave--up { position: relative; }
 .songwave--up > .wave, .songwave--up > .wave-wrap { opacity: 0.4; }
 .songwave__up {
   position: absolute; inset: 0; display: block; color: var(--accent); pointer-events: none;
-  clip-path: inset(0 calc(100% - var(--pct, 0) * 1%) 0 0); transition: clip-path .7s var(--ease-glide);
+  clip-path: inset(0 calc(100% - var(--pct, 0) * 1%) 0 0); transition: clip-path var(--dur-progress) var(--ease-glide);
 }
 /* a mix's state changes (Uploading to Posted): the new one fades in, and the row that
    just went up glows blue for a moment, like a row you come back to */
 .mixstate__in { display: inline-flex; min-width: 0; animation: lcFade var(--dur-base) var(--ease-glide) both; }
+/* (only while it has just gone up: Upload.tsx keeps the class on for the glow's 2s,
+   so a search or Check folders drawing the row again doesn't replay it) */
 .mixrow--justposted { animation: nav-came-from 2s var(--ease-glide); }
 @media (prefers-reduced-motion: reduce) { .mixstate__in, .mixrow--justposted { animation: none; } }
 /* a new mix that hasn't gone up yet: a quiet word, so the Status column always says something */
@@ -128,6 +126,11 @@
   .mix-cols > :nth-child(6) { display: none; }
   .mix-cols .mixstate__bar { display: block; }  /* no waveform column to fill */
 }
+/* Easier reading: Length gets room for its heading, and the grey line under a mix
+   wraps instead of losing the export date */
+html[data-reading] .mix-cols { --cols: 4px 16px 28px 36px minmax(160px, 2fr) minmax(120px, 1.6fr) 5.5em 120px 32px; }
+@media (max-width: 1099px) { html[data-reading] .mix-cols { --cols: 4px 16px 28px 36px minmax(160px, 2fr) 5.5em 120px 32px; } }
+html[data-reading] .mix-cols .row__sub { white-space: normal; }
 
 
 /* ---- Deck readout: numbers in an inset screen, like a deck's display. The track page
@@ -177,7 +180,7 @@
 .up-tools .upload-search { width: 320px; }
 .up-tools__plan { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-faint); }
 .up-tools__opts { display: inline-flex; align-items: center; gap: 7px; flex: none; }
-.up-tools__chev { transition: transform .18s var(--ease-glide, ease); }
+.up-tools__chev { transition: transform var(--dur-base) var(--ease-glide); }
 .up-tools__opts--on .up-tools__chev { transform: rotate(180deg); }
 .up-opts {
   display: flex; flex-wrap: wrap; align-items: start; gap: 14px 28px; margin: -4px 0 16px; padding: 14px 16px;
@@ -189,7 +192,7 @@
 .up-opt--end { margin-left: auto; display: flex; align-self: end; min-height: 36px; }
 .up-opts__note { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--text-faint); }
 /* the more button at the end of a row shows on hover, like a record sleeve's spine */
-.mix-more { width: 28px; height: 28px; opacity: 0; transition: opacity .12s; }
+.mix-more { width: 28px; height: 28px; opacity: 0; transition: opacity var(--dur-quick) var(--ease-glide); }
 .row:hover .mix-more, .row:focus-within .mix-more, .mix-more:focus-visible { opacity: 1; }
 @media (hover: none) { .mix-more { opacity: 1; } }
 .pill.pill--draft { --dot: var(--warn); color: var(--text-dim); }
@@ -215,3 +218,24 @@ button.mix-split--btn:not(.row) { padding: 0; font-size: 15px; font-weight: 600;
 .toolchk--wrap input { margin-top: 2px; flex-shrink: 0; }
 /* Your tracks, Genre > Year > Track columns: the rest of a long list on asking */
 .browse__more { display: flex; justify-content: center; gap: 4px; color: var(--accent); font-weight: 500; }
+
+/* "Now playing" shrinks back into the player bar: it sinks and fades, faster than it
+   rose (npIn in lazy-ui.css). Exit (Desktop.tsx) holds it for --dur-quick, and closes
+   it at once under reduced motion. */
+
+/* Home: under Plays, the plays gained since an earlier day this week. With a note the
+   cells share three rows (subgrid), so every label and number still lines up with its
+   neighbours when the note wraps (narrow window, Easier reading). */
+.home-deck.home-deck--notes { grid-template-rows: auto auto auto; }
+.home-deck--notes .deckread__cell { grid-row: span 3; grid-template-rows: subgrid; align-content: start; }
+.home-deck dd.home-deck__note {
+  font: 500 12px/1.35 var(--font); letter-spacing: 0; color: var(--text-dim);
+  white-space: normal; overflow-wrap: anywhere; animation: lcFade var(--dur-slow) var(--ease-glide) both;
+}
+
+/* A name in Arabic or Hebrew reads right to left (dir="auto"), so a long one is cut at its
+   own end, not its first word, while it still lines up on the left with the other names. */
+[dir="auto"]:is(.row__title, .col-trunc) { text-align: left; }
+
+/* Your collection: the count column grows with its longest number, so "1,234,567" never runs past the edge */
+.coll__row { grid-template-columns: minmax(70px, 120px) minmax(0, 1fr) max(40px, calc(var(--coll-digits, 4) * 7.4px + 4px)); }

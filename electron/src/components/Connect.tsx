@@ -42,7 +42,7 @@ export function useSignIn(onChange: (a: Account) => void) {
         try {
           const s = await api.connectStatus(connect_id);
           if (s.status === "connected") return finish();
-          if (s.status === "failed") { setError(s.error || "Sign-in failed."); setBusy(false); idRef.current = null; return; }
+          if (s.status === "failed") { setError(s.error || "SoundCloud sign-in didn’t finish. Press Connect SoundCloud to try again."); setBusy(false); idRef.current = null; return; }
         } catch { /* keep waiting */ }
         if (Date.now() < deadline) pollRef.current = window.setTimeout(tick, 1200);
         else { setError(NOT_FINISHED); setBusy(false); idRef.current = null; }
@@ -121,7 +121,7 @@ export function ConnectPanel({ account, onChange }: {
         </Button>
       )}
       {(accounts.length === 0 || account.multi) && (
-        <Button kind="sc" onClick={start} disabled={busy}>
+        <Button kind={accounts.length === 0 || account.signed_out ? "sc" : undefined} onClick={start} disabled={busy}>
           {busy ? "Waiting for browser…"
             : account.signed_out ? "Sign in again"
             : accounts.length === 0

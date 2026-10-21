@@ -153,7 +153,7 @@ def test_bulk_update_and_delete_report_per_item(tmp_path, monkeypatch):
         service.run_upload(catalog, [{"path": str(f), "name": f"mix{i}"}], {"sharing": "public"})
 
     tracks = service.list_tracks(catalog)
-    ids = [t["id"] for t in tracks if t["title"].startswith("mix")]
+    ids = [t["id"] for t in tracks if t["title"].lower().startswith("mix")]
     assert len(ids) == 2
 
     res = service.bulk_update(catalog, ids, {"sharing": "private"})
@@ -213,3 +213,14 @@ def test_update_track_sets_downloadable(tmp_path, monkeypatch):
     service.update_track(catalog, tid, {"downloadable": True})
     t = next(t for t in service.list_tracks(catalog) if t["id"] == tid)
     assert t["downloadable"] is True
+
+
+def test_soundcloud_title_is_the_songs_tidy_name(tmp_path, monkeypatch):
+    monkeypatch.delenv("LAZYUP_BACKUPS_DB", raising=False)
+    catalog = service.Catalog(tmp_path / "uploads.db")
+    _connect_mock(catalog)
+    f = tmp_path / "glasshouse_final_v3 master.wav"
+    make_wav(f, value=7)
+    service.run_upload(catalog, [{"path": str(f), "name": f.stem}], {"sharing": "public"})
+    titles = [t["title"] for t in service.list_tracks(catalog)]
+    assert "Glasshouse" in titles

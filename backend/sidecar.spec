@@ -38,6 +38,8 @@ if sys.platform.startswith("linux"):
 # — collect_all would also ship every .py as readable source, exposing the
 # licensing logic. The bytecode goes into the PYZ; no plaintext source.
 hiddenimports += collect_submodules("lazyupload")
+# Sentry loads its integrations by name, so list them all (crashreports.py).
+hiddenimports += collect_submodules("sentry_sdk")
 
 a = Analysis(
     ["lazyupload/server.py"],
