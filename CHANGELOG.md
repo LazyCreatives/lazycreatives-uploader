@@ -16,6 +16,11 @@ How to keep this up to date:
 
 ## Unreleased
 
+## 0.3.1 (23 October 2026)
+
+### Better
+- **Albums shared from another computer say which songs aren't here.** A song kept on your other computer now shows "Not on this computer" instead of "File moved or deleted".
+
 ## 0.3.0 (21 October 2026)
 
 ### New
